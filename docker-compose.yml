@@ -43,6 +43,10 @@ services:
             - POSTHOG_PROJECT_API_KEY=${POSTHOG_PROJECT_API_KEY}
             - POSTHOG_FE_API_HOST=${POSTHOG_FE_API_HOST}
             - POSTHOG_BE_API_HOST=${POSTHOG_BE_API_HOST}
+            - SLACK_CLIENT_ID=${SLACK_CLIENT_ID}
+            - SLACK_CLIENT_SECRET=${SLACK_CLIENT_SECRET}
+            - SLACK_SIGNING_SECRET=${SLACK_SIGNING_SECRET}
+            - SLACK_STATE_SECRET=${SLACK_STATE_SECRET}
         volumes:
             - '${DBT_PROJECT_DIR}:/usr/app/dbt'
         ports:
