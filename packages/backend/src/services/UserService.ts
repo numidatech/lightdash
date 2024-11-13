@@ -8,6 +8,7 @@ import {
     CreateInviteLink,
     CreatePasswordResetLink,
     CreateUserArgs,
+    DeactivatedAccountError,
     DeleteOpenIdentity,
     EmailStatusExpiring,
     ExpiredError,
@@ -281,6 +282,9 @@ export class UserService extends BaseService {
             event: 'user.created',
             userId: user.userUuid,
             properties: {
+                context: 'accept_invite',
+                createdUserId: user.userUuid,
+                organizationId: user.organizationUuid,
                 userConnectionType: 'password',
             },
         });
@@ -291,19 +295,19 @@ export class UserService extends BaseService {
     }
 
     async delete(user: SessionUser, userUuidToDelete: string): Promise<void> {
-        const [orgForUser] = await this.userModel.getOrganizationsForUser(
+        const userToDelete = await this.userModel.getUserDetailsByUuid(
             userUuidToDelete,
         );
         // The user might not have an org yet
         // This is expected on the "Cancel registration" flow on single org instances.
-        if (orgForUser?.organizationUuid) {
+        if (userToDelete?.organizationUuid) {
             // We assume only one org per user
 
             if (
                 user.ability.cannot(
                     'delete',
                     subject('OrganizationMemberProfile', {
-                        organizationUuid: orgForUser.organizationUuid,
+                        organizationUuid: userToDelete.organizationUuid,
                     }),
                 )
             ) {
@@ -313,7 +317,7 @@ export class UserService extends BaseService {
             // Race condition between check and delete
             const [admin, ...remainingAdmins] =
                 await this.organizationMemberProfileModel.getOrganizationAdmins(
-                    orgForUser.organizationUuid,
+                    userToDelete.organizationUuid,
                 );
             if (
                 remainingAdmins.length === 0 &&
@@ -332,7 +336,15 @@ export class UserService extends BaseService {
             event: 'user.deleted',
             userId: user.userUuid,
             properties: {
-                deletedUserUuid: userUuidToDelete,
+                context:
+                    user.userUuid !== userUuidToDelete
+                        ? 'delete_org_member'
+                        : 'delete_self',
+                firstName: userToDelete.firstName,
+                lastName: userToDelete.lastName,
+                email: userToDelete.email,
+                organizationId: userToDelete.organizationUuid,
+                deletedUserId: userUuidToDelete,
             },
         });
     }
@@ -366,7 +378,7 @@ export class UserService extends BaseService {
                 throw new ParameterError(
                     'Email is already used by a user in another organization',
                 );
-            } else if (existingUserWithEmail.isActive) {
+            } else if (!existingUserWithEmail.isPending) {
                 throw new ParameterError(
                     'Email is already used by a user in your organization',
                 );
@@ -481,9 +493,39 @@ export class UserService extends BaseService {
                             groupId: updatedGroup.uuid,
                             name: updatedGroup.name,
                             countUsersInGroup: updatedGroup.memberUuids.length,
+                            context: 'add_member_via_sso',
                         },
                     });
                 }),
+            );
+        }
+    }
+
+    /**
+     * In this method we check if the user is allowed to register in this instance before registerUser happens.
+     * If the instance is a single org, and there are already users and orgs,
+     * and the user's email domain is allowed in the org whitelisted,
+     * we throw a ForbiddenError.
+     * @param inviteCode invite code
+     * @param email email for the user registering
+     */
+    async checkNewUserRegistrationAllowed(
+        inviteCode: string | undefined,
+        email: string,
+    ) {
+        if (
+            inviteCode === undefined &&
+            !this.lightdashConfig.allowMultiOrgs &&
+            (await this.userModel.hasUsers()) &&
+            (await this.organizationModel.hasOrgs()) &&
+            (
+                await this.organizationModel.getAllowedOrgsForDomain(
+                    getEmailDomain(email),
+                )
+            ).length < 1
+        ) {
+            throw new ForbiddenError(
+                `You can't register a new user with email ${email} on this instance. Please contact your organization administrator and ask for an invite`,
             );
         }
     }
@@ -516,6 +558,10 @@ export class UserService extends BaseService {
         );
         // Identity already exists. Update the identity attributes and login the user
         if (openIdSession) {
+            if (!openIdSession.isActive) {
+                throw new DeactivatedAccountError();
+            }
+
             const organization = this.loginToOrganization(
                 openIdSession?.userUuid,
                 openIdUser.openId.issuerType,
@@ -673,6 +719,10 @@ export class UserService extends BaseService {
         }
 
         // Create user
+        await this.checkNewUserRegistrationAllowed(
+            inviteCode,
+            openIdUser.openId.email,
+        );
         const createdUser = await this.activateUserWithOpenId(
             openIdUser,
             inviteCode,
@@ -843,7 +893,10 @@ export class UserService extends BaseService {
             userId: completeUser.userUuid,
             properties: {
                 ...completeUser,
+                updatedUserId: completeUser.userUuid,
+                organizationId: completeUser.organizationUuid,
                 jobTitle,
+                context: 'complete_setup',
             },
         });
         return completeUser;
@@ -919,6 +972,9 @@ export class UserService extends BaseService {
                 email,
                 password,
             );
+            if (!user.isActive) {
+                throw new DeactivatedAccountError();
+            }
             const userOrganization = this.loginToOrganization(
                 user.userUuid,
                 LocalIssuerTypes.EMAIL,
@@ -981,13 +1037,24 @@ export class UserService extends BaseService {
         const updatedUser = await this.userModel.updateUser(
             user.userUuid,
             user.email,
-            data,
+            {
+                firstName: data.firstName,
+                lastName: data.lastName,
+                email: data.email,
+                isMarketingOptedIn: data.isMarketingOptedIn,
+                isTrackingAnonymized: data.isTrackingAnonymized,
+            },
         );
         this.identifyUser(updatedUser);
         this.analytics.track({
             userId: updatedUser.userUuid,
             event: 'user.updated',
-            properties: updatedUser,
+            properties: {
+                ...updatedUser,
+                updatedUserId: updatedUser.userUuid,
+                organizationId: updatedUser.organizationUuid,
+                context: 'update_self',
+            },
         });
         return updatedUser;
     }
@@ -1003,6 +1070,8 @@ export class UserService extends BaseService {
                 password: user.password,
             });
         } else {
+            await this.checkNewUserRegistrationAllowed(undefined, user.email);
+
             lightdashUser = await this.registerUser({
                 firstName: user.firstName,
                 lastName: user.lastName,
@@ -1046,6 +1115,9 @@ export class UserService extends BaseService {
             event: 'user.created',
             userId: user.userUuid,
             properties: {
+                context: 'accept_invite',
+                createdUserId: user.userUuid,
+                organizationId: user.organizationUuid,
                 userConnectionType: isOpenIdUser(createUser)
                     ? createUser.openId.issuerType
                     : 'password',
@@ -1121,6 +1193,9 @@ export class UserService extends BaseService {
             throw new AuthorizationError();
         }
         const { user, personalAccessToken } = results;
+        if (!user.isActive) {
+            throw new DeactivatedAccountError();
+        }
         const organization = this.loginToOrganization(
             user.userUuid,
             LocalIssuerTypes.API_TOKEN,

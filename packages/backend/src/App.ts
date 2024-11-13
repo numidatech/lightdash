@@ -103,6 +103,7 @@ const schedulerWorkerFactory = (context: {
         slackClient: context.clients.getSlackClient(),
         semanticLayerService:
             context.serviceRepository.getSemanticLayerService(),
+        catalogService: context.serviceRepository.getCatalogService(),
     });
 
 const slackBotFactory = (context: {
@@ -132,6 +133,7 @@ type AppArguments = {
     utilProviders?: UtilProviderMap;
     slackBotFactory?: typeof slackBotFactory;
     schedulerWorkerFactory?: typeof schedulerWorkerFactory;
+    customExpressMiddlewares?: Array<(app: Express) => void>; // Array of custom middleware functions
 };
 
 export default class App {
@@ -160,6 +162,8 @@ export default class App {
     private readonly schedulerWorkerFactory: typeof schedulerWorkerFactory;
 
     private readonly prometheusMetrics: PrometheusMetrics;
+
+    private readonly customExpressMiddlewares: Array<(app: Express) => void>;
 
     constructor(args: AppArguments) {
         this.lightdashConfig = args.lightdashConfig;
@@ -217,6 +221,7 @@ export default class App {
         this.prometheusMetrics = new PrometheusMetrics(
             this.lightdashConfig.prometheus,
         );
+        this.customExpressMiddlewares = args.customExpressMiddlewares || [];
     }
 
     async start() {
@@ -262,6 +267,11 @@ export default class App {
             tablename: 'sessions',
             sidfieldname: 'sid',
         });
+
+        // Use custom middlewares if provided
+        this.customExpressMiddlewares.forEach((middleware) =>
+            middleware(expressApp),
+        );
 
         expressApp.use(
             express.json({ limit: this.lightdashConfig.maxPayloadSize }),

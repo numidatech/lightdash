@@ -4,12 +4,22 @@ import {
     ApiCatalogResults,
     ApiCatalogSearch,
     ApiErrorPayload,
+    ApiMetricsCatalog,
+    getItemId,
+    type ApiSort,
+    type ApiSuccessEmpty,
+    type CatalogItemIcon,
+    type KnexPaginateArgs,
 } from '@lightdash/common';
 import {
+    Body,
+    Delete,
     Get,
     Middlewares,
     OperationId,
+    Patch,
     Path,
+    Post,
     Query,
     Request,
     Response,
@@ -40,20 +50,21 @@ export class CatalogController extends BaseController {
     async getCatalog(
         @Path() projectUuid: string,
         @Request() req: express.Request,
-        @Query() search?: ApiCatalogSearch['search'],
+        @Query() search?: ApiCatalogSearch['searchQuery'],
         @Query() type?: ApiCatalogSearch['type'],
         @Query() filter?: ApiCatalogSearch['filter'],
     ): Promise<{ status: 'ok'; results: ApiCatalogResults }> {
         this.setStatus(200);
         const query: ApiCatalogSearch = {
-            search,
+            searchQuery: search,
             type,
             filter,
         };
 
-        const results = await this.services
+        const { data: results } = await this.services
             .getCatalogService()
             .getCatalog(req.user!, projectUuid, query);
+
         return {
             status: 'ok',
             results,
@@ -132,10 +143,146 @@ export class CatalogController extends BaseController {
         this.setStatus(200);
         const results = await this.services
             .getCatalogService()
-            .getFieldAnalytics(req.user!, projectUuid, table, field);
+            .getFieldAnalytics(
+                req.user!,
+                projectUuid,
+                getItemId({
+                    name: field,
+                    table,
+                }),
+            );
         return {
             status: 'ok',
             results,
+        };
+    }
+
+    /**
+     * Get metrics catalog
+     * @param projectUuid
+     * @param query contains filters for the catalog items as well as pagination
+     * - search: string
+     * - page: number
+     * - pageSize: number
+     */
+    @Middlewares([allowApiKeyAuthentication, isAuthenticated])
+    @SuccessResponse('200', 'Success')
+    @Get('/metrics')
+    @OperationId('getMetricsCatalog')
+    async getMetricsCatalog(
+        @Path() projectUuid: string,
+        @Request() req: express.Request,
+        @Query() search?: ApiCatalogSearch['searchQuery'],
+        @Query() page?: number,
+        @Query() pageSize?: number,
+        @Query() sort?: ApiSort['sort'],
+        @Query() order?: ApiSort['order'],
+        @Query() categories?: ApiCatalogSearch['catalogTags'],
+    ): Promise<ApiMetricsCatalog> {
+        this.setStatus(200);
+
+        const paginateArgs: KnexPaginateArgs | undefined =
+            page && pageSize
+                ? {
+                      page,
+                      pageSize,
+                  }
+                : undefined;
+
+        const sortArgs: ApiSort | undefined = sort
+            ? {
+                  sort,
+                  order,
+              }
+            : undefined;
+
+        const results = await this.services
+            .getCatalogService()
+            .getMetricsCatalog(
+                req.user!,
+                projectUuid,
+                paginateArgs,
+                {
+                    searchQuery: search,
+                    catalogTags: categories,
+                },
+                sortArgs,
+            );
+
+        return {
+            status: 'ok',
+            results,
+        };
+    }
+
+    @Middlewares([allowApiKeyAuthentication, isAuthenticated])
+    @SuccessResponse('200', 'Success')
+    @Post('{catalogSearchUuid}/categories')
+    @OperationId('addCategoryToCatalogItem')
+    async addCategoryToCatalogItem(
+        @Path() catalogSearchUuid: string,
+        @Body()
+        body: {
+            tagUuid: string;
+        },
+        @Request() req: express.Request,
+    ): Promise<ApiSuccessEmpty> {
+        await this.services
+            .getCatalogService()
+            .tagCatalogItem(req.user!, catalogSearchUuid, body.tagUuid);
+
+        this.setStatus(200);
+
+        return {
+            status: 'ok',
+            results: undefined,
+        };
+    }
+
+    @Middlewares([allowApiKeyAuthentication, isAuthenticated])
+    @SuccessResponse('200', 'Success')
+    @Delete('{catalogSearchUuid}/categories/{tagUuid}')
+    @OperationId('removeCategoryFromCatalogItem')
+    async removeCategoryFromCatalogItem(
+        @Path() catalogSearchUuid: string,
+        @Path() tagUuid: string,
+        @Request() req: express.Request,
+    ) {
+        await this.services
+            .getCatalogService()
+            .untagCatalogItem(req.user!, catalogSearchUuid, tagUuid);
+
+        this.setStatus(200);
+
+        return {
+            status: 'ok',
+            results: undefined,
+        };
+    }
+
+    @Middlewares([allowApiKeyAuthentication, isAuthenticated])
+    @SuccessResponse('200', 'Success')
+    @Patch('{catalogSearchUuid}/icon')
+    @OperationId('updateCatalogItemIcon')
+    async updateCatalogItemIcon(
+        @Path() projectUuid: string,
+        @Path() catalogSearchUuid: string,
+        @Body() body: { icon: CatalogItemIcon | null },
+        @Request() req: express.Request,
+    ): Promise<ApiSuccessEmpty> {
+        await this.services
+            .getCatalogService()
+            .updateCatalogItemIcon(
+                req.user!,
+                projectUuid,
+                catalogSearchUuid,
+                body.icon,
+            );
+
+        this.setStatus(200);
+        return {
+            status: 'ok',
+            results: undefined,
         };
     }
 }

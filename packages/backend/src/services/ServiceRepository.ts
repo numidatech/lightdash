@@ -265,8 +265,10 @@ export class ServiceRepository
                     pinnedListModel: this.models.getPinnedListModel(),
                     schedulerModel: this.models.getSchedulerModel(),
                     savedChartModel: this.models.getSavedChartModel(),
+                    projectModel: this.models.getProjectModel(),
                     schedulerClient: this.clients.getSchedulerClient(),
                     slackClient: this.clients.getSlackClient(),
+                    catalogModel: this.models.getCatalogModel(),
                 }),
         );
     }
@@ -293,6 +295,7 @@ export class ServiceRepository
                     spaceModel: this.models.getSpaceModel(),
                     githubAppInstallationsModel:
                         this.models.getGithubAppInstallationsModel(),
+                    analytics: this.context.lightdashAnalytics,
                 }),
         );
     }
@@ -305,6 +308,8 @@ export class ServiceRepository
                     githubAppInstallationsModel:
                         this.models.getGithubAppInstallationsModel(),
                     userModel: this.models.getUserModel(),
+                    lightdashConfig: this.context.lightdashConfig,
+                    analytics: this.context.lightdashAnalytics,
                 }),
         );
     }
@@ -434,6 +439,8 @@ export class ServiceRepository
                     downloadFileModel: this.models.getDownloadFileModel(),
                     s3Client: this.clients.getS3Client(),
                     groupsModel: this.models.getGroupsModel(),
+                    tagsModel: this.models.getTagsModel(),
+                    catalogModel: this.models.getCatalogModel(),
                 }),
         );
     }
@@ -453,6 +460,7 @@ export class ServiceRepository
                     schedulerClient: this.clients.getSchedulerClient(),
                     slackClient: this.clients.getSlackClient(),
                     dashboardModel: this.models.getDashboardModel(),
+                    catalogModel: this.models.getCatalogModel(),
                 }),
         );
     }
@@ -468,6 +476,7 @@ export class ServiceRepository
                     savedChartModel: this.models.getSavedChartModel(),
                     dashboardModel: this.models.getDashboardModel(),
                     spaceModel: this.models.getSpaceModel(),
+                    projectModel: this.models.getProjectModel(),
                     schedulerClient: this.clients.getSchedulerClient(),
                     slackClient: this.clients.getSlackClient(),
                 }),
@@ -623,6 +632,7 @@ export class ServiceRepository
                     catalogModel: this.models.getCatalogModel(),
                     savedChartModel: this.models.getSavedChartModel(),
                     spaceModel: this.models.getSpaceModel(),
+                    tagsModel: this.models.getTagsModel(),
                 }),
         );
     }

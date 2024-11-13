@@ -50,13 +50,13 @@ import uniqWith from 'lodash/uniqWith';
 import { DatabaseError } from 'pg';
 import { v4 as uuidv4 } from 'uuid';
 import { LightdashConfig } from '../../config/parseConfig';
-import { CatalogTableName, DbCatalogIn } from '../../database/entities/catalog';
 import {
     DashboardTabsTableName,
     DashboardViewsTableName,
     DbDashboard,
     DbDashboardTabs,
 } from '../../database/entities/dashboards';
+import { GroupMembershipTableName } from '../../database/entities/groupMemberships';
 import { OrganizationMembershipsTableName } from '../../database/entities/organizationMemberships';
 import {
     DbOrganization,
@@ -64,7 +64,10 @@ import {
 } from '../../database/entities/organizations';
 import { PinnedListTableName } from '../../database/entities/pinnedList';
 import { ProjectGroupAccessTableName } from '../../database/entities/projectGroupAccess';
-import { DbProjectMembership } from '../../database/entities/projectMemberships';
+import {
+    DbProjectMembership,
+    ProjectMembershipsTableName,
+} from '../../database/entities/projectMemberships';
 import {
     CachedExploresTableName,
     CachedExploreTableName,
@@ -86,7 +89,6 @@ import { WarehouseCredentialTableName } from '../../database/entities/warehouseC
 import Logger from '../../logging/logger';
 import { wrapSentryTransaction } from '../../utils';
 import { EncryptionUtil } from '../../utils/EncryptionUtil/EncryptionUtil';
-import { convertExploresToCatalog } from '../CatalogModel/utils';
 import Transaction = Knex.Transaction;
 
 export type ProjectModelArguments = {
@@ -186,26 +188,96 @@ export class ProjectModel {
         if (orgs.length === 0) {
             throw new NotExistsError('Cannot find organization');
         }
-        const projects = await this.database('projects')
+
+        const organizationId = orgs[0].organization_id;
+
+        const projects = await this.database
+            .with('agg_project_group_access_counts', (q) => {
+                void q
+                    .select(
+                        'projects.project_uuid',
+                        this.database.raw(
+                            `COUNT(distinct ${GroupMembershipTableName}.user_id) as member_count`,
+                        ),
+                    )
+                    .from(ProjectGroupAccessTableName)
+                    .groupBy('projects.project_uuid')
+                    .leftJoin(
+                        'projects',
+                        'projects.project_uuid',
+                        `${ProjectGroupAccessTableName}.project_uuid`,
+                    )
+                    .leftJoin(
+                        GroupMembershipTableName,
+                        `${GroupMembershipTableName}.group_uuid`,
+                        `${ProjectGroupAccessTableName}.group_uuid`,
+                    )
+                    .where('projects.organization_id', organizationId);
+            })
+            .with('agg_project_membership_counts', (q) => {
+                void q
+                    .select(
+                        'projects.project_uuid',
+                        this.database.raw(
+                            `COUNT(distinct ${ProjectMembershipsTableName}.user_id) as member_count`,
+                        ),
+                    )
+                    .from(ProjectMembershipsTableName)
+                    .groupBy('projects.project_uuid')
+                    .leftJoin(
+                        'projects',
+                        'projects.project_id',
+                        `${ProjectMembershipsTableName}.project_id`,
+                    )
+                    .where('projects.organization_id', organizationId);
+            })
+            .from('projects')
             .leftJoin(
                 WarehouseCredentialTableName,
                 'projects.project_id',
-                'warehouse_credentials.project_id',
+                `${WarehouseCredentialTableName}.project_id`,
             )
             .select(
-                'project_uuid',
-                'name',
-                'project_type',
-                `warehouse_type`,
-                `encrypted_credentials`,
+                'projects.project_uuid',
+                'projects.name',
+                'projects.project_type',
+                `projects.copied_from_project_uuid`,
+                `projects.created_by_user_uuid`,
+                `${WarehouseCredentialTableName}.warehouse_type`,
+                `${WarehouseCredentialTableName}.encrypted_credentials`,
+                this.database.raw(
+                    '(agg_project_group_access_counts.member_count + agg_project_membership_counts.member_count) as member_count',
+                ),
             )
-            .where('organization_id', orgs[0].organization_id);
+            .leftJoin(
+                'agg_project_group_access_counts',
+                'projects.project_uuid',
+                'agg_project_group_access_counts.project_uuid',
+            )
+            .leftJoin(
+                'agg_project_membership_counts',
+                'projects.project_uuid',
+                'agg_project_membership_counts.project_uuid',
+            )
+            .where('organization_id', organizationId)
+            .orderByRaw(
+                `
+                    CASE
+                        WHEN projects.project_type = 'DEFAULT' THEN 0
+                        ELSE 1
+                    END,
+                    member_count DESC,
+                    projects.created_at ASC
+                `,
+            );
 
         return projects.map<OrganizationProject>(
             ({
                 name,
                 project_uuid,
                 project_type,
+                created_by_user_uuid,
+                copied_from_project_uuid,
                 warehouse_type,
                 encrypted_credentials,
             }) => {
@@ -217,6 +289,8 @@ export class ProjectModel {
                         name,
                         projectUuid: project_uuid,
                         type: project_type,
+                        createdByUserUuid: created_by_user_uuid,
+                        upstreamProjectUuid: copied_from_project_uuid,
                         warehouseType: warehouse_type as WarehouseTypes,
                         requireUserCredentials:
                             !!warehouseCredentials.requireUserCredentials,
@@ -268,6 +342,7 @@ export class ProjectModel {
     }
 
     async create(
+        userUuid: string,
         organizationUuid: string,
         data: CreateProject,
     ): Promise<string> {
@@ -319,6 +394,13 @@ export class ProjectModel {
                             : null,
                     dbt_version: data.dbtVersion,
                     semantic_layer_connection: encryptedSemanticLayerConnection,
+                    ...(copiedProjects.length === 1
+                        ? {
+                              scheduler_timezone:
+                                  copiedProjects[0].scheduler_timezone,
+                          }
+                        : {}),
+                    created_by_user_uuid: userUuid,
                 })
                 .returning('*');
 
@@ -393,6 +475,8 @@ export class ProjectModel {
                   dbt_version: SupportedDbtVersions;
                   copied_from_project_uuid?: string;
                   semantic_layer_connection: Buffer | null;
+                  scheduler_timezone: string;
+                  created_by_user_uuid: string | null;
               }
             | {
                   name: string;
@@ -405,6 +489,8 @@ export class ProjectModel {
                   dbt_version: SupportedDbtVersions;
                   copied_from_project_uuid?: string;
                   semantic_layer_connection: Buffer | null;
+                  scheduler_timezone: string;
+                  created_by_user_uuid: string | null;
               }
         )[];
         return wrapSentryTransaction(
@@ -455,6 +541,12 @@ export class ProjectModel {
                             .withSchema(ProjectTableName),
                         this.database
                             .ref('semantic_layer_connection')
+                            .withSchema(ProjectTableName),
+                        this.database
+                            .ref('scheduler_timezone')
+                            .withSchema(ProjectTableName),
+                        this.database
+                            .ref('created_by_user_uuid')
                             .withSchema(ProjectTableName),
                     ])
                     .select<QueryResult>()
@@ -508,6 +600,8 @@ export class ProjectModel {
                     dbtVersion: project.dbt_version,
                     upstreamProjectUuid: project.copied_from_project_uuid,
                     semanticLayerConnection,
+                    schedulerTimezone: project.scheduler_timezone,
+                    createdByUserUuid: project.created_by_user_uuid,
                 };
                 if (!project.warehouse_type) {
                     return result;
@@ -553,6 +647,7 @@ export class ProjectModel {
                 `${ProjectTableName}.project_uuid`,
                 `${OrganizationTableName}.organization_uuid`,
                 `${ProjectTableName}.copied_from_project_uuid`,
+                `${ProjectTableName}.project_type`,
             ])
             .where('projects.project_uuid', projectUuid)
             .first();
@@ -635,6 +730,8 @@ export class ProjectModel {
             dbtVersion: project.dbtVersion,
             upstreamProjectUuid: project.upstreamProjectUuid || undefined,
             semanticLayerConnection: nonSensitiveSemanticLayerCredentials,
+            schedulerTimezone: project.schedulerTimezone,
+            createdByUserUuid: project.createdByUserUuid ?? null,
         };
     }
 
@@ -844,61 +941,6 @@ export class ProjectModel {
         );
     }
 
-    async indexCatalog(
-        projectUuid: string,
-        cachedExplores: (Explore & { cachedExploreUuid: string })[],
-    ): Promise<DbCatalogIn[]> {
-        if (cachedExplores.length === 0) {
-            return [];
-        }
-
-        try {
-            const wrapped = await wrapSentryTransaction(
-                'indexCatalog',
-                { projectUuid, cachedExploresSize: cachedExplores.length },
-                async () => {
-                    const catalogItems = await wrapSentryTransaction(
-                        'indexCatalog.convertExploresToCatalog',
-                        {
-                            projectUuid,
-                            cachedExploresLength: cachedExplores.length,
-                        },
-                        async () =>
-                            convertExploresToCatalog(
-                                projectUuid,
-                                cachedExplores,
-                            ),
-                    );
-
-                    const transactionInserts = await wrapSentryTransaction(
-                        'indexCatalog.insert',
-                        { projectUuid, catalogSize: catalogItems.length },
-                        () =>
-                            this.database.transaction(async (trx) => {
-                                await trx(CatalogTableName)
-                                    .where('project_uuid', projectUuid)
-                                    .delete();
-
-                                const inserts = await this.database
-                                    .batchInsert(CatalogTableName, catalogItems)
-                                    .returning('*')
-                                    .transacting(trx);
-
-                                return inserts;
-                            }),
-                    );
-
-                    return transactionInserts;
-                },
-            );
-
-            return wrapped;
-        } catch (e) {
-            Logger.error(`Failed to index catalog ${projectUuid}, ${e}`);
-            return [];
-        }
-    }
-
     static getExploresWithCacheUuids(
         explores: (Explore | ExploreError)[],
         cachedExplore: { name: string; cached_explore_uuid: string }[],
@@ -930,7 +972,9 @@ export class ProjectModel {
     async saveExploresToCache(
         projectUuid: string,
         explores: (Explore | ExploreError)[],
-    ): Promise<DbCachedExplores> {
+    ): Promise<{
+        cachedExplores: DbCachedExplores;
+    }> {
         return wrapSentryTransaction(
             'ProjectModel.saveExploresToCache',
             {},
@@ -953,9 +997,7 @@ export class ProjectModel {
                 );
 
                 // cache explores individually
-                const cachedExplore = await this.database(
-                    CachedExploreTableName,
-                )
+                await this.database(CachedExploreTableName)
                     .insert(
                         uniqueExplores.map((explore) => ({
                             project_uuid: projectUuid,
@@ -967,16 +1009,6 @@ export class ProjectModel {
                     .onConflict(['project_uuid', 'name'])
                     .merge()
                     .returning(['name', 'cached_explore_uuid']);
-
-                const exploresWithCachedExploreUuid =
-                    ProjectModel.getExploresWithCacheUuids(
-                        explores,
-                        cachedExplore,
-                    );
-                await this.indexCatalog(
-                    projectUuid,
-                    exploresWithCachedExploreUuid,
-                );
 
                 // cache explores together
                 const [cachedExplores] = await this.database(
@@ -990,7 +1022,9 @@ export class ProjectModel {
                     .merge()
                     .returning('*');
 
-                return cachedExplores;
+                return {
+                    cachedExplores,
+                };
             },
         );
     }
@@ -2239,5 +2273,30 @@ export class ProjectModel {
             .returning('*');
 
         return updatedProject;
+    }
+
+    async updateDefaultSchedulerTimezone(
+        projectUuid: string,
+        timezone: string,
+    ) {
+        const [updatedProject] = await this.database(ProjectTableName)
+            .update({
+                scheduler_timezone: timezone,
+            })
+            .where('project_uuid', projectUuid)
+            .returning('*');
+
+        return updatedProject;
+    }
+
+    async getCachedExploresWithUuid(
+        projectUuid: string,
+        explores: (Explore | ExploreError)[],
+    ) {
+        const cachedExplores = await this.database(CachedExploreTableName)
+            .select('name', 'cached_explore_uuid')
+            .where('project_uuid', projectUuid);
+
+        return ProjectModel.getExploresWithCacheUuids(explores, cachedExplores);
     }
 }

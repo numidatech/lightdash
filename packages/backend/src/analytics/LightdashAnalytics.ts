@@ -90,26 +90,39 @@ type IdentityLinkedEvent = BaseTrack & {
     };
 };
 
-type CreateUserEvent = BaseTrack & {
+export type CreateUserEvent = BaseTrack & {
     event: 'user.created';
+    userId?: string;
     properties: {
+        context: string; // context on where/why this user was created
+        createdUserId: string;
+        organizationId: string | undefined; // undefined because they can join an org later
         userConnectionType: 'password' | OpenIdIdentityIssuerType;
     };
 };
 
-type DeleteUserEvent = BaseTrack & {
+export type DeleteUserEvent = BaseTrack & {
     event: 'user.deleted';
+    userId?: string;
     properties: {
+        context: string; // context on where/why this user was delete
         firstName: string;
         lastName: string;
-        email: string;
-        organizationId: string;
+        email: string | undefined;
+        organizationId: string | undefined;
+        deletedUserId: string;
     };
 };
 
-type UpdateUserEvent = BaseTrack & {
+export type UpdateUserEvent = BaseTrack & {
     event: 'user.updated';
-    properties: LightdashUser & { jobTitle?: string };
+    userId?: string;
+    properties: Omit<LightdashUser, 'userUuid' | 'organizationUuid'> & {
+        updatedUserId: string;
+        organizationId: string | undefined;
+        jobTitle?: string;
+        context: string; // context on where/why this user was updated
+    };
 };
 
 function isUserUpdatedEvent(event: BaseTrack): event is UpdateUserEvent {
@@ -276,13 +289,6 @@ type OrganizationAllowedEmailDomainUpdatedEvent = BaseTrack & {
     };
 };
 
-type TrackUserDeletedEvent = BaseTrack & {
-    event: 'user.deleted';
-    properties: {
-        deletedUserUuid: string;
-    };
-};
-
 type MetricFlowQueryEvent = BaseTrack & {
     event: 'metricflow_query.executed';
     properties: {
@@ -307,6 +313,7 @@ type UpdateSavedChartEvent = BaseTrack & {
         projectId: string;
         savedQueryId: string;
         dashboardId: string | undefined;
+        virtualViewId: string | undefined;
     };
 };
 type DeleteSavedChartEvent = BaseTrack & {
@@ -391,6 +398,7 @@ export type CreateSavedChartEvent = BaseTrack & {
     properties: CreateSavedChartVersionEvent['properties'] & {
         dashboardId: string | undefined;
         duplicated?: boolean;
+        virtualViewId: string | undefined;
     };
 };
 
@@ -848,6 +856,16 @@ export type SchedulerUpsertEvent = BaseTrack & {
             schedulerTargetId: string;
             type: 'slack' | 'email';
         }>;
+        timeZone: string | undefined;
+    };
+};
+export type SchedulerTimezoneUpdateEvent = BaseTrack & {
+    event: 'default_scheduler_time_zone.updated';
+    userId: string;
+    properties: {
+        projectId: string;
+        organizationId?: string;
+        timeZone: string;
     };
 };
 
@@ -1025,8 +1043,9 @@ export type UserAttributeDeleteEvent = BaseTrack & {
 
 export type GroupCreateAndUpdateEvent = BaseTrack & {
     event: 'group.created' | 'group.updated';
-    userId: string;
+    userId?: string;
     properties: {
+        context: string; // context on where/why this group was created/updated
         organizationId: string;
         groupId: string;
         name: string;
@@ -1037,8 +1056,9 @@ export type GroupCreateAndUpdateEvent = BaseTrack & {
 
 export type GroupDeleteEvent = BaseTrack & {
     event: 'group.deleted';
-    userId: string;
+    userId?: string;
     properties: {
+        context: string; // context on where/why this group was deleted
         organizationId: string;
         groupId: string;
     };
@@ -1057,7 +1077,11 @@ export type SemanticLayerView = BaseTrack & {
     };
 };
 
-export type BaseVirtualViewEvent = BaseTrack & {
+export type VirtualViewEvent = BaseTrack & {
+    event:
+        | 'virtual_view.created'
+        | 'virtual_view.updated'
+        | 'virtual_view.deleted';
     userId: string;
     properties: {
         virtualViewId: string;
@@ -1067,16 +1091,38 @@ export type BaseVirtualViewEvent = BaseTrack & {
     };
 };
 
-export type VirtualViewCreatedEvent = BaseVirtualViewEvent & {
-    event: 'virtual_view.created';
+export type GithubInstallEvent = BaseTrack & {
+    event:
+        | 'github_install.started'
+        | 'github_install.completed'
+        | 'github_install.error';
+    userId: string;
+    properties: {
+        organizationId: string;
+        byAdmin?: boolean;
+        error?: string; // only for error
+    };
 };
 
-export type VirtualViewUpdatedEvent = BaseVirtualViewEvent & {
-    event: 'virtual_view.updated';
+export type WriteBackEvent = BaseTrack & {
+    event: 'write_back.created';
+    userId: string;
+    properties: {
+        name: string;
+        organizationId: string;
+        projectId: string;
+        context: QueryExecutionContext;
+    };
 };
 
-export type VirtualViewDeletedEvent = BaseVirtualViewEvent & {
-    event: 'virtual_view.deleted';
+type CreateTagEvent = BaseTrack & {
+    event: 'category.created';
+    userId: string;
+    properties: {
+        name: string;
+        projectId: string;
+        organizationId: string;
+    };
 };
 
 type TypedEvent =
@@ -1095,7 +1141,6 @@ type TypedEvent =
     | ViewChartVersionEvent
     | RollbackChartVersionEvent
     | CreateSavedChartVersionEvent
-    | TrackUserDeletedEvent
     | ProjectErrorEvent
     | ApiErrorEvent
     | ProjectEvent
@@ -1152,9 +1197,11 @@ type TypedEvent =
     | DeleteSqlChartEvent
     | CreateSqlChartVersionEvent
     | CommentsEvent
-    | VirtualViewCreatedEvent
-    | VirtualViewUpdatedEvent
-    | VirtualViewDeletedEvent;
+    | VirtualViewEvent
+    | GithubInstallEvent
+    | WriteBackEvent
+    | SchedulerTimezoneUpdateEvent
+    | CreateTagEvent;
 
 type WrapTypedEvent = SemanticLayerView;
 

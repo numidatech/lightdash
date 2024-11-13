@@ -24,6 +24,7 @@ import {
 import { DbUser, UserTableName } from '../database/entities/users';
 import KnexPaginate from '../database/pagination';
 import { getColumnMatchRegexQuery } from './SearchModel/utils/search';
+import { UserModel } from './UserModel';
 
 type DbOrganizationMemberProfile = {
     user_uuid: string;
@@ -81,7 +82,12 @@ export class OrganizationMemberProfileModel {
 
     private static parseRow(
         member: DbOrganizationMemberProfile,
+        hasAuthentication: boolean = false,
     ): OrganizationMemberProfile {
+        const isPending = !hasAuthentication;
+        const isInviteExpired =
+            !isPending && !!member.expires_at && member.expires_at < new Date();
+
         return {
             userUuid: member.user_uuid,
             firstName: member.first_name,
@@ -90,9 +96,8 @@ export class OrganizationMemberProfileModel {
             organizationUuid: member.organization_uuid,
             role: member.role,
             isActive: member.is_active,
-            isInviteExpired:
-                !member.is_active &&
-                (!member.expires_at || member.expires_at < new Date()),
+            isInviteExpired,
+            isPending,
         };
     }
 
@@ -108,14 +113,33 @@ export class OrganizationMemberProfileModel {
             )
             .select<DbOrganizationMemberProfile[]>(SelectColumns);
 
-        return member && OrganizationMemberProfileModel.parseRow(member);
+        const usersHaveAuthenticationRows =
+            await UserModel.findIfUsersHaveAuthentication(this.database, {
+                userUuids: [userUuid],
+            });
+
+        return (
+            member &&
+            OrganizationMemberProfileModel.parseRow(
+                member,
+                usersHaveAuthenticationRows[0]?.has_authentication,
+            )
+        );
     }
 
-    async getOrganizationMembers(
-        organizationUuid: string,
-        paginateArgs?: KnexPaginateArgs,
-        searchQuery?: string,
-    ): Promise<KnexPaginatedData<OrganizationMemberProfile[]>> {
+    async getOrganizationMembers({
+        organizationUuid,
+        paginateArgs,
+        searchQuery,
+        sort,
+        exactMatchFilter,
+    }: {
+        organizationUuid: string;
+        paginateArgs?: KnexPaginateArgs;
+        searchQuery?: string;
+        sort?: { column: string; direction: 'asc' | 'desc' };
+        exactMatchFilter?: { column: string; value: string };
+    }): Promise<KnexPaginatedData<OrganizationMemberProfile[]>> {
         let query = this.queryBuilder()
             .where(
                 `${OrganizationTableName}.organization_uuid`,
@@ -123,6 +147,15 @@ export class OrganizationMemberProfileModel {
             )
             .select<DbOrganizationMemberProfile[]>(SelectColumns);
 
+        // Apply exact match filter if provided
+        if (exactMatchFilter) {
+            query = query.where(
+                exactMatchFilter.column,
+                exactMatchFilter.value,
+            );
+        }
+
+        // Apply search query if present
         if (searchQuery) {
             query = getColumnMatchRegexQuery(query, searchQuery, [
                 'first_name',
@@ -132,14 +165,37 @@ export class OrganizationMemberProfileModel {
             ]);
         }
 
+        // Apply sorting if present
+        if (sort && sort.column && sort.direction) {
+            query = query.orderBy(sort.column, sort.direction);
+        }
+
+        // Paginate the results
         const { pagination, data } = await KnexPaginate.paginate(
             query,
             paginateArgs,
         );
 
+        const usersHaveAuthenticationRows =
+            await UserModel.findIfUsersHaveAuthentication(this.database, {
+                userUuids: data.map((m) => m.user_uuid),
+            });
+
+        const usersHaveAuthenticationMap = new Map(
+            usersHaveAuthenticationRows.map((row) => [
+                row.user_uuid,
+                row.has_authentication,
+            ]),
+        );
+
         return {
             pagination,
-            data: data.map(OrganizationMemberProfileModel.parseRow),
+            data: data.map((m) =>
+                OrganizationMemberProfileModel.parseRow(
+                    m,
+                    usersHaveAuthenticationMap.get(m.user_uuid) || false,
+                ),
+            ),
         };
     }
 
@@ -249,10 +305,24 @@ export class OrganizationMemberProfileModel {
                       })),
         }));
 
+        const usersHaveAuthenticationRows =
+            await UserModel.findIfUsersHaveAuthentication(this.database, {
+                userUuids: updatedMembers.map((m) => m.user_uuid),
+            });
+        const usersHaveAuthenticationMap = new Map(
+            usersHaveAuthenticationRows.map((row) => [
+                row.user_uuid,
+                row.has_authentication,
+            ]),
+        );
+
         return {
             pagination,
             data: updatedMembers.map((m) => ({
-                ...OrganizationMemberProfileModel.parseRow(m),
+                ...OrganizationMemberProfileModel.parseRow(
+                    m,
+                    usersHaveAuthenticationMap.get(m.user_uuid) || false,
+                ),
                 groups: m.groups,
             })),
         };
@@ -268,7 +338,23 @@ export class OrganizationMemberProfileModel {
             )
             .andWhere('role', 'admin')
             .select<DbOrganizationMemberProfile[]>(SelectColumns);
-        return members.map(OrganizationMemberProfileModel.parseRow);
+        const usersHaveAuthenticationRows =
+            await UserModel.findIfUsersHaveAuthentication(this.database, {
+                userUuids: members.map((m) => m.user_uuid),
+            });
+        const usersHaveAuthenticationMap = new Map(
+            usersHaveAuthenticationRows.map((row) => [
+                row.user_uuid,
+                row.has_authentication,
+            ]),
+        );
+
+        return members.map((m) =>
+            OrganizationMemberProfileModel.parseRow(
+                m,
+                usersHaveAuthenticationMap.get(m.user_uuid) || false,
+            ),
+        );
     }
 
     createOrganizationMembership = async (
@@ -278,6 +364,47 @@ export class OrganizationMemberProfileModel {
             'organization_memberships',
         ).insert<DbOrganizationMembershipIn>(membershipIn);
     };
+
+    async createOrganizationMembershipByUuid({
+        organizationUuid,
+        userUuid,
+        role,
+    }: {
+        organizationUuid: string;
+        userUuid: string;
+        role: OrganizationMemberRole;
+    }): Promise<void> {
+        // Look up user_id from user_uuid
+        const user = await this.database
+            .select('user_id')
+            .from(UserTableName)
+            .where('user_uuid', userUuid)
+            .first();
+
+        if (!user) {
+            throw new NotFoundError(`User with UUID ${userUuid} not found.`);
+        }
+
+        // Look up organization_id from organization_uuid
+        const organization = await this.database
+            .select('organization_id')
+            .from(OrganizationTableName)
+            .where('organization_uuid', organizationUuid)
+            .first();
+
+        if (!organization) {
+            throw new NotFoundError(
+                `Organization with UUID ${organizationUuid} not found.`,
+            );
+        }
+
+        // Insert new organization membership
+        await this.createOrganizationMembership({
+            user_id: user.user_id,
+            organization_id: organization.organization_id,
+            role,
+        });
+    }
 
     async getOrganizationMemberByUuid(
         organizationUuid: string,

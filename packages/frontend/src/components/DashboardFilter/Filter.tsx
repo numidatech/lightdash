@@ -12,7 +12,11 @@ import {
     Tooltip,
 } from '@mantine/core';
 import { useDisclosure, useId } from '@mantine/hooks';
-import { IconFilter } from '@tabler/icons-react';
+import {
+    IconFilter,
+    IconGripVertical,
+    IconInfoCircle,
+} from '@tabler/icons-react';
 import { useCallback, useMemo, type FC } from 'react';
 import { useDashboardContext } from '../../providers/DashboardProvider';
 import {
@@ -29,6 +33,7 @@ type Props = {
     isTemporary?: boolean;
     field?: FilterableDimension;
     filterRule?: DashboardFilterRule;
+    appliesToTabs?: String[];
     openPopoverId: string | undefined;
     activeTabUuid?: string | undefined;
     onPopoverOpen: (popoverId: string) => void;
@@ -44,6 +49,7 @@ const Filter: FC<Props> = ({
     isTemporary,
     field,
     filterRule,
+    appliesToTabs,
     openPopoverId,
     activeTabUuid,
     onPopoverOpen,
@@ -75,6 +81,8 @@ const Filter: FC<Props> = ({
     const [isSubPopoverOpen, { close: closeSubPopover, open: openSubPopover }] =
         useDisclosure();
 
+    const isDraggable = isEditMode && !isTemporary;
+
     const defaultFilterRule = useMemo(() => {
         if (!filterableFieldsByTileUuid || !field || !filterRule) return;
 
@@ -105,6 +113,28 @@ const Filter: FC<Props> = ({
 
         return getFilterRuleTables(filterRule, field, allFilterableFields);
     }, [filterRule, field, allFilterableFields]);
+
+    const hasUnsetRequiredFilter =
+        filterRule?.required && !hasFilterValueSet(filterRule);
+
+    const inactiveFilterInfo = useMemo(() => {
+        if (
+            activeTabUuid &&
+            appliesToTabs &&
+            !appliesToTabs.includes(activeTabUuid)
+        ) {
+            const appliedTabList = appliesToTabs
+                .map((tabId) => {
+                    return `'${
+                        dashboardTabs.find((tab) => tab.uuid === tabId)?.name
+                    }'`;
+                })
+                .join(', ');
+            return appliedTabList
+                ? `This filter only applies to ${appliedTabList}.`
+                : 'This filter does not apply to any tabs.';
+        }
+    }, [activeTabUuid, appliesToTabs, dashboardTabs]);
 
     const handleClose = useCallback(() => {
         if (isPopoverOpen) onPopoverClose();
@@ -184,12 +214,7 @@ const Filter: FC<Props> = ({
                         inline
                         position="top-end"
                         size={16}
-                        disabled={
-                            !(
-                                filterRule?.required &&
-                                !hasFilterValueSet(filterRule)
-                            )
-                        }
+                        disabled={!hasUnsetRequiredFilter}
                         label={
                             <Tooltip
                                 fz="xs"
@@ -214,13 +239,21 @@ const Filter: FC<Props> = ({
                             pos="relative"
                             size="xs"
                             variant={
-                                isTemporary ||
-                                (filterRule?.required &&
-                                    !hasFilterValueSet(filterRule))
+                                isTemporary || hasUnsetRequiredFilter
                                     ? 'outline'
                                     : 'default'
                             }
                             bg="white"
+                            leftIcon={
+                                isDraggable && (
+                                    <MantineIcon
+                                        icon={IconGripVertical}
+                                        color="gray"
+                                        cursor="grab"
+                                        size="sm"
+                                    />
+                                )
+                            }
                             rightIcon={
                                 (isEditMode || isTemporary) && (
                                     <CloseButton size="sm" onClick={onRemove} />
@@ -231,11 +264,11 @@ const Filter: FC<Props> = ({
                                     color: 'black',
                                 },
                                 root: {
-                                    borderWidth:
-                                        filterRule?.required &&
-                                        !hasFilterValueSet(filterRule)
-                                            ? 3
-                                            : 'default',
+                                    border: hasUnsetRequiredFilter
+                                        ? 'solid 3px'
+                                        : inactiveFilterInfo
+                                        ? 'dashed 1px'
+                                        : 'default',
                                 },
                             }}
                             onClick={() =>
@@ -286,6 +319,14 @@ const Filter: FC<Props> = ({
                                     )}
                                 </Text>
                             </Text>
+                            {inactiveFilterInfo ? (
+                                <Tooltip fz="xs" label={inactiveFilterInfo}>
+                                    <MantineIcon
+                                        icon={IconInfoCircle}
+                                        style={{ marginLeft: 10 }}
+                                    />
+                                </Tooltip>
+                            ) : null}
                         </Button>
                     </Indicator>
                 )}

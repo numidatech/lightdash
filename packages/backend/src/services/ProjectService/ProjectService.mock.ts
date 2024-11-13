@@ -242,6 +242,8 @@ export const projectWithSensitiveFields: Project = {
         api_key: 'api_key',
         environment_id: 'environment_id',
     },
+    schedulerTimezone: 'UTC',
+    createdByUserUuid: user.userUuid,
 };
 
 export const projectSummary: ProjectSummary = {
@@ -254,6 +256,8 @@ export const defaultProject: OrganizationProject = {
     projectUuid: 'projectUuid',
     name: 'name',
     type: ProjectType.DEFAULT,
+    createdByUserUuid: user.userUuid,
+    upstreamProjectUuid: null,
     warehouseType: WarehouseTypes.POSTGRES,
     requireUserCredentials: false,
 };

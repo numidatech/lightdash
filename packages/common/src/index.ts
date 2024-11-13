@@ -50,6 +50,7 @@ import {
 import { type SearchResults } from './types/search';
 import { type ShareUrl } from './types/share';
 import { type SlackSettings } from './types/slackSettings';
+import { type ApiCreateTagResponse } from './types/tags';
 
 import {
     type ApiCreateComment,
@@ -113,11 +114,13 @@ import { type ValidationResponse } from './types/validation';
 import {
     type ApiCatalogAnalyticsResults,
     type ApiCatalogMetadataResults,
+    type ApiMetricsCatalog,
 } from './types/catalog';
 import {
     type ApiChartContentResponse,
     type ApiContentResponse,
 } from './types/content';
+import type { ApiGroupListResponse } from './types/groups';
 import { type ApiPromotionChangesResponse } from './types/promotion';
 import {
     type ApiSemanticLayerClientInfo,
@@ -156,6 +159,7 @@ export * from './types/api/comments';
 export * from './types/api/errors';
 export * from './types/api/notifications';
 export * from './types/api/share';
+export * from './types/api/sort';
 export * from './types/api/success';
 export * from './types/api/uuid';
 export * from './types/catalog';
@@ -206,6 +210,7 @@ export * from './types/space';
 export * from './types/sqlRunner';
 export * from './types/SshKeyPair';
 export * from './types/table';
+export * from './types/tags';
 export * from './types/timeFrames';
 export * from './types/timezone';
 export * from './types/user';
@@ -539,6 +544,7 @@ export type UpdateUserArgs = {
     isMarketingOptedIn: boolean;
     isTrackingAnonymized: boolean;
     isSetupComplete: boolean;
+    isActive: boolean;
 };
 
 export type PasswordResetLink = {
@@ -684,7 +690,10 @@ type ApiResults =
     | ApiSemanticViewerChartGet['results']
     | ApiSemanticViewerChartUpdate['results']
     | ApiCreateVirtualView['results']
-    | ApiGithubDbtWritePreview['results'];
+    | ApiGithubDbtWritePreview['results']
+    | ApiMetricsCatalog['results']
+    | ApiGroupListResponse['results']
+    | ApiCreateTagResponse['results'];
 
 export type ApiResponse<T extends ApiResults = ApiResults> = {
     status: 'ok';
@@ -849,14 +858,21 @@ export const DbtProjectTypeLabels: Record<DbtProjectType, string> = {
 
 export type CreateProject = Omit<
     Project,
-    'projectUuid' | 'organizationUuid'
+    | 'projectUuid'
+    | 'organizationUuid'
+    | 'schedulerTimezone'
+    | 'createdByUserUuid'
 > & {
     warehouseConnection: CreateWarehouseCredentials;
 };
 
 export type UpdateProject = Omit<
     Project,
-    'projectUuid' | 'organizationUuid' | 'type'
+    | 'projectUuid'
+    | 'organizationUuid'
+    | 'type'
+    | 'schedulerTimezone'
+    | 'createdByUserUuid'
 > & {
     warehouseConnection: CreateWarehouseCredentials;
 };
@@ -1079,7 +1095,7 @@ function formatRawValue(
         (field.type === DimensionType.DATE ||
             field.type === DimensionType.TIMESTAMP);
 
-    if (isTimestamp) {
+    if (isTimestamp && value !== null) {
         // We want to return the datetime in UTC to avoid timezone issues in the frontend like in chart tooltips
         return dayjs(value).utc(true).format();
     }

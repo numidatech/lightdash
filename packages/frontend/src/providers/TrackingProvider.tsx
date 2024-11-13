@@ -58,7 +58,13 @@ type GenericEvent = {
         | EventName.DATE_ZOOM_CLICKED
         | EventName.COMMENTS_CLICKED
         | EventName.NOTIFICATIONS_COMMENTS_ITEM_CLICKED
-        | EventName.DASHBOARD_AUTO_REFRESH_UPDATED;
+        | EventName.DASHBOARD_AUTO_REFRESH_UPDATED
+        | EventName.METRICS_CATALOG_CHART_USAGE_CLICKED
+        | EventName.METRICS_CATALOG_EXPLORE_CLICKED
+        | EventName.METRICS_CATALOG_CHART_USAGE_CHART_CLICKED
+        | EventName.METRICS_CATALOG_CATEGORY_CLICKED
+        | EventName.METRICS_CATALOG_CATEGORY_FILTER_APPLIED
+        | EventName.METRICS_CATALOG_ICON_APPLIED;
     properties?: {};
 };
 
@@ -170,6 +176,64 @@ export type DashboardAutoRefreshUpdateEvent = {
     };
 };
 
+type MetricsCatalogChartUsageClickedEvent = {
+    name: EventName.METRICS_CATALOG_CHART_USAGE_CLICKED;
+    properties: {
+        organizationId: string;
+        projectId: string;
+        metricName: string;
+        chartCount: number;
+        tableName: string;
+    };
+};
+
+type MetricsCatalogExploreClickedEvent = {
+    name: EventName.METRICS_CATALOG_EXPLORE_CLICKED;
+    properties: {
+        organizationId: string;
+        projectId: string;
+        metricName: string;
+        tableName: string;
+    };
+};
+
+type MetricsCatalogChartUsageChartClickedEvent = {
+    name: EventName.METRICS_CATALOG_CHART_USAGE_CHART_CLICKED;
+    properties: {
+        organizationId: string;
+        projectId: string;
+        metricName: string;
+        tableName: string;
+        chartId: string;
+    };
+};
+
+type MetricsCatalogCategoryClickedEvent = {
+    name: EventName.METRICS_CATALOG_CATEGORY_CLICKED;
+    properties: {
+        organizationId: string;
+        projectId: string;
+        tagName: string;
+        isNewTag: boolean;
+    };
+};
+
+type MetricsCatalogCategoryFilterAppliedEvent = {
+    name: EventName.METRICS_CATALOG_CATEGORY_FILTER_APPLIED;
+    properties: {
+        organizationId: string;
+        projectId: string;
+    };
+};
+
+type MetricsCatalogIconAppliedEvent = {
+    name: EventName.METRICS_CATALOG_ICON_APPLIED;
+    properties: {
+        organizationId: string;
+        projectId: string;
+    };
+};
+
 export type EventData =
     | GenericEvent
     | FormClickedEvent
@@ -182,7 +246,13 @@ export type EventData =
     | CrossFilterDashboardAppliedEvent
     | ViewUnderlyingDataClickedEvent
     | DrillByClickedEvent
-    | DashboardAutoRefreshUpdateEvent;
+    | DashboardAutoRefreshUpdateEvent
+    | MetricsCatalogChartUsageClickedEvent
+    | MetricsCatalogExploreClickedEvent
+    | MetricsCatalogChartUsageChartClickedEvent
+    | MetricsCatalogCategoryClickedEvent
+    | MetricsCatalogCategoryFilterAppliedEvent
+    | MetricsCatalogIconAppliedEvent;
 
 type IdentifyData = {
     id: string;

@@ -5,7 +5,7 @@ import {
     type DashboardTab,
     type DashboardTile,
 } from '@lightdash/common';
-import { Box, Button, Group, Modal, Stack, Text } from '@mantine/core';
+import { Box, Button, Flex, Group, Modal, Stack, Text } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { captureException, useProfiler } from '@sentry/react';
 import { IconAlertCircle } from '@tabler/icons-react';
@@ -18,6 +18,7 @@ import MantineIcon from '../components/common/MantineIcon';
 import DashboardDeleteModal from '../components/common/modal/DashboardDeleteModal';
 import DashboardDuplicateModal from '../components/common/modal/DashboardDuplicateModal';
 import { DashboardExportModal } from '../components/common/modal/DashboardExportModal';
+import DashboardFiltersWarningModal from '../components/common/modal/DashboardFiltersWarningModal';
 import Page from '../components/common/Page/Page';
 import SuboptimalState from '../components/common/SuboptimalState/SuboptimalState';
 import DashboardFilter from '../components/DashboardFilter';
@@ -119,6 +120,9 @@ const Dashboard: FC = () => {
     const setDashboardFilters = useDashboardContext(
         (c) => c.setDashboardFilters,
     );
+    const resetDashboardFilters = useDashboardContext(
+        (c) => c.resetDashboardFilters,
+    );
     const setDashboardTemporaryFilters = useDashboardContext(
         (c) => c.setDashboardTemporaryFilters,
     );
@@ -175,6 +179,9 @@ const Dashboard: FC = () => {
             (tile) => tile.type === DashboardTileTypes.SEMANTIC_VIEWER_CHART,
         );
     }, [dashboardTiles]);
+
+    const [isFilterWarningModalOpen, setIsFilterWarningModalOpen] =
+        useState(false);
 
     // tabs state
     const [activeTab, setActiveTab] = useState<DashboardTab | undefined>();
@@ -551,6 +558,23 @@ const Dashboard: FC = () => {
         haveTabsChanged,
     ]);
 
+    const handleEnterEditMode = useCallback(() => {
+        resetDashboardFilters();
+        setIsFilterWarningModalOpen(false);
+        history.replace({
+            pathname: `/projects/${projectUuid}/dashboards/${dashboardUuid}/edit`,
+            search: '',
+        });
+    }, [history, projectUuid, dashboardUuid, resetDashboardFilters]);
+
+    const handleEditModeClicked = useCallback(() => {
+        if (haveFiltersChanged) {
+            setIsFilterWarningModalOpen(true);
+        } else {
+            handleEnterEditMode();
+        }
+    }, [haveFiltersChanged, handleEnterEditMode]);
+
     if (dashboardError) {
         return <ErrorState error={dashboardError.error} />;
     }
@@ -606,7 +630,6 @@ const Dashboard: FC = () => {
             </Modal>
 
             <Page
-                withPaddedContent
                 title={dashboard.name}
                 header={
                     <DashboardHeader
@@ -671,10 +694,12 @@ const Dashboard: FC = () => {
                         onExport={exportDashboardModalHandlers.open}
                         setAddingTab={setAddingTab}
                         onTogglePin={handleDashboardPinning}
+                        onEditClicked={handleEditModeClicked}
                     />
                 }
+                withFullHeight={true}
             >
-                <Group position="apart" align="flex-start" noWrap>
+                <Group position="apart" align="flex-start" noWrap px={'lg'}>
                     {dashboardChartTiles && dashboardChartTiles.length > 0 && (
                         <DashboardFilter
                             isEditMode={isEditMode}
@@ -685,23 +710,25 @@ const Dashboard: FC = () => {
                         <DateZoom isEditMode={isEditMode} />
                     )}
                 </Group>
-                <DashboardTabs
-                    isEditMode={isEditMode}
-                    hasRequiredDashboardFiltersToSet={
-                        hasRequiredDashboardFiltersToSet
-                    }
-                    addingTab={addingTab}
-                    dashboardTiles={dashboardTiles}
-                    handleAddTiles={handleAddTiles}
-                    handleUpdateTiles={handleUpdateTiles}
-                    handleDeleteTile={handleDeleteTile}
-                    handleBatchDeleteTiles={handleBatchDeleteTiles}
-                    handleEditTile={handleEditTiles}
-                    setGridWidth={setGridWidth}
-                    activeTab={activeTab}
-                    setActiveTab={setActiveTab}
-                    setAddingTab={setAddingTab}
-                />
+                <Flex style={{ flexGrow: 1, flexDirection: 'column' }}>
+                    <DashboardTabs
+                        isEditMode={isEditMode}
+                        hasRequiredDashboardFiltersToSet={
+                            hasRequiredDashboardFiltersToSet
+                        }
+                        addingTab={addingTab}
+                        dashboardTiles={dashboardTiles}
+                        handleAddTiles={handleAddTiles}
+                        handleUpdateTiles={handleUpdateTiles}
+                        handleDeleteTile={handleDeleteTile}
+                        handleBatchDeleteTiles={handleBatchDeleteTiles}
+                        handleEditTile={handleEditTiles}
+                        setGridWidth={setGridWidth}
+                        activeTab={activeTab}
+                        setActiveTab={setActiveTab}
+                        setAddingTab={setAddingTab}
+                    />
+                </Flex>
                 {isDeleteModalOpen && (
                     <DashboardDeleteModal
                         opened
@@ -728,6 +755,13 @@ const Dashboard: FC = () => {
                         uuid={dashboard.uuid}
                         onClose={duplicateModalHandlers.close}
                         onConfirm={duplicateModalHandlers.close}
+                    />
+                )}
+                {isFilterWarningModalOpen && (
+                    <DashboardFiltersWarningModal
+                        onConfirm={handleEnterEditMode}
+                        onClose={() => setIsFilterWarningModalOpen(false)}
+                        opened={isFilterWarningModalOpen}
                     />
                 )}
             </Page>
