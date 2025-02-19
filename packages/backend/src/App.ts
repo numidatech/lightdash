@@ -3,8 +3,12 @@
 import './sentry'; // Sentry has to be initialized before anything else
 
 import {
+    AnyType,
+    ApiError,
     LightdashError,
     LightdashMode,
+    SessionServiceAccount,
+    LightdashVersionHeader,
     SessionUser,
     UnexpectedServerError,
 } from '@lightdash/common';
@@ -21,6 +25,7 @@ import refresh from 'passport-oauth2-refresh';
 import path from 'path';
 import reDoc from 'redoc-express';
 import { URL } from 'url';
+import cors from 'cors';
 import { LightdashAnalytics } from './analytics/LightdashAnalytics';
 import {
     ClientProviderMap,
@@ -40,11 +45,14 @@ import {
     oneLoginPassportStrategy,
     OpenIDClientOktaStrategy,
 } from './controllers/authentication';
-import { errorHandler } from './errors';
+import { errorHandler, scimErrorHandler } from './errors';
 import { RegisterRoutes } from './generated/routes';
 import apiSpec from './generated/swagger.json';
 import Logger from './logging/logger';
-import { expressWinstonMiddleware } from './logging/winston';
+import {
+    expressWinstonMiddleware,
+    expressWinstonPreResponseMiddleware,
+} from './logging/winston';
 import { ModelProviderMap, ModelRepository } from './models/ModelRepository';
 import { postHogClient } from './postHog';
 import { apiV1Router } from './routers/apiV1Router';
@@ -68,6 +76,7 @@ declare global {
          */
         interface Request {
             services: ServiceRepository;
+            serviceAccount?: SessionServiceAccount;
             /**
              * @deprecated Clients should be used inside services. This will be removed soon.
              */
@@ -104,6 +113,7 @@ const schedulerWorkerFactory = (context: {
         semanticLayerService:
             context.serviceRepository.getSemanticLayerService(),
         catalogService: context.serviceRepository.getCatalogService(),
+        encryptionUtil: context.utils.getEncryptionUtil(),
     });
 
 const slackBotFactory = (context: {
@@ -111,6 +121,7 @@ const slackBotFactory = (context: {
     analytics: LightdashAnalytics;
     serviceRepository: ServiceRepository;
     models: ModelRepository;
+    clients: ClientRepository;
 }) =>
     new SlackBot({
         lightdashConfig: context.lightdashConfig,
@@ -119,7 +130,7 @@ const slackBotFactory = (context: {
         unfurlService: context.serviceRepository.getUnfurlService(),
     });
 
-type AppArguments = {
+export type AppArguments = {
     lightdashConfig: LightdashConfig;
     port: string | number;
     environment?: 'production' | 'development';
@@ -173,7 +184,7 @@ export default class App {
             lightdashConfig: this.lightdashConfig,
             writeKey: this.lightdashConfig.rudder.writeKey || 'notrack',
             dataPlaneUrl: this.lightdashConfig.rudder.dataPlaneUrl
-                ? `${this.lightdashConfig.rudder.dataPlaneUrl}/v1/batch`
+                ? this.lightdashConfig.rudder.dataPlaneUrl
                 : 'notrack',
             options: {
                 enable:
@@ -214,6 +225,7 @@ export default class App {
             }),
             clients: this.clients,
             models: this.models,
+            utils: this.utils,
         });
         this.slackBotFactory = args.slackBotFactory || slackBotFactory;
         this.schedulerWorkerFactory =
@@ -259,10 +271,45 @@ export default class App {
     }
 
     private async initExpress(expressApp: Express) {
+        // Cross-Origin Resource Sharing policy (CORS)
+        // WARNING: this middleware should be mounted before the helmet middleware
+        // (ideally at the top of the middleware stack)
+        if (
+            this.lightdashConfig.security.crossOriginResourceSharingPolicy
+                .enabled &&
+            this.lightdashConfig.security.crossOriginResourceSharingPolicy
+                .allowedDomains.length > 0
+        ) {
+            const allowedOrigins: Array<string | RegExp> = [
+                this.lightdashConfig.siteUrl,
+            ];
+
+            for (const allowedDomain of this.lightdashConfig.security
+                .crossOriginResourceSharingPolicy.allowedDomains) {
+                if (
+                    allowedDomain.startsWith('/') &&
+                    allowedDomain.endsWith('/')
+                ) {
+                    allowedOrigins.push(new RegExp(allowedDomain.slice(1, -1)));
+                } else {
+                    allowedOrigins.push(allowedDomain);
+                }
+            }
+
+            expressApp.use(
+                cors({
+                    methods: 'OPTIONS, GET, HEAD, PUT, PATCH, POST, DELETE',
+                    allowedHeaders: '*',
+                    credentials: false,
+                    origin: allowedOrigins,
+                }),
+            );
+        }
+
         const KnexSessionStore = connectSessionKnex(expressSession);
 
         const store = new KnexSessionStore({
-            knex: this.database as any,
+            knex: this.database as AnyType,
             createtable: false,
             tablename: 'sessions',
             sidfieldname: 'sid',
@@ -375,12 +422,20 @@ export default class App {
                 },
                 noSniff: true,
                 xFrameOptions: false,
+                crossOriginOpenerPolicy: {
+                    policy: [LightdashMode.DEMO, LightdashMode.PR].includes(
+                        this.lightdashConfig.mode,
+                    )
+                        ? 'unsafe-none'
+                        : 'same-origin',
+                },
             }),
         );
 
-        // Permissions-Policy header that is not yet supported by helmet. More details here: https://github.com/helmetjs/helmet/issues/234
         expressApp.use((req, res, next) => {
+            // Permissions-Policy header that is not yet supported by helmet. More details here: https://github.com/helmetjs/helmet/issues/234
             res.setHeader('Permissions-Policy', 'camera=(), microphone=()');
+            res.setHeader(LightdashVersionHeader, VERSION);
             next();
         });
 
@@ -411,7 +466,8 @@ export default class App {
         expressApp.use(passport.initialize());
         expressApp.use(passport.session());
 
-        expressApp.use(expressWinstonMiddleware);
+        expressApp.use(expressWinstonPreResponseMiddleware); // log request before response is sent
+        expressApp.use(expressWinstonMiddleware); // log request + response
 
         expressApp.get('/', (req, res) => {
             res.sendFile(
@@ -501,6 +557,7 @@ export default class App {
 
         // Errors
         Sentry.setupExpressErrorHandler(expressApp);
+        expressApp.use(scimErrorHandler); // SCIM error check before general error handler
         expressApp.use(
             (error: Error, req: Request, res: Response, _: NextFunction) => {
                 const errorResponse = errorHandler(error);
@@ -527,19 +584,27 @@ export default class App {
                         method: req.method,
                     },
                 });
-                res.status(errorResponse.statusCode).send({
+
+                const apiErrorResponse: ApiError = {
                     status: 'error',
                     error: {
                         statusCode: errorResponse.statusCode,
                         name: errorResponse.name,
                         message: errorResponse.message,
                         data: errorResponse.data,
-                        id:
+                        sentryTraceId:
+                            // Only return the Sentry trace ID for unexpected server errors
+                            errorResponse.statusCode === 500
+                                ? Sentry.getActiveSpan()?.spanContext().traceId
+                                : undefined,
+                        sentryEventId:
+                            // Only return the Sentry event ID for unexpected server errors
                             errorResponse.statusCode === 500
                                 ? Sentry.lastEventId()
                                 : undefined,
                     },
-                });
+                };
+                res.status(errorResponse.statusCode).send(apiErrorResponse);
             },
         );
 
@@ -603,6 +668,7 @@ export default class App {
             analytics: this.analytics,
             serviceRepository: this.serviceRepository,
             models: this.models,
+            clients: this.clients,
         });
         await slackBot.start(expressApp);
     }
@@ -640,5 +706,17 @@ export default class App {
                 Logger.error('Error stopping PostHog Client', e);
             }
         }
+    }
+
+    getServiceRepository() {
+        return this.serviceRepository;
+    }
+
+    getModels() {
+        return this.models;
+    }
+
+    getDatabase() {
+        return this.database;
     }
 }

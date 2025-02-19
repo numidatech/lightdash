@@ -1,20 +1,59 @@
 import {
-    assertUnreachable,
+    AnyType,
     CompileProjectPayload,
+    CreateProject,
     CreateSchedulerAndTargets,
     CreateSchedulerLog,
     CreateSchedulerTarget,
     DownloadCsvPayload,
     EmailNotificationPayload,
+    FeatureFlags,
     FieldReferenceError,
+    ForbiddenError,
+    GsheetsNotificationPayload,
+    LightdashPage,
+    MissingConfigError,
+    NotEnoughResults,
+    NotificationFrequency,
+    NotificationPayloadBase,
+    QueryExecutionContext,
+    ReplaceCustomFields,
+    ReplaceCustomFieldsPayload,
+    ReplaceCustomFieldsTask,
+    ReplaceableCustomFields,
+    SavedChartDAO,
+    ScheduledDeliveryPayload,
+    SchedulerAndTargets,
+    SchedulerCreateProjectWithCompilePayload,
+    SchedulerFilterRule,
+    SchedulerFormat,
+    SchedulerJobStatus,
+    SchedulerLog,
+    SemanticLayerQueryPayload,
+    SessionUser,
+    SlackInstallationNotFoundError,
+    SlackNotificationPayload,
+    SqlRunnerPayload,
+    SqlRunnerPivotQueryPayload,
+    ThresholdOperator,
+    ThresholdOptions,
+    UnexpectedGoogleSheetsError,
+    UnexpectedServerError,
+    UploadMetricGsheetPayload,
+    ValidateProjectPayload,
+    VizColumn,
+    assertUnreachable,
+    convertReplaceableFieldMatchMapToReplaceCustomFields,
+    formatRows,
     friendlyName,
     getCustomLabelsFromTableConfig,
+    getErrorMessage,
     getHiddenTableFields,
     getHumanReadableCronExpression,
     getItemMap,
+    getPivotConfig,
     getRequestMethod,
     getSchedulerUuid,
-    GsheetsNotificationPayload,
     indexCatalogJob,
     isChartValidationError,
     isCreateScheduler,
@@ -26,34 +65,15 @@ import {
     isSchedulerGsheetsOptions,
     isSchedulerImageOptions,
     isTableChartConfig,
-    LightdashPage,
-    NotEnoughResults,
-    NotificationFrequency,
-    NotificationPayloadBase,
     operatorActionValue,
-    QueryExecutionContext,
-    ScheduledDeliveryPayload,
-    SchedulerAndTargets,
-    SchedulerFilterRule,
-    SchedulerFormat,
-    SchedulerJobStatus,
-    SchedulerLog,
+    pivotResultsAsCsv,
     semanticLayerQueryJob,
-    SemanticLayerQueryPayload,
-    SessionUser,
-    SlackInstallationNotFoundError,
-    SlackNotificationPayload,
     sqlRunnerJob,
-    SqlRunnerPayload,
     sqlRunnerPivotQueryJob,
-    SqlRunnerPivotQueryPayload,
-    ThresholdOperator,
-    ThresholdOptions,
-    UploadMetricGsheetPayload,
-    ValidateProjectPayload,
-    VizColumn,
+    type RunQueryTags,
     type SchedulerIndexCatalogJobPayload,
 } from '@lightdash/common';
+import fs from 'fs/promises';
 import { nanoid } from 'nanoid';
 import slackifyMarkdown from 'slackify-markdown';
 import {
@@ -74,18 +94,23 @@ import {
 } from '../clients/Slack/SlackMessageBlocks';
 import { LightdashConfig } from '../config/parseConfig';
 import Logger from '../logging/logger';
+import { isFeatureFlagEnabled } from '../postHog';
 import type { CatalogService } from '../services/CatalogService/CatalogService';
 import { CsvService } from '../services/CsvService/CsvService';
 import { DashboardService } from '../services/DashboardService/DashboardService';
 import { ProjectService } from '../services/ProjectService/ProjectService';
 import { SchedulerService } from '../services/SchedulerService/SchedulerService';
 import { SemanticLayerService } from '../services/SemanticLayerService/SemanticLayerService';
-import { UnfurlService } from '../services/UnfurlService/UnfurlService';
+import {
+    ScreenshotContext,
+    UnfurlService,
+} from '../services/UnfurlService/UnfurlService';
 import { UserService } from '../services/UserService';
 import { ValidationService } from '../services/ValidationService/ValidationService';
+import { EncryptionUtil } from '../utils/EncryptionUtil/EncryptionUtil';
 import { SchedulerClient } from './SchedulerClient';
 
-type SchedulerTaskArguments = {
+export type SchedulerTaskArguments = {
     lightdashConfig: LightdashConfig;
     analytics: LightdashAnalytics;
     csvService: CsvService;
@@ -102,15 +127,9 @@ type SchedulerTaskArguments = {
     slackClient: SlackClient;
     semanticLayerService: SemanticLayerService;
     catalogService: CatalogService;
+    encryptionUtil: EncryptionUtil;
 };
 
-type RunQueryTags = {
-    project_uuid?: string;
-    user_uuid?: string;
-    organization_uuid?: string;
-    chart_uuid?: string;
-    dashboard_uuid?: string;
-};
 export default class SchedulerTask {
     protected readonly lightdashConfig: LightdashConfig;
 
@@ -144,6 +163,8 @@ export default class SchedulerTask {
 
     private readonly catalogService: CatalogService;
 
+    private readonly encryptionUtil: EncryptionUtil;
+
     constructor(args: SchedulerTaskArguments) {
         this.lightdashConfig = args.lightdashConfig;
         this.analytics = args.analytics;
@@ -161,6 +182,7 @@ export default class SchedulerTask {
         this.slackClient = args.slackClient;
         this.semanticLayerService = args.semanticLayerService;
         this.catalogService = args.catalogService;
+        this.encryptionUtil = args.encryptionUtil;
     }
 
     protected async getChartOrDashboard(
@@ -281,6 +303,10 @@ export default class SchedulerTask {
             context,
             selectedTabs,
         );
+
+        const deliveryUrl = savedChartUuid
+            ? `${this.lightdashConfig.siteUrl}/projects/${projectUuid}/saved/${savedChartUuid}/view?scheduler_uuid=${schedulerUuid}`
+            : `${this.lightdashConfig.siteUrl}/projects/${projectUuid}/dashboards/${dashboardUuid}/view?scheduler_uuid=${schedulerUuid}`;
         switch (format) {
             case SchedulerFormat.IMAGE:
                 try {
@@ -301,6 +327,8 @@ export default class SchedulerTask {
                             scheduler.customViewportWidth
                                 ? scheduler.customViewportWidth
                                 : undefined,
+                        context: ScreenshotContext.SCHEDULED_DELIVERY,
+                        contextId: jobId,
                     });
                     if (unfurlImage.imageUrl === undefined) {
                         throw new Error('Unable to unfurl image');
@@ -316,6 +344,7 @@ export default class SchedulerTask {
                                 blocks: getNotificationChannelErrorBlocks(
                                     scheduler.name,
                                     error,
+                                    deliveryUrl,
                                 ),
                             },
                         );
@@ -335,7 +364,6 @@ export default class SchedulerTask {
                 const csvOptions = isSchedulerCsvOptions(options)
                     ? options
                     : undefined;
-
                 const baseAnalyticsProperties: DownloadCsv['properties'] = {
                     jobId,
                     userId: userUuid,
@@ -401,6 +429,7 @@ export default class SchedulerTask {
                                 blocks: getNotificationChannelErrorBlocks(
                                     scheduler.name,
                                     e,
+                                    deliveryUrl,
                                 ),
                             },
                         );
@@ -473,6 +502,7 @@ export default class SchedulerTask {
                 cron,
                 timezone,
                 thresholds,
+                includeLinks,
             } = scheduler;
 
             await this.schedulerService.logSchedulerJob({
@@ -499,7 +529,7 @@ export default class SchedulerTask {
                 imageUrl,
                 csvUrl,
                 csvUrls,
-                // pdfFile, // TODO: add pdf to slack
+                pdfFile,
             } = notificationPageData;
 
             const defaultSchedulerTimezone =
@@ -507,6 +537,12 @@ export default class SchedulerTask {
                     schedulerUuid,
                 );
 
+            const showExpirationWarning = format !== SchedulerFormat.IMAGE;
+            const schedulerFooter = includeLinks
+                ? `<${url}?scheduler_uuid=${
+                      schedulerUuid || ''
+                  }|scheduled delivery>`
+                : 'scheduled delivery';
             const getBlocksArgs = {
                 title: name,
                 name: details.name,
@@ -514,28 +550,44 @@ export default class SchedulerTask {
                 message:
                     scheduler.message && slackifyMarkdown(scheduler.message),
                 ctaUrl: url,
-                footerMarkdown: `This is a <${url}?scheduler_uuid=${
-                    schedulerUuid || ''
-                }|scheduled delivery> ${getHumanReadableCronExpression(
+                footerMarkdown: `This is a ${schedulerFooter} ${getHumanReadableCronExpression(
                     cron,
-                    timezone ?? defaultSchedulerTimezone,
-                )} from Lightdash\n${
-                    this.s3Client.getExpirationWarning()?.slack || ''
+                    timezone || defaultSchedulerTimezone,
+                )} from Lightdash.\n${
+                    showExpirationWarning
+                        ? this.s3Client.getExpirationWarning()?.slack || ''
+                        : ''
                 }`,
+                includeLinks,
             };
 
             if (thresholds !== undefined && thresholds.length > 0) {
                 // We assume the threshold is possitive , so we don't need to get results here
                 if (savedChartUuid) {
+                    const slackImageUrl =
+                        await this.slackClient.tryUploadingImageToSlack(
+                            organizationUuid,
+                            imageUrl,
+                            name,
+                        );
+                    const thresholdFooter = includeLinks
+                        ? `<${url}?threshold_uuid=${
+                              schedulerUuid || ''
+                          }|data alert>`
+                        : 'data alert';
+
+                    const expiration = slackImageUrl.expiring
+                        ? `For security reasons, delivered files expire after ${
+                              this.s3Client.getExpirationWarning()?.days || 3
+                          } days.`
+                        : '';
+
                     const blocks = getChartThresholdAlertBlocks({
                         ...getBlocksArgs,
-                        footerMarkdown: `This is a <${url}?threshold_uuid=${
-                            schedulerUuid || ''
-                        }|data alert> sent by Lightdash. For security reasons, delivered files expire after ${
-                            this.s3Client.getExpirationWarning()?.days || 3
-                        } days`,
-                        imageUrl,
+                        footerMarkdown: `This is a ${thresholdFooter} sent by Lightdash. ${expiration}`,
+                        imageUrl: slackImageUrl.url,
                         thresholds,
+                        includeLinks,
                     });
                     await this.slackClient.postMessage({
                         organizationUuid,
@@ -547,21 +599,45 @@ export default class SchedulerTask {
                     throw new Error('Not implemented');
                 }
             } else if (format === SchedulerFormat.IMAGE) {
-                if (imageUrl === undefined) {
-                    throw new Error('Missing image URL');
-                }
+                const slackImageUrl =
+                    await this.slackClient.tryUploadingImageToSlack(
+                        organizationUuid,
+                        imageUrl,
+                        name,
+                    );
 
+                const expiration = slackImageUrl.expiring
+                    ? `For security reasons, delivered files expire after ${
+                          this.s3Client.getExpirationWarning()?.days || 3
+                      } days.`
+                    : '';
                 const blocks = getChartAndDashboardBlocks({
                     ...getBlocksArgs,
-                    imageUrl,
+                    footerMarkdown: `${getBlocksArgs.footerMarkdown} ${expiration}`,
+                    imageUrl: slackImageUrl.url,
                 });
 
-                await this.slackClient.postMessage({
+                const message = await this.slackClient.postMessage({
                     organizationUuid,
                     text: name,
                     channel,
                     blocks,
                 });
+
+                if (pdfFile && message.ts) {
+                    // Add the pdf to the thread
+                    const pdfBuffer = await fs.readFile(pdfFile);
+
+                    await this.slackClient.postFileToThread({
+                        organizationUuid,
+                        file: pdfBuffer,
+                        title: name,
+                        channelId: channel,
+                        threadTs: message.ts,
+                        filename: `${name}.pdf`,
+                        fileType: 'pdf',
+                    });
+                }
             } else {
                 let blocks;
                 if (savedChartUuid) {
@@ -646,7 +722,7 @@ export default class SchedulerTask {
                 scheduledTime,
                 targetType: 'slack',
                 status: SchedulerJobStatus.ERROR,
-                details: { error: e.message },
+                details: { error: getErrorMessage(e) },
             });
 
             if (e instanceof SlackInstallationNotFoundError) {
@@ -716,9 +792,72 @@ export default class SchedulerTask {
                 status: SchedulerJobStatus.ERROR,
                 details: {
                     createdByUserUuid: payload.createdByUserUuid,
+                    error: getErrorMessage(e),
+                },
+            });
+            throw e;
+        }
+    }
+
+    protected async createProjectWithCompile(
+        jobId: string,
+        scheduledTime: Date,
+        payload: SchedulerCreateProjectWithCompilePayload,
+    ) {
+        const baseLog: Pick<SchedulerLog, 'task' | 'jobId' | 'scheduledTime'> =
+            {
+                task: 'createProjectWithCompile',
+                jobId,
+                scheduledTime,
+            };
+
+        try {
+            const user = await this.userService.getSessionByUserUuid(
+                payload.createdByUserUuid,
+            );
+
+            await this.schedulerService.logSchedulerJob({
+                ...baseLog,
+                details: { createdByUserUuid: payload.createdByUserUuid },
+                status: SchedulerJobStatus.STARTED,
+            });
+
+            let projectData: CreateProject;
+            try {
+                projectData = JSON.parse(
+                    this.encryptionUtil.decrypt(
+                        Buffer.from(payload.data, 'base64'),
+                    ),
+                ) as CreateProject;
+            } catch {
+                throw new UnexpectedServerError('Failed to load project data');
+            }
+
+            const projectCreationResult = await this.projectService._create(
+                user,
+                projectData,
+                payload.jobUuid,
+                getRequestMethod(payload.requestMethod),
+            );
+
+            await this.schedulerService.logSchedulerJob({
+                ...baseLog,
+                details: {
+                    projectUuid: projectCreationResult.projectUuid,
+                },
+                status: SchedulerJobStatus.COMPLETED,
+            });
+        } catch (e) {
+            await this.schedulerService.logSchedulerJob({
+                ...baseLog,
+                status: SchedulerJobStatus.ERROR,
+                details: {
+                    createdByUserUuid: payload.createdByUserUuid,
                     error: e,
                 },
             });
+            // Update legacy job
+            await this.projectService._markJobAsFailed(payload.jobUuid);
             throw e;
         }
     }
@@ -764,13 +903,31 @@ export default class SchedulerTask {
                     organizationUuid: user.organizationUuid,
                 });
             }
+            const canReplaceCustomMetrics = await isFeatureFlagEnabled(
+                FeatureFlags.ReplaceCustomMetricsOnCompile,
+                {
+                    userUuid: user.userUuid,
+                    organizationUuid: user.organizationUuid,
+                },
+                {
+                    throwOnTimeout: false,
+                },
+            );
+            if (canReplaceCustomMetrics) {
+                // Don't wait for replaceCustomFields response
+                void this.schedulerClient.replaceCustomFields({
+                    createdByUserUuid: payload.createdByUserUuid,
+                    projectUuid: payload.projectUuid,
+                    organizationUuid: payload.organizationUuid,
+                });
+            }
         } catch (e) {
             await this.schedulerService.logSchedulerJob({
                 ...baseLog,
                 status: SchedulerJobStatus.ERROR,
                 details: {
                     createdByUserUuid: payload.createdByUserUuid,
-                    error: e,
+                    error: getErrorMessage(e),
                 },
             });
             throw e;
@@ -847,7 +1004,7 @@ export default class SchedulerTask {
                     context: payload.context,
                     organizationId: payload.organizationUuid,
                     projectId: payload.projectUuid,
-                    error: e.message,
+                    error: getErrorMessage(e),
                 },
             });
 
@@ -856,7 +1013,7 @@ export default class SchedulerTask {
                 jobId,
                 scheduledTime,
                 status: SchedulerJobStatus.ERROR,
-                details: { error: e.message },
+                details: { error: getErrorMessage(e) },
             });
             throw e;
         }
@@ -897,7 +1054,10 @@ export default class SchedulerTask {
             await this.schedulerService.logSchedulerJob({
                 ...baseLog,
                 status: SchedulerJobStatus.ERROR,
-                details: { createdByUserUuid: payload.userUuid, error: e },
+                details: {
+                    createdByUserUuid: payload.userUuid,
+                    error: getErrorMessage(e),
+                },
             });
             throw e; // Cascade error to it can be retried by graphile
         }
@@ -929,8 +1089,10 @@ export default class SchedulerTask {
                 status: SchedulerJobStatus.ERROR,
                 details: {
                     ...baseLog.details,
-                    error: e.message,
-                    ...(e?.data ?? {}),
+                    error: getErrorMessage(e),
+                    ...(e instanceof Error && 'data' in e && e?.data
+                        ? e.data
+                        : {}),
                 },
             });
             Logger.error(`Error in scheduler task: ${e}`);
@@ -1034,6 +1196,8 @@ export default class SchedulerTask {
                 project_uuid: payload.projectUuid,
                 user_uuid: payload.userUuid,
                 organization_uuid: payload.organizationUuid,
+                explore_name: payload.exploreId,
+                query_context: QueryExecutionContext.GSHEETS,
             };
 
             const { rows } = await this.projectService.runMetricQuery({
@@ -1070,17 +1234,41 @@ export default class SchedulerTask {
                 payload.metricQuery.additionalMetrics,
                 payload.metricQuery.tableCalculations,
             );
-            await this.googleDriveClient.appendToSheet(
-                refreshToken,
-                spreadsheetId,
-                rows,
-                itemMap,
-                payload.showTableNames,
-                undefined, // tabName
-                payload.columnOrder,
-                payload.customLabels,
-                payload.hiddenFields,
-            );
+            if (payload.pivotConfig) {
+                // PivotQueryResults expects a formatted ResultRow[] type, so we need to convert it first
+                // TODO: refactor pivotQueryResults to accept a Record<string, any>[] simple row type for performance
+                const formattedRows = formatRows(rows, itemMap);
+
+                const pivotedResults = pivotResultsAsCsv({
+                    pivotConfig: payload.pivotConfig,
+                    rows: formattedRows,
+                    itemMap,
+                    metricQuery: payload.metricQuery,
+                    customLabels: payload.customLabels,
+                    onlyRaw: true,
+                    maxColumnLimit:
+                        this.lightdashConfig.pivotTable.maxColumnLimit,
+                });
+
+                await this.googleDriveClient.appendCsvToSheet(
+                    refreshToken,
+                    spreadsheetId,
+                    pivotedResults,
+                );
+            } else {
+                await this.googleDriveClient.appendToSheet(
+                    refreshToken,
+                    spreadsheetId,
+                    rows,
+                    itemMap,
+                    payload.showTableNames,
+                    undefined, // tabName
+                    payload.columnOrder,
+                    payload.customLabels,
+                    payload.hiddenFields,
+                );
+            }
+
             const truncated = this.csvService.couldBeTruncated(rows);
 
             await this.schedulerService.logSchedulerJob({
@@ -1102,7 +1290,10 @@ export default class SchedulerTask {
             await this.schedulerService.logSchedulerJob({
                 ...baseLog,
                 status: SchedulerJobStatus.ERROR,
-                details: { createdByUserUuid: payload.userUuid, error: e },
+                details: {
+                    createdByUserUuid: payload.userUuid,
+                    error: getErrorMessage(e),
+                },
             });
 
             this.analytics.track({
@@ -1110,7 +1301,8 @@ export default class SchedulerTask {
                 userId: payload.userUuid,
                 properties: analyticsProperties,
             });
-            throw e; // Cascade error to it can be retried by graphile
+
+            throw e;
         }
     }
 
@@ -1140,8 +1332,14 @@ export default class SchedulerTask {
         });
 
         try {
-            const { format, savedChartUuid, dashboardUuid, name, thresholds } =
-                scheduler;
+            const {
+                format,
+                savedChartUuid,
+                dashboardUuid,
+                name,
+                thresholds,
+                includeLinks,
+            } = scheduler;
 
             await this.schedulerService.logSchedulerJob({
                 task: 'sendEmailNotification',
@@ -1216,6 +1414,7 @@ export default class SchedulerTask {
                     imageUrl,
                     url,
                     schedulerUrl,
+                    includeLinks,
                     pdfFile,
                     undefined, // expiration days
                     'This is a data alert sent by Lightdash',
@@ -1233,11 +1432,12 @@ export default class SchedulerTask {
                     new Date().toLocaleDateString('en-GB'),
                     getHumanReadableCronExpression(
                         scheduler.cron,
-                        scheduler.timezone ?? defaultSchedulerTimezone,
+                        scheduler.timezone || defaultSchedulerTimezone,
                     ),
                     imageUrl,
                     url,
                     schedulerUrl,
+                    includeLinks,
                     pdfFile,
                     this.s3Client.getExpirationWarning()?.days,
                 );
@@ -1254,11 +1454,12 @@ export default class SchedulerTask {
                     new Date().toLocaleDateString('en-GB'),
                     getHumanReadableCronExpression(
                         scheduler.cron,
-                        scheduler.timezone ?? defaultSchedulerTimezone,
+                        scheduler.timezone || defaultSchedulerTimezone,
                     ),
                     csvUrl,
                     url,
                     schedulerUrl,
+                    includeLinks,
                     this.s3Client.getExpirationWarning()?.days,
                 );
             } else if (dashboardUuid) {
@@ -1275,11 +1476,12 @@ export default class SchedulerTask {
                     new Date().toLocaleDateString('en-GB'),
                     getHumanReadableCronExpression(
                         scheduler.cron,
-                        scheduler.timezone ?? defaultSchedulerTimezone,
+                        scheduler.timezone || defaultSchedulerTimezone,
                     ),
                     csvUrls,
                     url,
                     schedulerUrl,
+                    includeLinks,
                     this.s3Client.getExpirationWarning()?.days,
                 );
             } else {
@@ -1337,7 +1539,7 @@ export default class SchedulerTask {
                 scheduledTime,
                 targetType: 'email',
                 status: SchedulerJobStatus.ERROR,
-                details: { error: e.message },
+                details: { error: getErrorMessage(e) },
             });
 
             throw e; // Cascade error to it can be retried by graphile
@@ -1346,7 +1548,7 @@ export default class SchedulerTask {
 
     static isPositiveThresholdAlert(
         thresholds: ThresholdOptions[],
-        results: Record<string, any>[],
+        results: Record<string, AnyType>[],
     ): boolean {
         if (thresholds.length < 1 || results.length < 1) {
             return false;
@@ -1432,19 +1634,21 @@ export default class SchedulerTask {
                 sendNow: schedulerUuid === undefined,
             },
         });
-        let user: SessionUser;
+        let user: SessionUser | undefined;
+        let scheduler: SchedulerAndTargets | undefined;
 
+        let deliveryUrl = this.lightdashConfig.siteUrl;
         try {
             if (!this.googleDriveClient.isEnabled) {
-                throw new Error(
+                throw new MissingConfigError(
                     'Unable to upload Google Sheet from scheduler, Google Drive is not enabled',
                 );
             }
-
-            const scheduler =
+            scheduler =
                 await this.schedulerService.schedulerModel.getSchedulerAndTargets(
                     schedulerUuid,
                 );
+
             const { format, savedChartUuid, dashboardUuid, thresholds } =
                 scheduler;
 
@@ -1454,6 +1658,10 @@ export default class SchedulerTask {
             if (gdriveId === undefined) {
                 throw new Error('Missing gdriveId');
             }
+
+            const tabName = isSchedulerGsheetsOptions(scheduler.options)
+                ? scheduler.options.tabName
+                : undefined;
 
             await this.schedulerService.logSchedulerJob({
                 task: 'uploadGsheets',
@@ -1470,13 +1678,14 @@ export default class SchedulerTask {
             );
 
             if (format !== SchedulerFormat.GSHEETS) {
-                throw new Error(
+                throw new UnexpectedServerError(
                     `Unable to process format ${format} on sendGdriveNotification`,
                 );
             } else if (savedChartUuid) {
                 const chart = await this.schedulerService.savedChartModel.get(
                     savedChartUuid,
                 );
+                deliveryUrl = `${this.lightdashConfig.siteUrl}/projects/${chart.projectUuid}/saved/${savedChartUuid}/view?scheduler_uuid=${schedulerUuid}&isSync=true`;
 
                 const defaultSchedulerTimezone =
                     await this.schedulerService.getSchedulerDefaultTimezone(
@@ -1490,7 +1699,7 @@ export default class SchedulerTask {
                 );
 
                 if (thresholds !== undefined && thresholds.length > 0) {
-                    throw new Error(
+                    throw new UnexpectedServerError(
                         'Thresholds not implemented for google sheets',
                     );
                 }
@@ -1524,28 +1733,55 @@ export default class SchedulerTask {
                     gdriveId,
                     getHumanReadableCronExpression(
                         scheduler.cron,
-                        scheduler.timezone ?? defaultSchedulerTimezone,
+                        scheduler.timezone || defaultSchedulerTimezone,
                     ),
                     undefined,
                     reportUrl,
                 );
+                const pivotConfig = getPivotConfig(chart);
+                if (
+                    pivotConfig &&
+                    isTableChartConfig(chart.chartConfig.config)
+                ) {
+                    // PivotQueryResults expects a formatted ResultRow[] type, so we need to convert it first
+                    // TODO: refactor pivotQueryResults to accept a Record<string, any>[] simple row type for performance
+                    const formattedRows = formatRows(rows, itemMap);
 
-                await this.googleDriveClient.appendToSheet(
-                    refreshToken,
-                    gdriveId,
-                    rows,
-                    itemMap,
-                    showTableNames,
-                    undefined,
-                    chart.tableConfig.columnOrder,
-                    customLabels,
-                    getHiddenTableFields(chart.chartConfig),
-                );
+                    const pivotedResults = pivotResultsAsCsv({
+                        pivotConfig,
+                        rows: formattedRows,
+                        itemMap,
+                        metricQuery: chart.metricQuery,
+                        customLabels,
+                        onlyRaw: true,
+                        maxColumnLimit:
+                            this.lightdashConfig.pivotTable.maxColumnLimit,
+                    });
+                    await this.googleDriveClient.appendCsvToSheet(
+                        refreshToken,
+                        gdriveId,
+                        pivotedResults,
+                        tabName,
+                    );
+                } else {
+                    await this.googleDriveClient.appendToSheet(
+                        refreshToken,
+                        gdriveId,
+                        rows,
+                        itemMap,
+                        showTableNames,
+                        tabName,
+                        chart.tableConfig.columnOrder,
+                        customLabels,
+                        getHiddenTableFields(chart.chartConfig),
+                    );
+                }
             } else if (dashboardUuid) {
                 const dashboard = await this.dashboardService.getById(
                     user,
                     dashboardUuid,
                 );
+                deliveryUrl = `${this.lightdashConfig.siteUrl}/projects/${dashboard.projectUuid}/dashboards/${dashboardUuid}/view?scheduler_uuid=${schedulerUuid}&isSync=true`;
 
                 const defaultSchedulerTimezone =
                     await this.schedulerService.getSchedulerDefaultTimezone(
@@ -1614,12 +1850,12 @@ export default class SchedulerTask {
                             );
                         const { rows } =
                             await this.projectService.getResultsForChart(
-                                user,
+                                user!,
                                 chartUuid,
                                 QueryExecutionContext.SCHEDULED_GSHEETS_DASHBOARD,
                             );
                         const explore = await this.projectService.getExplore(
-                            user,
+                            user!,
                             chart.projectUuid,
                             chart.tableName,
                         );
@@ -1637,31 +1873,59 @@ export default class SchedulerTask {
                             chart.chartConfig.config,
                         );
 
-                        const tabName =
+                        const chartTabName =
                             await this.googleDriveClient.createNewTab(
                                 refreshToken,
                                 gdriveId,
                                 chartNames[chartUuid] || chartUuid,
                             );
+                        const pivotConfig = getPivotConfig(chart);
+                        if (
+                            pivotConfig &&
+                            isTableChartConfig(chart.chartConfig.config)
+                        ) {
+                            // PivotQueryResults expects a formatted ResultRow[] type, so we need to convert it first
+                            // TODO: refactor pivotQueryResults to accept a Record<string, any>[] simple row type for performance
+                            const formattedRows = formatRows(rows, itemMap);
 
-                        await this.googleDriveClient.appendToSheet(
-                            refreshToken,
-                            gdriveId,
-                            rows,
-                            itemMap,
-                            showTableNames,
-                            tabName,
-                            chart.tableConfig.columnOrder,
-                            customLabels,
-                            getHiddenTableFields(chart.chartConfig),
-                        );
+                            const pivotedResults = pivotResultsAsCsv({
+                                pivotConfig,
+                                rows: formattedRows,
+                                itemMap,
+                                metricQuery: chart.metricQuery,
+                                customLabels,
+                                onlyRaw: true,
+                                maxColumnLimit:
+                                    this.lightdashConfig.pivotTable
+                                        .maxColumnLimit,
+                            });
+
+                            await this.googleDriveClient.appendCsvToSheet(
+                                refreshToken,
+                                gdriveId,
+                                pivotedResults,
+                                chartTabName,
+                            );
+                        } else {
+                            await this.googleDriveClient.appendToSheet(
+                                refreshToken,
+                                gdriveId,
+                                rows,
+                                itemMap,
+                                showTableNames,
+                                chartTabName,
+                                chart.tableConfig.columnOrder,
+                                customLabels,
+                                getHiddenTableFields(chart.chartConfig),
+                            );
+                        }
                     }, Promise.resolve())
                     .catch((error) => {
                         Logger.debug('Error processing charts:', error);
                         throw error;
                     });
             } else {
-                throw new Error('Not implemented');
+                throw new UnexpectedServerError('Not implemented');
             }
 
             this.analytics.track({
@@ -1708,21 +1972,49 @@ export default class SchedulerTask {
                 scheduledTime,
                 targetType: 'gsheets',
                 status: SchedulerJobStatus.ERROR,
-                details: { error: e.message },
+                details: { error: getErrorMessage(e) },
             });
+            const shouldDisableSync =
+                e instanceof ForbiddenError ||
+                e instanceof MissingConfigError ||
+                e instanceof UnexpectedGoogleSheetsError;
 
             if (
-                `${e}`.includes('invalid_grant') ||
-                `${e}`.includes('Requested entity was not found')
+                this.slackClient.isEnabled &&
+                user?.organizationUuid &&
+                scheduler
             ) {
+                await this.slackClient.postMessageToNotificationChannel({
+                    organizationUuid: user.organizationUuid,
+                    text: `Error uploading Google Sheets: ${scheduler.name}`,
+                    blocks: getNotificationChannelErrorBlocks(
+                        scheduler.name,
+                        e,
+                        deliveryUrl,
+                        'Google Sync',
+                        shouldDisableSync,
+                    ),
+                });
+            }
+
+            if (shouldDisableSync) {
                 console.warn(
-                    `Disabling scheduler with non-retryable error: ${e}`,
+                    `Disabling Google sheets scheduler with non-retryable error: ${e}`,
                 );
+
                 await this.schedulerService.setSchedulerEnabled(
                     user!, // This error from gdriveClient happens after user initialized
                     schedulerUuid,
                     false,
                 );
+
+                if (user?.email) {
+                    await this.emailClient.sendGoogleSheetsErrorNotificationEmail(
+                        user.email,
+                        scheduler?.name || 'Unknown',
+                        deliveryUrl,
+                    );
+                }
                 return; // Do not cascade error
             }
             throw e; // Cascade error to it can be retried by graphile
@@ -1798,7 +2090,6 @@ export default class SchedulerTask {
                 : await this.schedulerService.schedulerModel.getSchedulerAndTargets(
                       schedulerPayload.schedulerUuid,
                   );
-
         if (!scheduler.enabled) {
             // This should not happen, if schedulers are not enabled, we should remove the scheduled jobs from the queue
             throw new Error('Scheduler is disabled');
@@ -1940,7 +2231,7 @@ export default class SchedulerTask {
                 jobGroup: jobId,
                 scheduledTime,
                 status: SchedulerJobStatus.ERROR,
-                details: { error: e.message },
+                details: { error: getErrorMessage(e) },
             });
 
             if (e instanceof NotEnoughResults) {
@@ -1989,7 +2280,7 @@ export default class SchedulerTask {
                 const { catalogFieldMap } =
                     await this.catalogService.indexCatalog(
                         payload.projectUuid,
-                        payload.explores,
+                        payload.userUuid,
                     );
 
                 await this.catalogService.migrateCatalogItemTags(
@@ -2002,12 +2293,63 @@ export default class SchedulerTask {
                     payload.prevCatalogItemsWithIcons,
                 );
 
+                await this.catalogService.migrateMetricsTreeEdges(
+                    payload.projectUuid,
+                    payload.prevMetricTreeEdges,
+                );
+
                 await this.catalogService.setChartUsages(
                     payload.projectUuid,
                     catalogFieldMap,
                 );
 
                 return {}; // Don't pollute with more details
+            },
+        );
+    }
+
+    protected async replaceCustomFields(
+        jobId: string,
+        scheduledTime: Date,
+        payload: ReplaceCustomFieldsPayload,
+    ) {
+        await this.logWrapper(
+            {
+                task: ReplaceCustomFieldsTask,
+                jobId,
+                scheduledTime,
+                details: {
+                    createdByUserUuid: payload.createdByUserUuid,
+                    projectUuid: payload.projectUuid,
+                    organizationUuid: payload.organizationUuid,
+                },
+            },
+            async (): Promise<{
+                replaceableCustomFields: ReplaceableCustomFields;
+                replaceFields: ReplaceCustomFields;
+                updatedCharts: Array<Pick<SavedChartDAO, 'uuid' | 'name'>>;
+            }> => {
+                const replaceableCustomFields =
+                    await this.projectService.findReplaceableCustomFields(
+                        payload,
+                    );
+                const replaceFields =
+                    convertReplaceableFieldMatchMapToReplaceCustomFields(
+                        replaceableCustomFields,
+                    );
+                const updatedCharts =
+                    await this.projectService.replaceCustomFields({
+                        userUuid: payload.createdByUserUuid,
+                        projectUuid: payload.projectUuid,
+                        organizationUuid: payload.organizationUuid,
+                        replaceFields,
+                        skipChartsUpdatedAfter: scheduledTime,
+                    });
+                return {
+                    replaceableCustomFields,
+                    replaceFields,
+                    updatedCharts,
+                };
             },
         );
     }

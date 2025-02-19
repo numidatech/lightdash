@@ -2,7 +2,6 @@ import {
     CreatePostgresCredentials,
     DbtLocalProjectConfig,
     DbtProjectType,
-    DefaultSupportedDbtVersion,
     generateSlug,
     OrganizationMemberRole,
     SEED_ORG_1,
@@ -15,6 +14,7 @@ import {
     SEED_ORG_2_ADMIN_PASSWORD,
     SEED_PROJECT,
     SEED_SPACE,
+    SupportedDbtVersions,
     WarehouseTypes,
 } from '@lightdash/common';
 import bcrypt from 'bcrypt';
@@ -40,11 +40,14 @@ export async function seed(knex: Knex): Promise<void> {
         seedEmail: Omit<DbEmailIn, 'user_id'>,
         seedPassword: { password: string },
     ) => {
-        const [{ organization_id: organizationId }] = await knex(
-            'organizations',
-        )
+        const [
+            {
+                organization_id: organizationId,
+                organization_uuid: organizationUuid,
+            },
+        ] = await knex('organizations')
             .insert(seedOrganization)
-            .returning('organization_id');
+            .returning(['organization_id', 'organization_uuid']);
         if (organizationId === undefined) {
             throw new Error('Organization was not created');
         }
@@ -76,10 +79,10 @@ export async function seed(knex: Knex): Promise<void> {
             shownSuccess_at: new Date(),
         });
 
-        return { organizationId, user };
+        return { organizationId, user, organizationUuid };
     };
 
-    const { organizationId, user } = await addUser(
+    const { organizationId, organizationUuid, user } = await addUser(
         SEED_ORG_1,
         SEED_ORG_1_ADMIN,
         SEED_ORG_1_ADMIN_EMAIL,
@@ -109,16 +112,18 @@ export async function seed(knex: Knex): Promise<void> {
         JSON.stringify(projectSettings),
     );
 
-    const [{ project_id: projectId }] = await knex('projects')
+    const [{ project_id: projectId, project_uuid: projectUuid }] = await knex(
+        'projects',
+    )
         .insert({
             ...SEED_PROJECT,
             organization_id: organizationId,
             dbt_connection: encryptedProjectSettings,
-            dbt_version: DefaultSupportedDbtVersion,
+            dbt_version: SupportedDbtVersions.V1_4,
             semantic_layer_connection: null,
             created_by_user_uuid: user.user_uuid,
         })
-        .returning('project_id');
+        .returning(['project_id', 'project_uuid']);
 
     if (projectId === undefined) {
         throw new Error('Project was not created');
@@ -183,9 +188,13 @@ export async function seed(knex: Knex): Promise<void> {
                 warehouseCatalog: undefined,
                 onWarehouseCatalogChange: () => {},
             },
-            DefaultSupportedDbtVersion,
+            SupportedDbtVersions.V1_4,
         );
-        const explores = await adapter.compileAllExplores();
+        const explores = await adapter.compileAllExplores({
+            userUuid: user.user_uuid,
+            organizationUuid,
+            projectUuid,
+        });
         await new ProjectModel({
             database: knex,
             lightdashConfig,

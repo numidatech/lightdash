@@ -4,6 +4,7 @@ import {
     CartesianSeriesType,
     DimensionType,
     formatItemValue,
+    formatValueWithExpression,
     friendlyName,
     getAxisName,
     getCustomFormatFromLegacy,
@@ -11,7 +12,9 @@ import {
     getItemLabelWithoutTableName,
     getItemType,
     getResultValueArray,
+    hasFormatting,
     hashFieldReference,
+    hasValidFormatExpression,
     isCompleteLayout,
     isCustomBinDimension,
     isCustomDimension,
@@ -30,12 +33,14 @@ import {
     type CartesianChart,
     type CustomDimension,
     type Field,
+    type Item,
     type ItemsMap,
     type PivotReference,
     type ResultRow,
     type Series,
     type TableCalculation,
 } from '@lightdash/common';
+import { useMantineTheme } from '@mantine/core';
 import dayjs from 'dayjs';
 import {
     type DefaultLabelFormatterCallbackParams,
@@ -46,9 +51,9 @@ import {
 import groupBy from 'lodash/groupBy';
 import toNumber from 'lodash/toNumber';
 import { useMemo } from 'react';
-import { isCartesianVisualizationConfig } from '../../components/LightdashVisualization/VisualizationConfigCartesian';
-import { useVisualizationContext } from '../../components/LightdashVisualization/VisualizationProvider';
-import { defaultGrid } from '../../components/VisualizationConfigs/ChartConfigPanel/Grid';
+import { isCartesianVisualizationConfig } from '../../components/LightdashVisualization/types';
+import { useVisualizationContext } from '../../components/LightdashVisualization/useVisualizationContext';
+import { defaultGrid } from '../../components/VisualizationConfigs/ChartConfigPanel/Grid/constants';
 import { EMPTY_X_AXIS } from '../cartesianChartConfig/useCartesianChartConfig';
 import getPlottedData from '../plottedData/getPlottedData';
 
@@ -84,7 +89,10 @@ const getLabelFromField = (fields: ItemsMap, key: string | undefined) => {
     }
 };
 
-const getAxisTypeFromField = (item?: ItemsMap[string]): string => {
+const getAxisTypeFromField = (
+    item?: ItemsMap[string],
+    hasReferenceLine?: boolean,
+): string => {
     if (item && isCustomBinDimension(item)) return 'category';
     if (item && isTableCalculation(item) && !item.type) return 'value';
     if (
@@ -116,9 +124,11 @@ const getAxisTypeFromField = (item?: ItemsMap[string]): string => {
             case TableCalculationType.TIMESTAMP:
                 // Use categorical axis for weeks only. Echarts handles the
                 // other time frames well with a time axis
+                // Reference lines can only be used on time/value axes
                 if (
                     'timeInterval' in item &&
-                    item.timeInterval === TimeFrames.WEEK
+                    item.timeInterval === TimeFrames.WEEK &&
+                    !hasReferenceLine
                 ) {
                     return 'category';
                 }
@@ -148,18 +158,30 @@ const getAxisType = ({
     rightAxisYId,
     leftAxisYId,
 }: GetAxisTypeArg) => {
+    const hasReferenceLine = (axisId: string | undefined) => {
+        if (axisId === undefined) return false;
+        return validCartesianConfig.eChartsConfig.series?.some(
+            (serie) =>
+                serie.markLine !== undefined &&
+                (serie.encode.xRef.field === axisId ||
+                    serie.encode.yRef.field === axisId),
+        );
+    };
     const topAxisType = getAxisTypeFromField(
         topAxisXId ? itemsMap[topAxisXId] : undefined,
+        hasReferenceLine(topAxisXId),
     );
     const bottomAxisType =
         bottomAxisXId === EMPTY_X_AXIS
             ? 'category'
             : getAxisTypeFromField(
                   bottomAxisXId ? itemsMap[bottomAxisXId] : undefined,
+                  hasReferenceLine(bottomAxisXId),
               );
     // horizontal bar chart needs the type 'category' in the left/right axis
     const defaultRightAxisType = getAxisTypeFromField(
         rightAxisYId ? itemsMap[rightAxisYId] : undefined,
+        hasReferenceLine(rightAxisYId),
     );
     const rightAxisType =
         validCartesianConfig.layout.flipAxes &&
@@ -173,6 +195,7 @@ const getAxisType = ({
             : defaultRightAxisType;
     const defaultLeftAxisType = getAxisTypeFromField(
         leftAxisYId ? itemsMap[leftAxisYId] : undefined,
+        hasReferenceLine(leftAxisYId),
     );
     const leftAxisType =
         validCartesianConfig.layout.flipAxes &&
@@ -281,7 +304,7 @@ export type EChartSeries = {
     symbolSize?: number;
 };
 
-const getFormattedValue = (
+export const getFormattedValue = (
     value: any,
     key: string,
     itemsMap: ItemsMap,
@@ -562,6 +585,27 @@ type GetPivotSeriesArg = {
     pivotReference: Required<PivotReference>;
 };
 
+const seriesValueFormatter = (item: Item, value: unknown) => {
+    if (hasValidFormatExpression(item)) {
+        return formatValueWithExpression(item.format, value);
+    }
+
+    if (isCustomDimension(item)) {
+        return value;
+    }
+    if (isTableCalculation(item)) {
+        return formatItemValue(item, value);
+    } else {
+        const defaultFormatOptions = getCustomFormatFromLegacy({
+            format: item.format,
+            round: item.round,
+            compact: item.compact,
+        });
+        const formatOptions = isMetric(item) ? item.formatOptions : undefined;
+        return applyCustomFormat(value, formatOptions || defaultFormatOptions);
+    }
+};
+
 const getPivotSeries = ({
     series,
     pivotReference,
@@ -622,30 +666,8 @@ const getPivotSeries = ({
                     itemsMap[series.encode.yRef.field] && {
                         formatter: (value: any) => {
                             const field = itemsMap[series.encode.yRef.field];
-
-                            if (isCustomDimension(field)) {
-                                return value;
-                            }
-                            if (isTableCalculation(field)) {
-                                return formatItemValue(
-                                    field,
-                                    value?.value?.[yFieldHash],
-                                );
-                            } else {
-                                const defaultFormatOptions =
-                                    getCustomFormatFromLegacy({
-                                        format: field.format,
-                                        round: field.round,
-                                        compact: field.compact,
-                                    });
-                                const formatOptions = isMetric(field)
-                                    ? field.formatOptions
-                                    : undefined;
-                                return applyCustomFormat(
-                                    value?.value?.[yFieldHash],
-                                    formatOptions || defaultFormatOptions,
-                                );
-                            }
+                            const rawValue = value?.value?.[yFieldHash];
+                            return seriesValueFormatter(field, rawValue);
                         },
                     }),
             },
@@ -731,29 +753,8 @@ const getSimpleSeries = ({
                 itemsMap[yFieldHash] && {
                     formatter: (value: any) => {
                         const field = itemsMap[yFieldHash];
-                        if (isCustomDimension(field)) {
-                            return value;
-                        }
-                        if (isTableCalculation(field)) {
-                            return formatItemValue(
-                                field,
-                                value?.value?.[yFieldHash],
-                            );
-                        } else {
-                            const defaultFormatOptions =
-                                getCustomFormatFromLegacy({
-                                    format: field.format,
-                                    round: field.round,
-                                    compact: field.compact,
-                                });
-                            const formatOptions = isMetric(field)
-                                ? field.formatOptions
-                                : undefined;
-                            return applyCustomFormat(
-                                value?.value?.[yFieldHash],
-                                formatOptions || defaultFormatOptions,
-                            );
-                        }
+                        const rawValue = value?.value?.[yFieldHash];
+                        return seriesValueFormatter(field, rawValue);
                     },
                 }),
         },
@@ -845,7 +846,6 @@ const getWeekAxisConfig = (
         axisField.timeInterval === TimeFrames.WEEK
     ) {
         const [minX, maxX] = getMinAndMaxValues([axisId], rows || []);
-
         const continuousWeekRange = [];
         let nextDate = dayjs.utc(minX);
         while (nextDate.isBefore(dayjs(maxX))) {
@@ -927,20 +927,24 @@ const getEchartAxes = ({
         rotate?: number;
         defaultNameGap?: number;
     }) => {
-        const hasFormattingConfig =
-            (isField(axisItem) &&
-                (axisItem.format || axisItem.round || axisItem.compact)) ||
-            (axisItem && isTableCalculation(axisItem) && axisItem.format);
+        const isTimestamp =
+            isField(axisItem) &&
+            (axisItem.type === DimensionType.DATE ||
+                axisItem.type === DimensionType.TIMESTAMP);
+        // Only apply axis formatting if the axis is NOT a date or timestamp
+        const hasFormattingConfig = !isTimestamp && hasFormatting(axisItem);
         const axisMinInterval =
             isDimension(axisItem) &&
             axisItem.timeInterval &&
             isTimeInterval(axisItem.timeInterval) &&
             timeFrameConfigs[axisItem.timeInterval].getAxisMinInterval();
+
         const axisLabelFormatter =
             isDimension(axisItem) &&
             axisItem.timeInterval &&
             isTimeInterval(axisItem.timeInterval) &&
             timeFrameConfigs[axisItem.timeInterval].getAxisLabelFormatter();
+
         const axisConfig: Record<string, any> = {};
 
         if (axisItem && (hasFormattingConfig || axisMinInterval)) {
@@ -959,6 +963,11 @@ const getEchartAxes = ({
         } else if (axisLabelFormatter) {
             axisConfig.axisLabel = {
                 formatter: axisLabelFormatter,
+                rich: {
+                    bold: {
+                        fontWeight: 'bold',
+                    },
+                },
             };
             axisConfig.axisPointer = {
                 label: {
@@ -1028,7 +1037,11 @@ const getEchartAxes = ({
             axisConfig.axisLabel.rotate = rotate;
             axisConfig.axisLabel.margin = 12;
             axisConfig.nameGap = oppositeSide + 15;
+        } else {
+            axisConfig.axisLabel = axisConfig.axisLabel || {};
+            axisConfig.axisLabel.hideOverlap = true;
         }
+
         return axisConfig;
     };
 
@@ -1127,7 +1140,6 @@ const getEchartAxes = ({
         validCartesianConfig.eChartsConfig.series,
         itemsMap,
     );
-
     const bottomAxisExtraConfig = getWeekAxisConfig(
         bottomAxisXId,
         bottomAxisXField,
@@ -1564,6 +1576,8 @@ const useEchartsCartesianConfig = (
         minimal,
     } = useVisualizationContext();
 
+    const theme = useMantineTheme();
+
     const validCartesianConfig = useMemo(() => {
         if (!isCartesianVisualizationConfig(visualizationConfig)) return;
         return visualizationConfig.chartConfig.validConfig;
@@ -1823,7 +1837,11 @@ const useEchartsCartesianConfig = (
                             const tooltipValue = (
                                 value as Record<string, unknown>
                             )[dim];
-                            if (typeof value === 'object' && dim in value) {
+                            if (
+                                value &&
+                                typeof value === 'object' &&
+                                dim in value
+                            ) {
                                 return `
                             <tr>
                                 <td>${marker}</td>
@@ -1896,6 +1914,9 @@ const useEchartsCartesianConfig = (
                     validCartesianConfig?.eChartsConfig.grid,
                 ),
             },
+            textStyle: {
+                fontFamily: theme?.other.chartFont as string | undefined,
+            },
             // We assign colors per series, so we specify an empty list here.
             color: [],
         }),
@@ -1911,6 +1932,7 @@ const useEchartsCartesianConfig = (
             series,
             sortedResults,
             tooltip,
+            theme?.other?.chartFont,
         ],
     );
 

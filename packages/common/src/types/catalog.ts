@@ -1,10 +1,5 @@
 import assertUnreachable from '../utils/assertUnreachable';
-import {
-    type CompiledExploreJoin,
-    type Explore,
-    type ExploreError,
-    type InlineError,
-} from './explore';
+import { type CompiledExploreJoin, type InlineError } from './explore';
 import {
     DimensionType,
     MetricType,
@@ -53,6 +48,8 @@ type CustomIcon = {
 
 export type CatalogItemIcon = EmojiIcon | CustomIcon;
 
+export const UNCATEGORIZED_TAG_UUID = '__uncategorized__';
+
 export const isEmojiIcon = (icon: CatalogItemIcon | null): icon is EmojiIcon =>
     Boolean(icon && 'unicode' in icon);
 
@@ -71,7 +68,7 @@ export type CatalogField = Pick<
         tableName: string;
         tableGroupLabel?: string;
         tags?: string[]; // Tags from table, for filtering
-        categories: Pick<Tag, 'name' | 'color' | 'tagUuid'>[]; // Tags manually added by the user in the catalog
+        categories: Pick<Tag, 'name' | 'color' | 'tagUuid' | 'yamlReference'>[]; // Tags manually added by the user in the catalog
         chartUsage: number | undefined;
         icon: CatalogItemIcon | null;
     };
@@ -85,13 +82,26 @@ export type CatalogTable = Pick<
     type: CatalogType.Table;
     groupLabel?: string;
     tags?: string[];
-    categories: Pick<Tag, 'name' | 'color' | 'tagUuid'>[]; // Tags manually added by the user in the catalog
+    categories: Pick<Tag, 'name' | 'color' | 'tagUuid' | 'yamlReference'>[]; // Tags manually added by the user in the catalog
     joinedTables?: CompiledExploreJoin[]; // Matched type in explore
     chartUsage: number | undefined;
     icon: CatalogItemIcon | null;
 };
 
 export type CatalogItem = CatalogField | CatalogTable;
+
+export type CatalogMetricsTreeNode = Pick<
+    CatalogField,
+    'catalogSearchUuid' | 'name' | 'tableName'
+>;
+
+export type CatalogMetricsTreeEdge = {
+    source: CatalogMetricsTreeNode;
+    target: CatalogMetricsTreeNode;
+    createdAt: Date;
+    createdByUserUuid: string | null;
+    projectUuid: string;
+};
 
 export type ApiCatalogResults = CatalogItem[];
 
@@ -100,6 +110,32 @@ export type ApiMetricsCatalogResults = CatalogField[];
 export type ApiMetricsCatalog = {
     status: 'ok';
     results: KnexPaginatedData<ApiMetricsCatalogResults>;
+};
+
+export type MetricWithAssociatedTimeDimension = CompiledMetric & {
+    timeDimension:
+        | (CompiledMetric['defaultTimeDimension'] & { table: string })
+        | undefined;
+    availableTimeDimensions?: (CompiledDimension & {
+        type: DimensionType.DATE | DimensionType.TIMESTAMP;
+    })[];
+};
+
+export type ApiGetMetricPeek = {
+    status: 'ok';
+    results: MetricWithAssociatedTimeDimension;
+};
+
+export type ApiGetMetricsTree = {
+    status: 'ok';
+    results: {
+        edges: CatalogMetricsTreeEdge[];
+    };
+};
+
+export type ApiMetricsTreeEdgePayload = {
+    sourceCatalogSearchUuid: string;
+    targetCatalogSearchUuid: string;
 };
 
 export type CatalogMetadata = {
@@ -169,44 +205,71 @@ export type CatalogFieldMap = {
         fieldName: string;
         tableName: string;
         cachedExploreUuid: string;
+        fieldType: FieldType;
     };
 };
 
-export type CatalogItemWithTagUuids = Pick<
+export type CatalogItemSummary = Pick<
     CatalogItem,
     'catalogSearchUuid' | 'name' | 'type'
 > & {
-    cachedExploreUuid: string;
     projectUuid: string;
-    fieldType?: string; // This comes from db, so it is string, this type is mostly used to compare when migrating tags
-    exploreBaseTable: string;
+    cachedExploreUuid: string;
+    tableName: string;
+    fieldType: string | undefined;
+};
+
+export type CatalogItemWithTagUuids = CatalogItemSummary & {
     catalogTags: {
         tagUuid: string;
         createdByUserUuid: string | null;
         createdAt: Date;
+        taggedViaYaml: boolean;
     }[];
 };
 
-export type CatalogItemsWithIcons = Pick<
-    CatalogItem,
-    'catalogSearchUuid' | 'icon' | 'name' | 'type'
-> &
-    Pick<
-        CatalogItemWithTagUuids,
-        'cachedExploreUuid' | 'projectUuid' | 'fieldType' | 'exploreBaseTable'
-    >;
+export type CatalogItemsWithIcons = CatalogItemSummary &
+    Pick<CatalogItem, 'icon'>;
 
 export type SchedulerIndexCatalogJobPayload = {
     projectUuid: string;
-    explores: (Explore | ExploreError)[];
     userUuid: string;
     prevCatalogItemsWithTags: CatalogItemWithTagUuids[];
     prevCatalogItemsWithIcons: CatalogItemsWithIcons[];
+    prevMetricTreeEdges: CatalogMetricsTreeEdge[];
+};
+
+export type ChartFieldUpdates = {
+    oldChartFields: {
+        metrics: string[];
+        dimensions: string[];
+    };
+    newChartFields: {
+        metrics: string[];
+        dimensions: string[];
+    };
+};
+
+export type ChartFieldChanges = {
+    added: {
+        dimensions: string[];
+        metrics: string[];
+    };
+    removed: {
+        dimensions: string[];
+        metrics: string[];
+    };
 };
 
 export type CatalogFieldWhere = {
     fieldName: string;
+    fieldType: FieldType;
     cachedExploreUuid: string;
+};
+
+export type ChartFieldUsageChanges = {
+    fieldsToIncrement: CatalogFieldWhere[];
+    fieldsToDecrement: CatalogFieldWhere[];
 };
 
 export type ChartUsageIn = CatalogFieldWhere & {
@@ -214,3 +277,13 @@ export type ChartUsageIn = CatalogFieldWhere & {
 };
 
 export const indexCatalogJob = 'indexCatalog';
+
+export type ApiMetricsWithAssociatedTimeDimensionResponse = {
+    status: 'ok';
+    results: MetricWithAssociatedTimeDimension[];
+};
+
+export type ApiSegmentDimensionsResponse = {
+    status: 'ok';
+    results: CompiledDimension[];
+};

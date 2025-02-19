@@ -1,4 +1,5 @@
 import {
+    getObjectValue,
     getRequestMethod,
     LightdashRequestMethodHeader,
     NotFoundError,
@@ -14,6 +15,8 @@ import {
     unauthorisedInDemo,
 } from '../controllers/authentication';
 
+const fs = require('fs');
+
 export const projectRouter = express.Router({ mergeParams: true });
 
 projectRouter.patch(
@@ -25,7 +28,7 @@ projectRouter.patch(
         req.services
             .getProjectService()
             .updateAndScheduleAsyncWork(
-                req.params.projectUuid,
+                getObjectValue(req.params, 'projectUuid'),
                 req.user!,
                 req.body,
                 getRequestMethod(req.header(LightdashRequestMethodHeader)),
@@ -51,8 +54,8 @@ projectRouter.get(
                 .getSearchService()
                 .getSearchResults(
                     req.user!,
-                    req.params.projectUuid,
-                    req.params.query,
+                    getObjectValue(req.params, 'projectUuid'),
+                    getObjectValue(req.params, 'query'),
                     {
                         type: type?.toString(),
                         fromDate: fromDate?.toString(),
@@ -77,12 +80,18 @@ projectRouter.get(
                 .getDownloadFileService()
                 .getDownloadFile(nanoId);
             const filename = path.basename(filePath);
-            res.set('Content-Type', 'text/csv');
-            res.set('Content-Disposition', `attachment; filename=${filename}`);
-            const normalizedPath = path.normalize(filePath);
+            const normalizedPath = path.resolve('/tmp/', filename);
             if (!normalizedPath.startsWith('/tmp/')) {
-                throw new NotFoundError(`File not found ${normalizedPath}`);
+                throw new NotFoundError(`File not found ${filename}`);
             }
+            if (!fs.existsSync(normalizedPath)) {
+                throw new NotFoundError(`File not found: ${filename}`);
+            }
+            res.set('Content-Type', 'text/csv');
+            res.set(
+                'Content-Disposition',
+                `attachment; filename="${filename}"`,
+            );
             res.sendFile(normalizedPath);
         } catch (error) {
             next(error);
@@ -96,20 +105,18 @@ projectRouter.post(
     isAuthenticated,
     async (req, res, next) => {
         try {
-            const results = {
-                search: req.body.search,
-                results: await req.services
-                    .getProjectService()
-                    .searchFieldUniqueValues(
-                        req.user!,
-                        req.params.projectUuid,
-                        req.body.table,
-                        req.params.fieldId,
-                        req.body.search,
-                        req.body.limit,
-                        req.body.filters,
-                    ),
-            };
+            const results = await req.services
+                .getProjectService()
+                .searchFieldUniqueValues(
+                    req.user!,
+                    getObjectValue(req.params, 'projectUuid'),
+                    req.body.table,
+                    getObjectValue(req.params, 'fieldId'),
+                    req.body.search,
+                    req.body.limit,
+                    req.body.filters,
+                    req.body.forceRefresh,
+                );
 
             res.json({
                 status: 'ok',
@@ -132,7 +139,7 @@ projectRouter.post(
                 .getProjectService()
                 .scheduleCompileProject(
                     req.user!,
-                    req.params.projectUuid,
+                    getObjectValue(req.params, 'projectUuid'),
                     getRequestMethod(req.header(LightdashRequestMethodHeader)),
                 );
             res.json({
@@ -157,7 +164,7 @@ projectRouter.post(
             savedChartsService
                 .duplicate(
                     req.user!,
-                    req.params.projectUuid,
+                    getObjectValue(req.params, 'projectUuid'),
                     req.query.duplicateFrom.toString(),
                     req.body,
                 )
@@ -170,7 +177,11 @@ projectRouter.post(
                 .catch(next);
         } else {
             savedChartsService
-                .create(req.user!, req.params.projectUuid, req.body)
+                .create(
+                    req.user!,
+                    getObjectValue(req.params, 'projectUuid'),
+                    req.body,
+                )
                 .then((results) => {
                     res.json({
                         status: 'ok',
@@ -190,7 +201,11 @@ projectRouter.patch(
     async (req, res, next) => {
         req.services
             .getSavedChartService()
-            .updateMultiple(req.user!, req.params.projectUuid, req.body)
+            .updateMultiple(
+                req.user!,
+                getObjectValue(req.params, 'projectUuid'),
+                req.body,
+            )
             .then((results) => {
                 res.json({
                     status: 'ok',
@@ -208,7 +223,10 @@ projectRouter.get(
     async (req, res, next) => {
         req.services
             .getProjectService()
-            .getMostPopularAndRecentlyUpdated(req.user!, req.params.projectUuid)
+            .getMostPopularAndRecentlyUpdated(
+                req.user!,
+                getObjectValue(req.params, 'projectUuid'),
+            )
             .then((results) => {
                 res.json({
                     status: 'ok',
@@ -227,7 +245,7 @@ projectRouter.patch(
     async (req, res, next) => {
         req.services
             .getSpaceService()
-            .togglePinning(req.user!, req.params.spaceUuid)
+            .togglePinning(req.user!, getObjectValue(req.params, 'spaceUuid'))
             .then((results) => {
                 res.json({
                     status: 'ok',
@@ -235,33 +253,6 @@ projectRouter.patch(
                 });
             })
             .catch(next);
-    },
-);
-
-projectRouter.post(
-    '/sqlRunner/downloadCsv',
-    allowApiKeyAuthentication,
-    isAuthenticated,
-    async (req, res, next) => {
-        try {
-            const { customLabels, sql } = req.body;
-            const { projectUuid } = req.params;
-
-            const fileUrl = await req.services.getCsvService().downloadSqlCsv({
-                user: req.user!,
-                projectUuid,
-                sql,
-                customLabels,
-            });
-            res.json({
-                status: 'ok',
-                results: {
-                    url: fileUrl,
-                },
-            });
-        } catch (e) {
-            next(e);
-        }
     },
 );
 
@@ -273,7 +264,10 @@ projectRouter.get(
         try {
             const results: ProjectCatalog = await req.services
                 .getProjectService()
-                .getCatalog(req.user!, req.params.projectUuid);
+                .getCatalog(
+                    req.user!,
+                    getObjectValue(req.params, 'projectUuid'),
+                );
             res.json({
                 status: 'ok',
                 results,
@@ -292,7 +286,10 @@ projectRouter.get(
         try {
             const results: TablesConfiguration = await req.services
                 .getProjectService()
-                .getTablesConfiguration(req.user!, req.params.projectUuid);
+                .getTablesConfiguration(
+                    req.user!,
+                    getObjectValue(req.params, 'projectUuid'),
+                );
             res.json({
                 status: 'ok',
                 results,
@@ -314,7 +311,7 @@ projectRouter.patch(
                 .getProjectService()
                 .updateTablesConfiguration(
                     req.user!,
-                    req.params.projectUuid,
+                    getObjectValue(req.params, 'projectUuid'),
                     req.body,
                 );
             res.json({
@@ -335,7 +332,10 @@ projectRouter.get(
         try {
             const results = await req.services
                 .getProjectService()
-                .hasSavedCharts(req.user!, req.params.projectUuid);
+                .hasSavedCharts(
+                    req.user!,
+                    getObjectValue(req.params, 'projectUuid'),
+                );
             res.json({
                 status: 'ok',
                 results,

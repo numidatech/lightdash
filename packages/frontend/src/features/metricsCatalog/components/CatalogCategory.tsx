@@ -1,72 +1,92 @@
 import type { CatalogItem } from '@lightdash/common';
-import { ActionIcon, Badge, Box, Group, useMantineTheme } from '@mantine/core';
-import { IconCheck, IconX } from '@tabler/icons-react';
+import { ActionIcon, Badge, Group, Tooltip } from '@mantine/core';
+import { IconCode, IconX } from '@tabler/icons-react';
 import type { FC } from 'react';
 import MantineIcon from '../../../components/common/MantineIcon';
+import { useCategoryStyles } from '../styles/useCategoryStyles';
 
 type Props = {
-    category: Pick<CatalogItem['categories'][number], 'name' | 'color'>;
+    category: Pick<
+        CatalogItem['categories'][number],
+        'name' | 'color' | 'yamlReference'
+    >;
     onClick?: React.MouseEventHandler<HTMLDivElement> | undefined;
     onRemove?: () => void;
-    selected?: boolean;
+    showYamlIcon?: boolean;
 };
 
 export const CatalogCategory: FC<Props> = ({
     category,
     onClick,
     onRemove,
-    selected,
+    showYamlIcon = false,
 }) => {
-    const { fn } = useMantineTheme();
+    const { classes } = useCategoryStyles(category.color);
+
     return (
         <Badge
             key={category.name}
             pos="relative"
             size="sm"
-            radius="sm"
+            radius="md"
             variant="light"
             onClick={onClick}
-            styles={{
+            py={10}
+            h={24}
+            rightSection={
+                showYamlIcon && (
+                    <Tooltip
+                        variant="xs"
+                        maw={200}
+                        position="top"
+                        withinPortal
+                        label="This category cannot be removed from this metric because it was defined in the .yml file."
+                    >
+                        <MantineIcon
+                            icon={IconCode}
+                            size={12}
+                            strokeWidth={2.5}
+                            opacity={0.5}
+                        />
+                    </Tooltip>
+                )
+            }
+            className={classes.base}
+            styles={() => ({
                 root: {
+                    fontSize: '12px',
                     textTransform: 'none',
-                    fontWeight: 400,
-                    border: `1px solid ${fn.lighten(category.color, 0.6)}`,
-                    backgroundColor: fn.lighten(category.color, 0.9),
-                    color: fn.darken(category.color, 0.2),
-                    cursor: 'pointer',
+                    fontWeight: 500,
                     paddingRight: onRemove ? 2 : 8,
-                    '&:hover': {
-                        backgroundColor: fn.lighten(category.color, 0.8),
-                    },
                 },
-            }}
+            })}
         >
             <Group spacing={1}>
                 {category.name}
                 {onRemove && (
                     <ActionIcon
-                        variant="transparent"
-                        size={12}
+                        variant="subtle"
+                        color="gray"
+                        size={14}
                         onClick={onRemove}
+                        sx={(theme) => ({
+                            '&:focus': {
+                                backgroundColor: theme.fn.rgba(
+                                    theme.colors.gray[5],
+                                    0.35,
+                                ),
+                                outline: 'none',
+                            },
+                        })}
                     >
                         <MantineIcon
-                            color={fn.darken(category.color, 0.4)}
+                            className={classes.removeIcon}
                             icon={IconX}
-                            strokeWidth={1.8}
+                            strokeWidth={2.5}
                         />
                     </ActionIcon>
                 )}
             </Group>
-            {selected && (
-                <Box pos="absolute" right={2} top={2}>
-                    <MantineIcon
-                        icon={IconCheck}
-                        strokeWidth={2}
-                        color="dark"
-                        size={12}
-                    />
-                </Box>
-            )}
         </Badge>
     );
 };

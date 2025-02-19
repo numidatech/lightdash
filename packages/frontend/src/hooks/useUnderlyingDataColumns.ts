@@ -5,18 +5,18 @@ import {
     type Field,
     type FieldId,
 } from '@lightdash/common';
-import { useMemo } from 'react';
+import { useMemo, type ReactNode } from 'react';
 import {
     columnHelper,
     type TableColumn,
 } from '../components/common/Table/types';
-import { getFormattedValueCell } from './useColumns';
 import useColumnTotals from './useColumnTotals';
+import { getFormattedValueCell } from './useColumns';
 
 type Args = {
     resultsData: ApiQueryResults | undefined;
     fieldsMap: Record<FieldId, Field>;
-    columnHeader?: (dimension: Field) => JSX.Element;
+    columnHeader?: (dimension: Field) => ReactNode;
 };
 
 const useUnderlyingDataColumns = ({

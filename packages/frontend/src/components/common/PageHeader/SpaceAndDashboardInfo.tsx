@@ -1,9 +1,10 @@
 import { Anchor } from '@mantine/core';
 import { IconFolder } from '@tabler/icons-react';
 import { type FC } from 'react';
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 
 import { InfoContainer } from '.';
+import MantineIcon from '../MantineIcon';
 
 interface Props {
     space: {
@@ -22,7 +23,8 @@ const SpaceAndDashboardInfo: FC<Props> = ({
 }) => {
     return (
         <InfoContainer>
-            <IconFolder size={16} />
+            <MantineIcon icon={IconFolder} />
+            Space:
             <Anchor component={Link} to={link}>
                 {name}
             </Anchor>

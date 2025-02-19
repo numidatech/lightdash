@@ -3,7 +3,6 @@ import {
     ChartKind,
     CreateDashboard,
     CreateDashboardChartTile,
-    DashboardBasicDetails,
     DashboardChartTile,
     DashboardDAO,
     DashboardLoomTile,
@@ -12,6 +11,7 @@ import {
     DashboardUnversionedFields,
     DashboardVersionedFields,
     OrganizationMemberRole,
+    PossibleAbilities,
     SessionUser,
     type DashboardBasicDetailsWithTileTypes,
 } from '@lightdash/common';
@@ -171,6 +171,7 @@ export const dashboardVersionEntry: DashboardVersionTable['base'] = {
     dashboard_id: 0,
     created_at: new Date(),
     updated_by_user_uuid: 'userUuid',
+    config: undefined,
 };
 
 export const dashboardViewEntry: DashboardViewTable['base'] = {
@@ -203,6 +204,7 @@ export const dashboardWithVersionEntry: GetDashboardQuery = {
     order: 0,
     views_count: 1,
     first_viewed_at: new Date(1),
+    config: undefined,
 };
 
 export const dashboardTileEntry: DashboardTileTable['base'] = {
@@ -349,9 +351,11 @@ export const user: SessionUser = {
     isSetupComplete: true,
     userId: 0,
     role: OrganizationMemberRole.ADMIN,
-    ability: new Ability([
+    ability: new Ability<PossibleAbilities>([
         { subject: 'Dashboard', action: ['update', 'delete', 'create'] },
     ]),
     isActive: true,
     abilityRules: [],
+    createdAt: new Date(),
+    updatedAt: new Date(),
 };

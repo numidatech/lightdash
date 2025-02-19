@@ -17,19 +17,18 @@ import {
     IconLink,
     IconTableAlias,
 } from '@tabler/icons-react';
-import { useCallback, useState, type FC } from 'react';
-import MantineIcon from '../../../../components/common/MantineIcon';
+import { useCallback, useMemo, useState, type FC } from 'react';
 import { cartesianChartSelectors } from '../../../../components/DataViz/store/selectors';
-import { useGitHubRepositories } from '../../../../components/UserSettings/GithubSettingsPanel';
 import { EditableText } from '../../../../components/VisualizationConfigs/common/EditableText';
+import MantineIcon from '../../../../components/common/MantineIcon';
+import { useGitIntegration } from '../../../../hooks/gitIntegration/useGitIntegration';
 import useHealth from '../../../../hooks/health/useHealth';
 import useToaster from '../../../../hooks/toaster/useToaster';
 import { useProject } from '../../../../hooks/useProject';
-import { useCreateShareMutation } from '../../../../hooks/useShare';
 import { CreateVirtualViewModal } from '../../../virtualView';
+import { useCreateSqlRunnerShareUrl } from '../../hooks/useSqlRunnerShareUrl';
 import { useAppDispatch, useAppSelector } from '../../store/hooks';
 import {
-    DEFAULT_NAME,
     EditorTabs,
     setActiveEditorTab,
     toggleModal,
@@ -40,6 +39,9 @@ import { SaveSqlChartModal } from '../SaveSqlChartModal';
 import { WriteBackToDbtModal } from '../WriteBackToDbtModal';
 
 type CtaAction = 'save' | 'createVirtualView' | 'writeBackToDbt';
+
+const DEFAULT_SQL_NAME = 'Untitled SQL query';
+const DEFAULT_NAME_VIRTUAL_VIEW = 'Untitled virtual view';
 
 export const HeaderCreate: FC = () => {
     const projectUuid = useAppSelector((state) => state.sqlRunner.projectUuid);
@@ -52,13 +54,10 @@ export const HeaderCreate: FC = () => {
         (state) => state.sqlRunner.modals.saveChartModal.isOpen,
     );
     const health = useHealth();
-    const sqlRunnerState = useAppSelector((state) => state.sqlRunner);
-    const { mutateAsync: createShareUrl } = useCreateShareMutation();
-
     const isGithubIntegrationEnabled =
         health?.data?.hasGithub &&
         project?.dbtConnection.type === DbtProjectType.GITHUB;
-    const { isError: githubIsNotInstalled } = useGitHubRepositories();
+    const { data: gitIntegration } = useGitIntegration();
 
     const isCreateVirtualViewModalOpen = useAppSelector(
         (state) => state.sqlRunner.modals.createVirtualViewModal.isOpen,
@@ -137,29 +136,41 @@ export const HeaderCreate: FC = () => {
                 return <MantineIcon icon={IconBrandGithub} />;
         }
     }, []);
+
+    const untitledName = useMemo(() => {
+        if (ctaAction === 'createVirtualView') {
+            return DEFAULT_NAME_VIRTUAL_VIEW;
+        }
+        return DEFAULT_SQL_NAME;
+    }, [ctaAction]);
+
     const clipboard = useClipboard({ timeout: 500 });
     const { showToastSuccess } = useToaster();
+    const createShareUrl = useCreateSqlRunnerShareUrl();
 
     const handleCreateShareUrl = useCallback(async () => {
-        const path = window.location.pathname;
-        const shareUrl = await createShareUrl({
-            path,
-            params: JSON.stringify(sqlRunnerState),
-        });
-        const fullUrl = `${window.location.origin}${window.location.pathname}?share=${shareUrl.nanoid}`;
+        const fullUrl = await createShareUrl();
         clipboard.copy(fullUrl);
         showToastSuccess({ title: 'Shared URL copied to clipboard!' });
-    }, [createShareUrl, sqlRunnerState, clipboard, showToastSuccess]);
+    }, [createShareUrl, clipboard, showToastSuccess]);
 
     return (
         <>
-            <Paper shadow="none" radius={0} px="md" py="xs" withBorder>
+            <Paper
+                shadow="none"
+                radius={0}
+                px="md"
+                py="xs"
+                sx={(theme) => ({
+                    borderBottom: `1px solid ${theme.colors.gray[3]}`,
+                })}
+            >
                 <Group position="apart">
                     <Group spacing="two">
                         <EditableText
                             size="md"
                             w={400}
-                            placeholder={DEFAULT_NAME}
+                            placeholder={untitledName}
                             value={name}
                             onChange={(e) =>
                                 dispatch(updateName(e.currentTarget.value))
@@ -167,7 +178,7 @@ export const HeaderCreate: FC = () => {
                         />
                     </Group>
 
-                    <Group>
+                    <Group spacing="xs">
                         <Button.Group>
                             <Button
                                 variant="default"
@@ -268,12 +279,12 @@ export const HeaderCreate: FC = () => {
                                             position="top"
                                             withArrow
                                             withinPortal
-                                            disabled={!githubIsNotInstalled}
+                                            disabled={gitIntegration?.enabled}
                                         >
                                             <Group>
                                                 <Menu.Item
                                                     disabled={
-                                                        githubIsNotInstalled
+                                                        !gitIntegration?.enabled
                                                     }
                                                     onClick={() => {
                                                         setCtaAction(

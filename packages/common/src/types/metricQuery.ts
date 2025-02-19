@@ -1,3 +1,4 @@
+import { type AnyType } from './any';
 import {
     BinType,
     friendlyName,
@@ -13,6 +14,7 @@ import {
     type CustomFormat,
     type FieldId,
     type Format,
+    type Metric,
     type MetricType,
     type TableCalculation,
 } from './field';
@@ -25,9 +27,11 @@ export interface AdditionalMetric {
     description?: string;
     sql: string;
     hidden?: boolean;
+    // @deprecated Use format expression instead
     round?: number;
+    // @deprecated Use format expression instead
     compact?: CompactOrAlias;
-    format?: Format;
+    format?: Format | string; // // Format type is deprecated, use format expression(string) instead
     table: string;
     name: string;
     index?: number;
@@ -38,19 +42,20 @@ export interface AdditionalMetric {
     formatOptions?: CustomFormat;
 }
 
-export const isAdditionalMetric = (value: any): value is AdditionalMetric =>
+export const isAdditionalMetric = (value: AnyType): value is AdditionalMetric =>
     value?.table &&
     value?.name &&
     !value?.fieldType &&
     !isCustomDimension(value);
 
 export const hasFormatOptions = (
-    value: any,
-): value is AdditionalMetric & { formatOptions: CustomFormat } =>
-    !!value.formatOptions;
+    value: AnyType,
+): value is { formatOptions: CustomFormat } => !!value.formatOptions;
 
 export const getCustomMetricDimensionId = (metric: AdditionalMetric) =>
     `${metric.table}_${metric.baseDimensionName}`;
+
+export type MetricOverrides = { [key: string]: Pick<Metric, 'formatOptions'> }; // Don't use Record to avoid issues in TSOA
 
 // Object used to query an explore. Queries only happen within a single explore
 export type MetricQuery = {
@@ -63,6 +68,7 @@ export type MetricQuery = {
     tableCalculations: TableCalculation[]; // calculations to append to results
     additionalMetrics?: AdditionalMetric[]; // existing metric type
     customDimensions?: CustomDimension[];
+    metricOverrides?: MetricOverrides; // Override format options for fields in "metrics"
     timezone?: string; // Local timezone to use for the query
     metadata?: {
         hasADateDimension: Pick<CompiledDimension, 'label' | 'name'>;
@@ -85,11 +91,11 @@ export const getAdditionalMetricLabel = (item: AdditionalMetric) =>
 type FilterGroupResponse =
     | {
           id: string;
-          or: any[];
+          or: AnyType[];
       }
     | {
           id: string;
-          and: any[];
+          and: AnyType[];
       };
 export type FiltersResponse = {
     dimensions?: FilterGroupResponse;
@@ -147,9 +153,9 @@ export type MetricQueryRequest = {
     dimensions: FieldId[]; // Dimensions to group by in the explore
     metrics: FieldId[]; // Metrics to compute in the explore
     filters: {
-        dimensions?: any;
-        metrics?: any;
-        tableCalculations?: any;
+        dimensions?: AnyType;
+        metrics?: AnyType;
+        tableCalculations?: AnyType;
     };
     sorts: SortField[]; // Sorts for the data
     limit: number; // Max number of rows to return from query
@@ -160,4 +166,5 @@ export type MetricQueryRequest = {
     granularity?: DateGranularity;
     metadata?: MetricQuery['metadata'];
     timezone?: string;
+    metricOverrides?: MetricOverrides;
 };

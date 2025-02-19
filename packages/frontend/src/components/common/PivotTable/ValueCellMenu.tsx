@@ -1,18 +1,21 @@
 import { subject } from '@casl/ability';
 import {
+    createDashboardFilterRuleFromField,
     hasCustomDimension,
+    isDimension,
+    isDimensionValueInvalidDate,
     type ItemsMap,
     type ResultValue,
 } from '@lightdash/common';
 import { Menu, Text, type MenuProps } from '@mantine/core';
 import { IconArrowBarToDown, IconCopy, IconStack } from '@tabler/icons-react';
 import { type FC } from 'react';
-import { useParams } from 'react-router-dom';
-
-import { useApp } from '../../../providers/AppProvider';
-import { useTracking } from '../../../providers/TrackingProvider';
+import { useLocation, useParams } from 'react-router';
+import useApp from '../../../providers/App/useApp';
+import useTracking from '../../../providers/Tracking/useTracking';
 import { EventName } from '../../../types/Events';
-import { useMetricQueryDataContext } from '../../MetricQueryData/MetricQueryDataProvider';
+import { FilterDashboardTo } from '../../DashboardFilter/FilterDashboardTo';
+import { useMetricQueryDataContext } from '../../MetricQueryData/useMetricQueryDataContext';
 import MantineIcon from '../MantineIcon';
 
 type ValueCellMenuProps = {
@@ -46,6 +49,8 @@ const ValueCellMenu: FC<React.PropsWithChildren<ValueCellMenuProps>> = ({
 
     // FIXME: get rid of this from here
     const { projectUuid } = useParams<{ projectUuid: string }>();
+    const location = useLocation();
+    const isDashboardPage = location.pathname.includes('/dashboards');
 
     if (!value || !tracking || !metricQueryData) {
         return <>{children}</>;
@@ -139,6 +144,24 @@ const ValueCellMenu: FC<React.PropsWithChildren<ValueCellMenuProps>> = ({
         });
     };
 
+    const filterValue =
+        value.raw === undefined ||
+        (isDimension(item) && isDimensionValueInvalidDate(item, value))
+            ? null // Set as null if value is invalid date or undefined
+            : value.raw;
+
+    const filters =
+        isDashboardPage && isDimension(item) && !item.hidden
+            ? [
+                  createDashboardFilterRuleFromField({
+                      field: item,
+                      availableTileFilters: {},
+                      isTemporary: true,
+                      value: filterValue,
+                  }),
+              ]
+            : [];
+
     return (
         <Menu
             opened={opened}
@@ -209,6 +232,9 @@ const ValueCellMenu: FC<React.PropsWithChildren<ValueCellMenuProps>> = ({
                         ) : null}
                     </>
                 ) : null}
+                {isDashboardPage && filters.length > 0 && (
+                    <FilterDashboardTo filters={filters} />
+                )}
             </Menu.Dropdown>
         </Menu>
     );

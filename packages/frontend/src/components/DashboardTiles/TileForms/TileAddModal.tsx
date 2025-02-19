@@ -1,6 +1,6 @@
 import {
-    assertUnreachable,
     DashboardTileTypes,
+    assertUnreachable,
     defaultTileSize,
     type Dashboard,
     type DashboardLoomTileProperties,
@@ -20,10 +20,9 @@ import { IconMarkdown, IconVideo } from '@tabler/icons-react';
 import { useState, type FC } from 'react';
 import { v4 as uuid4 } from 'uuid';
 import MantineIcon from '../../common/MantineIcon';
-import LoomTileForm, { getLoomId } from './LoomTileForm';
-import MarkdownTileForm, {
-    markdownTileContentTransform,
-} from './MarkdownTileForm';
+import LoomTileForm from './LoomTileForm';
+import MarkdownTileForm from './MarkdownTileForm';
+import { getLoomId, markdownTileContentTransform } from './utils';
 
 type Tile = Dashboard['tiles'][number];
 type TileProperties = Tile['properties'];

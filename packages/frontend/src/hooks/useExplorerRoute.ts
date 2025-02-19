@@ -2,25 +2,23 @@ import {
     ChartType,
     CustomDimensionType,
     DateGranularity,
-    DimensionType,
-    getDateDimension,
     getItemId,
     isCartesianChartConfig,
+    type ChartConfig,
     type CreateSavedChartVersion,
     type CustomBinDimension,
     type CustomDimension,
-    type Explore,
+    type Metric,
     type MetricQuery,
 } from '@lightdash/common';
 import { useEffect, useMemo } from 'react';
-import { useHistory, useLocation, useParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams } from 'react-router';
 import {
     ExplorerSection,
-    useExplorerContext,
     type ExplorerReduceState,
-} from '../providers/ExplorerProvider';
+} from '../providers/Explorer/types';
+import useExplorerContext from '../providers/Explorer/useExplorerContext';
 import useToaster from './toaster/useToaster';
-
 export const DEFAULT_EMPTY_EXPLORE_CONFIG: CreateSavedChartVersion = {
     tableName: '',
     metricQuery: {
@@ -44,62 +42,8 @@ export const DEFAULT_EMPTY_EXPLORE_CONFIG: CreateSavedChartVersion = {
     },
 };
 
-export const createMetricPreviewUnsavedChartVersion = (
-    metric: Record<'name' | 'tableName', string>,
-    explore: Explore,
-): CreateSavedChartVersion => {
-    // Find the best date dimension to use
-    const dateDimensions = Object.entries(
-        explore.tables[metric.tableName].dimensions,
-    ).filter(([_, dim]) =>
-        [DimensionType.DATE, DimensionType.TIMESTAMP].includes(dim.type),
-    );
-
-    // Try to find a dimension with a date granularity, if not, leave empty
-    let dateWithGranularity = dateDimensions.find(([dimId]) => {
-        const { baseDimensionId, newTimeFrame } = getDateDimension(dimId);
-        return !!baseDimensionId && !!newTimeFrame;
-    });
-
-    if (!dateWithGranularity) {
-        // Look through all other tables for date dimensions when no date dimension is found in the current table - there could be a joined table with a date dimension
-        dateWithGranularity = Object.entries(explore.tables)
-            .filter(([tableName]) => tableName !== metric.tableName)
-            .flatMap(([_, table]) =>
-                Object.entries(table.dimensions).filter(([__, dim]) =>
-                    [DimensionType.DATE, DimensionType.TIMESTAMP].includes(
-                        dim.type,
-                    ),
-                ),
-            )
-            .find(([dimId]) => {
-                const { baseDimensionId, newTimeFrame } =
-                    getDateDimension(dimId);
-                return !!baseDimensionId && !!newTimeFrame;
-            });
-    }
-
-    return {
-        ...DEFAULT_EMPTY_EXPLORE_CONFIG,
-        tableName: metric.tableName,
-        metricQuery: {
-            ...DEFAULT_EMPTY_EXPLORE_CONFIG.metricQuery,
-            exploreName: metric.tableName,
-            dimensions: dateWithGranularity
-                ? [getItemId(dateWithGranularity[1])]
-                : [],
-            metrics: [
-                getItemId({
-                    name: metric.name,
-                    table: metric.tableName,
-                }),
-            ],
-        },
-    };
-};
-
 export const getExplorerUrlFromCreateSavedChartVersion = (
-    projectUuid: string,
+    projectUuid: string | undefined,
     createSavedChart: CreateSavedChartVersion,
     // Pass true to preserve long url. This is sometimes desireable when we want
     // all of the information in the URL, but don't use it for navigation.
@@ -107,6 +51,9 @@ export const getExplorerUrlFromCreateSavedChartVersion = (
     // shareable, shortened links.
     preserveLongUrl?: boolean,
 ): { pathname: string; search: string } => {
+    if (!projectUuid) {
+        return { pathname: '', search: '' };
+    }
     const newParams = new URLSearchParams();
 
     let stringifiedChart = JSON.stringify(createSavedChart);
@@ -162,7 +109,7 @@ type BackwardsCompatibleCreateSavedChartVersionUrlParam = Omit<
     metricQuery: Omit<MetricQuery, 'exploreName'> & { exploreName?: string };
 };
 
-export const parseExplorerSearchParams = (
+const parseExplorerSearchParams = (
     search: string,
 ): CreateSavedChartVersion | undefined => {
     const searchParams = new URLSearchParams(search);
@@ -198,7 +145,7 @@ export const parseExplorerSearchParams = (
 };
 
 export const useExplorerRoute = () => {
-    const history = useHistory();
+    const navigate = useNavigate();
     const pathParams = useParams<{
         projectUuid: string;
         tableId: string | undefined;
@@ -221,7 +168,7 @@ export const useExplorerRoute = () => {
     // Update url params based on pristine state
     useEffect(() => {
         if (metricQuery && unsavedChartVersion.tableName) {
-            history.replace(
+            void navigate(
                 getExplorerUrlFromCreateSavedChartVersion(
                     pathParams.projectUuid,
                     {
@@ -229,11 +176,12 @@ export const useExplorerRoute = () => {
                         metricQuery,
                     },
                 ),
+                { replace: true },
             );
         }
     }, [
         metricQuery,
-        history,
+        navigate,
         pathParams.projectUuid,
         unsavedChartVersion,
         dateZoom,
@@ -293,11 +241,18 @@ export const useExplorerUrlState = (): ExplorerReduceState | undefined => {
                         : [ExplorerSection.RESULTS],
                     unsavedChartVersion,
                     modals: {
+                        format: {
+                            isOpen: false,
+                        },
                         additionalMetric: {
                             isOpen: false,
                         },
                         customDimension: {
                             isOpen: false,
+                        },
+                        additionalMetricWriteBack: {
+                            isOpen: false,
+                            item: undefined,
                         },
                     },
                 };
@@ -310,4 +265,30 @@ export const useExplorerUrlState = (): ExplorerReduceState | undefined => {
             }
         }
     }, [pathParams, search, showToastError]);
+};
+
+export const createMetricPreviewUnsavedChartVersion = (
+    metric: Pick<Metric, 'name' | 'table'>,
+): CreateSavedChartVersion => {
+    let chartConfig: ChartConfig = {
+        type: ChartType.BIG_NUMBER,
+        config: {},
+    };
+
+    return {
+        ...DEFAULT_EMPTY_EXPLORE_CONFIG,
+        tableName: metric.table,
+        chartConfig,
+        metricQuery: {
+            ...DEFAULT_EMPTY_EXPLORE_CONFIG.metricQuery,
+            exploreName: metric.table,
+            dimensions: [],
+            metrics: [
+                getItemId({
+                    name: metric.name,
+                    table: metric.table,
+                }),
+            ],
+        },
+    };
 };

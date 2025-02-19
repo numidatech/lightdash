@@ -1,5 +1,6 @@
 import { Ability } from '@casl/ability';
 import {
+    AnyType,
     CreateInviteLink,
     InviteLink,
     LightdashUser,
@@ -7,6 +8,7 @@ import {
     OpenIdIdentityIssuerType,
     Organization,
     OrganizationMemberRole,
+    PossibleAbilities,
     SessionUser,
     type OpenIdUser,
 } from '@lightdash/common';
@@ -24,7 +26,7 @@ export const openIdUser: OpenIdUser = {
 export const openIdUserWithInvalidIssuer: OpenIdUser = {
     openId: {
         ...openIdUser.openId,
-        issuerType: 'invalid_issuer' as any,
+        issuerType: 'invalid_issuer' as AnyType,
     },
 };
 
@@ -41,9 +43,13 @@ export const sessionUser: SessionUser = {
     isSetupComplete: true,
     userId: 0,
     role: OrganizationMemberRole.ADMIN,
-    ability: new Ability([{ subject: 'InviteLink', action: ['create'] }]),
+    ability: new Ability<PossibleAbilities>([
+        { subject: 'InviteLink', action: ['create'] },
+    ]),
     isActive: true,
     abilityRules: [],
+    createdAt: new Date(),
+    updatedAt: new Date(),
 };
 
 export const authenticatedUser: SessionUser = {
@@ -88,9 +94,11 @@ export const newUser: SessionUser = {
     isSetupComplete: false,
     userId: 0,
     role: inviteUser.role,
-    ability: new Ability([]),
+    ability: new Ability<PossibleAbilities>([]),
     isActive: true,
     abilityRules: [],
+    createdAt: new Date(),
+    updatedAt: new Date(),
 };
 
 export const organisation: Organization = {
@@ -107,4 +115,6 @@ export const userWithoutOrg: LightdashUser = {
     isMarketingOptedIn: false,
     isSetupComplete: false,
     isActive: true,
+    createdAt: new Date(),
+    updatedAt: new Date(),
 };

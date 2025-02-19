@@ -10,7 +10,7 @@ import {
 import { IconDeviceAnalytics } from '@tabler/icons-react';
 import { type FC } from 'react';
 import MantineIcon from '../../../components/common/MantineIcon';
-import { useTracking } from '../../../providers/TrackingProvider';
+import useTracking from '../../../providers/Tracking/useTracking';
 import { EventName } from '../../../types/Events';
 import { useAppSelector } from '../../sqlRunner/store/hooks';
 import { useMetricChartAnalytics } from '../hooks/useMetricChartAnalytics';
@@ -18,6 +18,9 @@ type Props = ModalProps;
 
 export const MetricChartUsageModal: FC<Props> = ({ opened, onClose }) => {
     const { track } = useTracking();
+    const userUuid = useAppSelector(
+        (state) => state.metricsCatalog.user?.userUuid,
+    );
     const activeMetric = useAppSelector(
         (state) => state.metricsCatalog.activeMetric,
     );
@@ -43,7 +46,7 @@ export const MetricChartUsageModal: FC<Props> = ({ opened, onClose }) => {
             size="lg"
         >
             <Modal.Overlay />
-            <Modal.Content sx={{ overflow: 'hidden' }}>
+            <Modal.Content sx={{ overflow: 'hidden' }} radius="md">
                 <Modal.Header
                     sx={(theme) => ({
                         borderBottom: `1px solid ${theme.colors.gray[4]}`,
@@ -90,6 +93,7 @@ export const MetricChartUsageModal: FC<Props> = ({ opened, onClose }) => {
                                                 track({
                                                     name: EventName.METRICS_CATALOG_CHART_USAGE_CHART_CLICKED,
                                                     properties: {
+                                                        userId: userUuid,
                                                         organizationId:
                                                             organizationUuid,
                                                         projectId: projectUuid,

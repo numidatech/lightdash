@@ -43,6 +43,7 @@ export enum QueryExecutionContext {
     DASHBOARD = 'dashboardView',
     AUTOREFRESHED_DASHBOARD = 'autorefreshedDashboard',
     EXPLORE = 'exploreView',
+    FILTER_AUTOCOMPLETE = 'filterAutocomplete',
     CHART = 'chartView',
     SQL_CHART = 'sqlChartView',
     SQL_RUNNER = 'sqlRunner',
@@ -56,7 +57,10 @@ export enum QueryExecutionContext {
     SCHEDULED_CHART = 'scheduledChart',
     SCHEDULED_DASHBOARD = 'scheduledDashboard',
     CALCULATE_TOTAL = 'calculateTotal',
+    EMBED = 'embed',
+    AI = 'ai',
     API = 'api',
     CLI = 'cli',
     SEMANTIC_VIEWER = 'semanticViewer',
+    METRICS_EXPLORER = 'metricsExplorer',
 }

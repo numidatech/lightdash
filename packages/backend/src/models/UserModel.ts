@@ -1,5 +1,6 @@
 import {
     ActivateUser,
+    AlreadyExistsError,
     CreateUserArgs,
     CreateUserWithRole,
     ForbiddenError,
@@ -86,6 +87,8 @@ export const mapDbUserDetailsToLightdashUser = (
     role: user.role,
     isActive: user.is_active,
     isPending: !hasAuthentication,
+    createdAt: user.created_at,
+    updatedAt: user.updated_at,
 });
 
 const userDetailsQueryBuilder = (
@@ -516,10 +519,13 @@ export class UserModel {
             user.organization_id,
             user.user_uuid,
         );
-        const abilityBuilder = getUserAbilityBuilder(lightdashUser, [
-            ...projectRoles,
-            ...groupProjectRoles,
-        ]);
+        const abilityBuilder = getUserAbilityBuilder({
+            user: lightdashUser,
+            projectProfiles: [...projectRoles, ...groupProjectRoles],
+            permissionsConfig: {
+                pat: this.lightdashConfig.auth.pat,
+            },
+        });
 
         return {
             userId: user.user_id,
@@ -638,7 +644,7 @@ export class UserModel {
                 email,
             );
             if (duplicatedEmails.length > 0) {
-                throw new ParameterError(`Email ${email} already in use`);
+                throw new AlreadyExistsError(`Email ${email} already in use`);
             }
 
             const newUser = await this.createUserTransaction(trx, {
@@ -676,10 +682,13 @@ export class UserModel {
             user.organization_id,
             user.user_uuid,
         );
-        const abilityBuilder = getUserAbilityBuilder(lightdashUser, [
-            ...projectRoles,
-            ...groupProjectRoles,
-        ]);
+        const abilityBuilder = getUserAbilityBuilder({
+            user: lightdashUser,
+            projectProfiles: [...projectRoles, ...groupProjectRoles],
+            permissionsConfig: {
+                pat: this.lightdashConfig.auth.pat,
+            },
+        });
         return {
             ...lightdashUser,
             userId: user.user_id,
@@ -715,10 +724,13 @@ export class UserModel {
             user.organization_id,
             user.user_uuid,
         );
-        const abilityBuilder = getUserAbilityBuilder(lightdashUser, [
-            ...projectRoles,
-            ...groupProjectRoles,
-        ]);
+        const abilityBuilder = getUserAbilityBuilder({
+            user: lightdashUser,
+            projectProfiles: [...projectRoles, ...groupProjectRoles],
+            permissionsConfig: {
+                pat: this.lightdashConfig.auth.pat,
+            },
+        });
         return {
             ...lightdashUser,
             userId: user.user_id,
@@ -750,10 +762,13 @@ export class UserModel {
             user.organization_id,
             user.user_uuid,
         );
-        const abilityBuilder = getUserAbilityBuilder(lightdashUser, [
-            ...projectRoles,
-            ...groupProjectRoles,
-        ]);
+        const abilityBuilder = getUserAbilityBuilder({
+            user: lightdashUser,
+            projectProfiles: [...projectRoles, ...groupProjectRoles],
+            permissionsConfig: {
+                pat: this.lightdashConfig.auth.pat,
+            },
+        });
 
         return {
             ...lightdashUser,
@@ -833,10 +848,13 @@ export class UserModel {
             row.organization_id,
             row.user_uuid,
         );
-        const abilityBuilder = getUserAbilityBuilder(lightdashUser, [
-            ...projectRoles,
-            ...groupProjectRoles,
-        ]);
+        const abilityBuilder = getUserAbilityBuilder({
+            user: lightdashUser,
+            projectProfiles: [...projectRoles, ...groupProjectRoles],
+            permissionsConfig: {
+                pat: this.lightdashConfig.auth.pat,
+            },
+        });
         return {
             user: {
                 ...mapDbUserDetailsToLightdashUser(
@@ -949,7 +967,7 @@ export class UserModel {
         return this.getUserDetailsByUuid(userUuid);
     }
 
-    async getRefreshToken(userUuid: string) {
+    async getRefreshToken(userUuid: string): Promise<string> {
         const [row] = await this.database(UserTableName)
             .leftJoin(
                 'openid_identities',

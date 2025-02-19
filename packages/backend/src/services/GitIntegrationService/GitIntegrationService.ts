@@ -1,6 +1,7 @@
 import { subject } from '@casl/ability';
 import {
     AdditionalMetric,
+    AnyType,
     ApiGithubDbtWritePreview,
     DbtModelNode,
     DbtProjectType,
@@ -8,9 +9,11 @@ import {
     findAndUpdateModelNodes,
     ForbiddenError,
     friendlyName,
+    getErrorMessage,
     GitIntegrationConfiguration,
     isUserWithOrg,
     lightdashDbtYamlSchema,
+    ParameterError,
     ParseError,
     PullRequestCreated,
     QueryExecutionContext,
@@ -23,7 +26,10 @@ import {
 import Ajv from 'ajv';
 import * as yaml from 'js-yaml';
 import { nanoid } from 'nanoid';
-import { LightdashAnalytics } from '../../analytics/LightdashAnalytics';
+import {
+    LightdashAnalytics,
+    WriteBackEvent,
+} from '../../analytics/LightdashAnalytics';
 import {
     checkFileDoesNotExist,
     createBranch,
@@ -35,6 +41,7 @@ import {
     updateFile,
 } from '../../clients/github/Github';
 import { LightdashConfig } from '../../config/parseConfig';
+import Logger from '../../logging/logger';
 import { GithubAppInstallationsModel } from '../../models/GithubAppInstallations/GithubAppInstallationsModel';
 import { ProjectModel } from '../../models/ProjectModel/ProjectModel';
 import { SavedChartModel } from '../../models/SavedChartModel';
@@ -54,9 +61,10 @@ type GithubProps = {
     owner: string;
     repo: string;
     branch: string;
-    token: string;
     path: string;
-    installationId: string;
+    token: string; // Either a bot token from InstallationId or a personal access token from the project
+    installationId?: string; // For github requests using the installation id as a bot
+    mainBranch: string;
     quoteChar: `"` | `'`;
 };
 // TODO move this to common and refactor cli
@@ -76,7 +84,7 @@ export type YamlModel = {
     name: string;
     description?: string;
     columns?: YamlColumn[];
-    meta?: any;
+    meta?: AnyType;
 };
 
 export type YamlSchema = {
@@ -120,7 +128,6 @@ export class GitIntegrationService extends BaseService {
 
     async getConfiguration(
         user: SessionUser,
-        projectUuid: string,
     ): Promise<GitIntegrationConfiguration> {
         if (!isUserWithOrg(user)) {
             throw new UnexpectedServerError(
@@ -131,13 +138,13 @@ export class GitIntegrationService extends BaseService {
             await this.githubAppInstallationsModel.getInstallationId(
                 user.organizationUuid,
             );
-        // todo: check if installation has access to the project repository
         return {
             enabled: !!installationId,
+            installationId,
         };
     }
 
-    private static async loadYamlSchema(content: any): Promise<YamlSchema> {
+    private static async loadYamlSchema(content: AnyType): Promise<YamlSchema> {
         const schemaFile = yaml.load(content);
 
         const ajvCompiler = new Ajv({ coerceTypes: true });
@@ -161,15 +168,13 @@ export class GitIntegrationService extends BaseService {
         repo,
         mainBranch,
         token,
-        installationId,
-        branchName,
+        branch,
     }: {
-        branchName: string;
+        branch: string;
         owner: string;
         repo: string;
         mainBranch: string;
         token: string;
-        installationId: string;
     }) {
         const { sha: commitSha } = await getLastCommit({
             owner,
@@ -177,14 +182,20 @@ export class GitIntegrationService extends BaseService {
             branch: mainBranch,
             token,
         });
+        Logger.debug(
+            `Creating branch ${branch} from ${mainBranch} (commit: ${commitSha}) in ${owner}/${repo}`,
+        );
         // create branch in git
         const newBranch = await createBranch({
-            branchName,
+            branch,
             owner,
             repo,
             sha: commitSha,
-            installationId,
+            token,
         });
+        Logger.debug(
+            `Successfully created branch ${branch} in ${owner}/${repo}`,
+        );
     }
 
     async getPullRequestDetails({
@@ -237,101 +248,133 @@ Affected charts:
         };
     }
 
-    async updateFileForCustomMetrics({
-        user,
+    private async getYamlForTable({
         owner,
         repo,
+        path,
         projectUuid,
-        customMetrics,
-        branchName,
+        table,
         token,
-        quoteChar = `'`,
+        branch,
     }: {
-        user: SessionUser;
         owner: string;
         repo: string;
+        path: string;
+        projectUuid: string;
+        table: string;
+        branch: string;
+        token: string;
+    }) {
+        const explore = await this.projectModel.getExploreFromCache(
+            projectUuid,
+            table,
+        );
+
+        if (!explore.ymlPath)
+            throw new Error(
+                'Explore is missing path, compile the project again to fix this issue',
+            );
+
+        // Github's path cannot start with a slash
+        const fileName = GitIntegrationService.removeExtraSlashes(
+            `${path}/${explore.ymlPath}`,
+        );
+        const { content: fileContent, sha: fileSha } = await getFileContent({
+            fileName,
+            owner,
+            repo,
+            branch,
+            token,
+        });
+
+        const yamlSchema = await GitIntegrationService.loadYamlSchema(
+            fileContent,
+        );
+
+        if (!yamlSchema.models)
+            throw new Error(`Models not found ${yamlSchema}`);
+
+        return { yamlSchema, fileName, fileContent, fileSha };
+    }
+
+    async updateFileForCustomMetrics({
+        owner,
+        repo,
+        path,
+        projectUuid,
+        customMetrics,
+        token,
+        branch,
+        quoteChar = `'`,
+    }: {
+        owner: string;
+        repo: string;
+        path: string;
         projectUuid: string;
         customMetrics: AdditionalMetric[] | undefined;
-        branchName: string;
+        branch: string;
         token: string;
         quoteChar?: `"` | `'`;
-    }): Promise<any> {
+    }): Promise<void> {
         if (customMetrics === undefined || customMetrics?.length === 0)
             throw new Error('No custom metrics found');
         const tables = [
             ...new Set(customMetrics.map((metric) => metric.table)),
         ];
 
-        // use reduce to add files one by one
-        await tables.reduce<Promise<void>>(async (acc, table) => {
-            await acc;
-            const customMetricsForTable = customMetrics.filter(
-                (metric) => metric.table === table,
-            );
-
-            const explore = await this.projectModel.getExploreFromCache(
-                projectUuid,
-                table,
-            );
-
-            if (!explore.ymlPath)
-                throw new Error(
-                    'Explore is missing path, compile the project again to fix this issue',
+        const fileNames = await tables.reduce<Promise<string[]>>(
+            async (accPromise, table) => {
+                const acc = await accPromise;
+                const customMetricsForTable = customMetrics.filter(
+                    (metric) => metric.table === table,
+                );
+                const { yamlSchema, fileName, fileSha } =
+                    await this.getYamlForTable({
+                        table,
+                        path,
+                        owner,
+                        repo,
+                        branch,
+                        token,
+                        projectUuid,
+                    });
+                const updatedModels = findAndUpdateModelNodes(
+                    yamlSchema.models!,
+                    customMetricsForTable,
                 );
 
-            const fileName = explore.ymlPath;
+                const updatedYml = yaml.dump(
+                    { ...yamlSchema, models: updatedModels },
+                    {
+                        quotingType: quoteChar,
+                    },
+                );
 
-            // get yml from github
-            const { content: fileContent, sha: fileSha } = await getFileContent(
-                {
-                    fileName,
+                const fileUpdated = await updateFile({
                     owner,
                     repo,
-                    branch: branchName,
+                    fileName,
+                    content: updatedYml,
+                    fileSha,
+                    branchName: branch,
                     token,
-                },
-            );
+                    message: `Updated file ${fileName} with ${customMetricsForTable?.length} custom metrics from table ${table}`,
+                });
+                Logger.debug(
+                    `Successfully updated file ${fileName} in ${owner}/${repo} (branch: ${branch})`,
+                );
 
-            const yamlSchema = await GitIntegrationService.loadYamlSchema(
-                fileContent,
-            );
-
-            if (!yamlSchema.models)
-                throw new Error(`Models not found ${yamlSchema}`);
-
-            // call util function findAndUpdateModelNodes()
-            const updatedModels = findAndUpdateModelNodes(
-                yamlSchema.models,
-                customMetricsForTable,
-            );
-
-            // update yml
-            const updatedYml = yaml.dump(
-                { ...yamlSchema, models: updatedModels },
-                {
-                    quotingType: quoteChar,
-                },
-            );
-
-            const fileUpdated = await updateFile({
-                owner,
-                repo,
-                fileName,
-                content: updatedYml,
-                fileSha,
-                branchName,
-                token,
-                message: `Updated file ${fileName} with ${customMetricsForTable?.length} custom metrics from table ${table}`,
-            });
-            return acc;
-        }, Promise.resolve());
+                return [...acc, fileName];
+            },
+            Promise.resolve([]),
+        );
     }
 
     async getProjectRepo(projectUuid: string) {
         const project = await this.projectModel.get(projectUuid);
 
         if (project.dbtConnection.type !== DbtProjectType.GITHUB)
-            throw new Error(
+            throw new ParameterError(
                 `invalid dbt connection type ${project.dbtConnection.type} for project ${project.name}`,
             );
         const [owner, repo] = project.dbtConnection.repository.split('/');
@@ -355,162 +398,146 @@ Affected charts:
         return newToken;
     }
 
-    async createPullRequestForChartFields(
+    /*
+    Gets all the information needed to create a branch and a pull request
+    - owner: The owner of the repository
+    - repo: The repository name
+    - branch: A unique generated branch name (eg: lightdash-johndoe-1234)
+    - mainBranch: The original branch of the project (eg: main)
+    - path: The path to the project (eg: lightdash/dbt)
+    - token: The token to use for the Git requests, it can be either an installation token (Github integration) or a personal access token (project settings)
+    - installationId: Optional, The installation id of the user
+    - quoteChar: The quote character to use when replacing YML content ("" or "'")
+    */
+    private async getGithubProps(
         user: SessionUser,
         projectUuid: string,
-        chartUuid: string,
-    ): Promise<PullRequestCreated> {
-        const chartDao = await this.savedChartModel.get(chartUuid);
-        const space = await this.spaceModel.getSpaceSummary(chartDao.spaceUuid);
-        const access = await this.spaceModel.getUserSpaceAccess(
-            user.userUuid,
-            chartDao.spaceUuid,
+        quoteChar: `"` | `'`,
+    ) {
+        const { owner, repo, branch, path } = await this.getProjectRepo(
+            projectUuid,
         );
-        if (
-            user.ability.cannot(
-                'manage',
-                subject('SavedChart', {
-                    organizationUuid: user.organizationUuid!,
-                    projectUuid,
-                    isPrivate: space.isPrivate,
-                    access,
-                }),
-            )
-        ) {
-            throw new ForbiddenError();
+        let token: string = '';
+        let installationId: string | undefined;
+        try {
+            installationId = await this.getInstallationId(user); // This should throw an error if there is no github installation
+            token = await this.getOrUpdateToken(user.organizationUuid!);
+        } catch {
+            const project = await this.projectModel.getWithSensitiveFields(
+                projectUuid,
+            );
+            if (project.dbtConnection.type === DbtProjectType.GITHUB) {
+                token = project.dbtConnection.personal_access_token || '';
+                if (!token) {
+                    throw new ParameterError('Invalid personal access token');
+                }
+            } else {
+                throw new ParameterError('No github project found');
+            }
         }
-        const customMetrics = chartDao.metricQuery.additionalMetrics;
-        if (customMetrics === undefined || customMetrics.length === 0)
-            throw new Error('Missing custom metrics');
 
-        const { owner, repo, branch } = await this.getProjectRepo(projectUuid);
-        const token = await this.getOrUpdateToken(user.organizationUuid!);
+        const userName = `${snakeCaseName(
+            user.firstName[0] || '',
+        )}${snakeCaseName(user.lastName)}`;
+        const branchName = `lightdash-${userName}-${nanoid(4)}`;
 
-        const installationId = await this.getInstallationId(user);
-        const branchName = `add-custom-metrics-${Date.now()}`;
-
-        await GitIntegrationService.createBranch({
-            branchName,
+        const githubProps: GithubProps = {
             owner,
             repo,
+            branch: branchName,
             mainBranch: branch,
             token,
+            path,
             installationId,
-        });
-
-        await this.updateFileForCustomMetrics({
-            user,
-            owner,
-            customMetrics,
-            repo,
-            projectUuid,
-            branchName,
-            token,
-        });
-
-        const chart = {
-            ...chartDao,
-            isPrivate: space.isPrivate,
-            access,
+            quoteChar,
         };
-
-        return this.getPullRequestDetails({
-            user,
-            customMetrics: customMetrics || [],
-            owner,
-            repo,
-            mainBranch: branch,
-            branchName,
-            chart,
-            projectUuid,
-        });
+        return githubProps;
     }
 
     async createPullRequestForCustomMetrics(
         user: SessionUser,
         projectUuid: string,
-        customMetricsIds: string[],
+        customMetrics: AdditionalMetric[],
         quoteChar: `"` | `'`,
     ): Promise<PullRequestCreated> {
-        const chartSummaries = await this.savedChartModel.find({
-            projectUuid,
-        });
-        const chartPromises = chartSummaries.map((summary) =>
-            this.savedChartModel.get(summary.uuid, undefined),
-        );
-        const charts = await Promise.all(chartPromises);
+        if (customMetrics.length === 0)
+            throw new ParseError('Missing custom metrics');
 
-        const chartsHasAccess = charts.map(async (chart) => {
-            const space = await this.spaceModel.getSpaceSummary(
-                chart.spaceUuid,
-            );
-            const access = this.spaceModel.getUserSpaceAccess(
-                user.userUuid,
-                chart.spaceUuid,
-            );
-            return user.ability.can(
+        if (
+            user.ability.cannot(
                 'manage',
-                subject('SavedChart', {
+                subject('CustomSql', {
                     organizationUuid: user.organizationUuid!,
                     projectUuid,
-                    isPrivate: space.isPrivate,
-                    access,
                 }),
-            );
-        });
+            )
+        ) {
+            throw new ForbiddenError();
+        }
 
-        if (chartsHasAccess.some((hasAccess) => !hasAccess))
-            throw new ForbiddenError('User does not have access to all charts');
-
-        const allCustomMetrics = charts.reduce<AdditionalMetric[]>(
-            (acc, chart) => [
-                ...acc,
-                ...(chart.metricQuery.additionalMetrics || []),
-            ],
-            [],
-        );
-
-        // TODO does metrics have uuid ?
-        const customMetrics = allCustomMetrics.filter((metric) =>
-            customMetricsIds.includes(metric.uuid!),
-        );
-        if (customMetrics.length === 0)
-            throw new Error('Missing custom metrics');
-
-        const { owner, repo, branch } = await this.getProjectRepo(projectUuid);
-
-        const token = await this.getOrUpdateToken(user.organizationUuid!);
-        const installationId = await this.getInstallationId(user);
-        const branchName = `add-custom-metrics-${Date.now()}`;
-
-        await GitIntegrationService.createBranch({
-            branchName,
-            owner,
-            repo,
-            mainBranch: branch,
-            token,
-            installationId,
-        });
-        await this.updateFileForCustomMetrics({
+        const githubProps = await this.getGithubProps(
             user,
-            owner,
-            customMetrics,
-            repo,
             projectUuid,
-            branchName,
-            token,
+            quoteChar,
+        );
+
+        await GitIntegrationService.createBranch(githubProps);
+        const updatedFiles = await this.updateFileForCustomMetrics({
+            ...githubProps,
+            customMetrics,
+            projectUuid,
             quoteChar,
         });
-        return this.getPullRequestDetails({
-            user,
-            customMetrics: customMetrics || [],
-            owner,
-            repo,
-            mainBranch: branch,
-            branchName,
-            chart: undefined,
-            projectUuid,
-        });
+
+        const customMetricInfo =
+            customMetrics.length === 1
+                ? `\`${customMetrics[0].name}\` custom metric`
+                : `${customMetrics.length} custom metrics`;
+        const eventProperties: WriteBackEvent['properties'] = {
+            name: customMetricInfo,
+            projectId: projectUuid,
+            organizationId: user.organizationUuid!,
+            context: QueryExecutionContext.EXPLORE,
+        };
+        try {
+            const pullRequest = await createPullRequest({
+                ...githubProps,
+                title: `Adds ${customMetricInfo}`,
+                body: `Created by Lightdash, this pull request adds ${customMetricInfo} to the dbt model.
+
+Triggered by user ${user.firstName} ${user.lastName} (${user.email})
+
+> ⚠️ **Note: Do not change the \`label\` or \`id\` of your metrics in this pull request.** Your custom metric(s) _will not be replaced_ with YAML metrics if you change the \`label\` or \`id\` of the metrics in this pull request. Lightdash requires the IDs and labels to match 1:1 in order to replace custom metrics with YAML metrics.`,
+                head: githubProps.branch,
+                base: githubProps.mainBranch,
+            });
+            Logger.debug(
+                `Successfully created pull request #${pullRequest.number} in ${githubProps.owner}/${githubProps.repo}`,
+            );
+
+            this.analytics.track({
+                event: 'write_back.created',
+                userId: user.userUuid,
+                properties: {
+                    ...eventProperties,
+                    customMetricsCount: customMetrics.length,
+                },
+            });
+            return {
+                prTitle: pullRequest.title,
+                prUrl: pullRequest.html_url,
+            };
+        } catch (e) {
+            this.analytics.track({
+                event: 'write_back.error',
+                userId: user.userUuid,
+                properties: {
+                    ...eventProperties,
+                    error: getErrorMessage(e),
+                },
+            });
+            throw e;
+        }
     }
 
     private static removeExtraSlashes(str: string): string {
@@ -619,34 +646,13 @@ ${sql}
         columns: VizColumn[],
         quoteChar: `"` | `'` = '"',
     ): Promise<PullRequestCreated> {
-        const { owner, repo, branch, path } = await this.getProjectRepo(
+        const githubProps = await this.getGithubProps(
+            user,
             projectUuid,
-        );
-        const installationId = await this.getInstallationId(user);
-
-        const token = await this.getOrUpdateToken(user.organizationUuid!);
-        const userName = `${snakeCaseName(
-            user.firstName[0] || '',
-        )}${snakeCaseName(user.lastName)}`;
-        const branchName = `lightdash-${userName}-${nanoid(4)}`;
-
-        await GitIntegrationService.createBranch({
-            branchName,
-            owner,
-            repo,
-            mainBranch: branch,
-            token,
-            installationId,
-        });
-        const githubProps: GithubProps = {
-            owner,
-            repo,
-            branch: branchName,
-            token,
-            path,
-            installationId,
             quoteChar,
-        };
+        );
+        await GitIntegrationService.createBranch(githubProps);
+
         await GitIntegrationService.createSqlFile({
             githubProps,
             name,
@@ -657,31 +663,50 @@ ${sql}
             name,
             columns,
         });
-        const pullRequest = await createPullRequest({
-            ...githubProps,
-            title: `Creates \`${name}\` SQL and YML model`,
-            body: `Created by Lightdash, this pull request introduces a new SQL file and a corresponding Lightdash \`.yml\` configuration file.
- 
+        Logger.debug(
+            `Creating pull request from branch ${githubProps.branch} to ${githubProps.mainBranch} in ${githubProps.owner}/${githubProps.repo}`,
+        );
+        const eventProperties: WriteBackEvent['properties'] = {
+            name,
+            projectId: projectUuid,
+            organizationId: user.organizationUuid!,
+            context: QueryExecutionContext.SQL_RUNNER,
+        };
+        try {
+            const pullRequest = await createPullRequest({
+                ...githubProps,
+                title: `Creates \`${name}\` SQL and YML model`,
+                body: `Created by Lightdash, this pull request introduces a new SQL file and a corresponding Lightdash \`.yml\` configuration file.
+
 Triggered by user ${user.firstName} ${user.lastName} (${user.email})
             `,
-            head: branchName,
-            base: branch,
-        });
+                head: githubProps.branch,
+                base: githubProps.mainBranch,
+            });
+            Logger.debug(
+                `Successfully created pull request #${pullRequest.number} in ${githubProps.owner}/${githubProps.repo}`,
+            );
 
-        this.analytics.track({
-            event: 'write_back.created',
-            userId: user.userUuid,
-            properties: {
-                name,
-                projectId: projectUuid,
-                organizationId: user.organizationUuid!,
-                context: QueryExecutionContext.SQL_RUNNER,
-            },
-        });
-        return {
-            prTitle: pullRequest.title,
-            prUrl: pullRequest.html_url,
-        };
+            this.analytics.track({
+                event: 'write_back.created',
+                userId: user.userUuid,
+                properties: eventProperties,
+            });
+            return {
+                prTitle: pullRequest.title,
+                prUrl: pullRequest.html_url,
+            };
+        } catch (e) {
+            this.analytics.track({
+                event: 'write_back.error',
+                userId: user.userUuid,
+                properties: {
+                    ...eventProperties,
+                    error: getErrorMessage(e),
+                },
+            });
+            throw e;
+        }
     }
 
     async writeBackPreview(

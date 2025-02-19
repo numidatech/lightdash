@@ -1,6 +1,6 @@
 import { subject } from '@casl/ability';
 import {
-    assertUnreachable,
+    AnyType,
     ForbiddenError,
     MissingConfigError,
     ParameterError,
@@ -13,6 +13,7 @@ import {
     SemanticLayerType,
     SemanticLayerView,
     SessionUser,
+    assertUnreachable,
     type AbilityAction,
 } from '@lightdash/common';
 import { LightdashAnalytics } from '../../analytics/LightdashAnalytics';
@@ -162,8 +163,7 @@ export class SemanticLayerService extends BaseService {
             projectUuid,
             organizationUuid,
         });
-
-        return this.analytics.wrapEvent<any[]>(
+        return this.analytics.wrapEvent<AnyType[]>(
             {
                 event: 'semantic_layer.get_views', // started, completed, error suffix when using wrapEvent
                 userId: user.userUuid,

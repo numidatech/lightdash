@@ -1,10 +1,15 @@
 import {
     type ApiError,
+    type ApiGetMetricPeek,
     type ApiMetricsCatalog,
     type ApiSort,
     type KnexPaginateArgs,
 } from '@lightdash/common';
-import { useInfiniteQuery } from '@tanstack/react-query';
+import {
+    useInfiniteQuery,
+    useQuery,
+    useQueryClient,
+} from '@tanstack/react-query';
 import { lightdashApi } from '../../../api';
 
 type UseMetricsCatalogOptions = {
@@ -14,6 +19,8 @@ type UseMetricsCatalogOptions = {
     sortBy?: ApiSort['sort'] | 'name' | 'chartUsage';
     sortDirection?: ApiSort['order'];
 };
+
+export const MIN_METRICS_CATALOG_SEARCH_LENGTH = 2;
 
 const getMetricsCatalog = async ({
     projectUuid,
@@ -64,6 +71,7 @@ export const useMetricsCatalog = ({
     categories,
     pageSize,
 }: UseMetricsCatalogOptions & Pick<KnexPaginateArgs, 'pageSize'>) => {
+    const queryClient = useQueryClient();
     return useInfiniteQuery<ApiMetricsCatalog['results'], ApiError>({
         queryKey: [
             'metrics-catalog',
@@ -94,7 +102,80 @@ export const useMetricsCatalog = ({
                     : undefined;
             }
         },
-        enabled: !!projectUuid && (!!search ? search.length > 2 : true),
+        enabled:
+            !!projectUuid &&
+            (!!search
+                ? search.length > MIN_METRICS_CATALOG_SEARCH_LENGTH
+                : true),
         keepPreviousData: true,
+        onSuccess: () => {
+            void queryClient.invalidateQueries({
+                queryKey: ['metrics-tree', projectUuid],
+            });
+        },
+    });
+};
+
+type UseMetricOptions = {
+    projectUuid: string | undefined;
+    tableName: string | undefined;
+    metricName: string | undefined;
+};
+
+const getMetric = async ({
+    projectUuid,
+    tableName,
+    metricName,
+}: {
+    projectUuid: string;
+    tableName: string;
+    metricName: string;
+}) => {
+    return lightdashApi<ApiGetMetricPeek['results']>({
+        url: `/projects/${projectUuid}/dataCatalog/metrics/${tableName}/${metricName}`,
+        method: 'GET',
+        body: undefined,
+    });
+};
+
+export const useMetric = ({
+    projectUuid,
+    tableName,
+    metricName,
+    enabled = true,
+}: UseMetricOptions & { enabled?: boolean }) => {
+    return useQuery<ApiGetMetricPeek['results'], ApiError>({
+        queryKey: ['metric', projectUuid, tableName, metricName],
+        queryFn: () =>
+            getMetric({
+                projectUuid: projectUuid!,
+                tableName: tableName!,
+                metricName: metricName!,
+            }),
+        enabled: enabled && !!projectUuid && !!tableName && !!metricName,
+    });
+};
+
+const hasMetricsInCatalog = async ({
+    projectUuid,
+}: {
+    projectUuid: string;
+}) => {
+    return lightdashApi<boolean>({
+        url: `/projects/${projectUuid}/dataCatalog/metrics/has`,
+        method: 'GET',
+        body: undefined,
+    });
+};
+
+export const useHasMetricsInCatalog = ({
+    projectUuid,
+}: {
+    projectUuid: string | undefined;
+}) => {
+    return useQuery<boolean, ApiError>({
+        queryKey: ['has-metrics', projectUuid],
+        queryFn: () => hasMetricsInCatalog({ projectUuid: projectUuid! }),
+        enabled: !!projectUuid,
     });
 };

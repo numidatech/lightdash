@@ -1,5 +1,7 @@
 import {
     DimensionType,
+    FeatureFlags,
+    MetricType,
     friendlyName,
     getItemId,
     isAdditionalMetric,
@@ -7,7 +9,6 @@ import {
     isCustomSqlDimension,
     isDimension,
     isFilterableField,
-    MetricType,
     type AdditionalMetric,
     type CustomDimension,
     type Dimension,
@@ -15,6 +16,7 @@ import {
 } from '@lightdash/common';
 import { ActionIcon, Box, Menu, Tooltip, type MenuProps } from '@mantine/core';
 import {
+    IconCode,
     IconCopy,
     IconDots,
     IconEdit,
@@ -23,11 +25,14 @@ import {
     IconTrash,
 } from '@tabler/icons-react';
 import { useMemo, type FC } from 'react';
+import { useParams } from 'react-router';
 import { v4 as uuidv4 } from 'uuid';
 import useToaster from '../../../../../hooks/toaster/useToaster';
+import { useFeatureFlagEnabled } from '../../../../../hooks/useFeatureFlagEnabled';
 import { useFilters } from '../../../../../hooks/useFilters';
-import { useExplorerContext } from '../../../../../providers/ExplorerProvider';
-import { useTracking } from '../../../../../providers/TrackingProvider';
+import useApp from '../../../../../providers/App/useApp';
+import useExplorerContext from '../../../../../providers/Explorer/useExplorerContext';
+import useTracking from '../../../../../providers/Tracking/useTracking';
 import { EventName } from '../../../../../types/Events';
 import MantineIcon from '../../../../common/MantineIcon';
 
@@ -79,6 +84,8 @@ const TreeSingleNodeActions: FC<Props> = ({
     hasDescription,
     onViewDescription,
 }) => {
+    const { projectUuid } = useParams<{ projectUuid: string }>();
+    const { user } = useApp();
     const { showToastSuccess } = useToaster();
     const { addFilter } = useFilters();
     const { track } = useTracking();
@@ -88,6 +95,9 @@ const TreeSingleNodeActions: FC<Props> = ({
     );
     const toggleAdditionalMetricModal = useExplorerContext(
         (context) => context.actions.toggleAdditionalMetricModal,
+    );
+    const toggleAdditionalMetricWriteBackModal = useExplorerContext(
+        (context) => context.actions.toggleAdditionalMetricWriteBackModal,
     );
     const removeCustomDimension = useExplorerContext(
         (context) => context.actions.removeCustomDimension,
@@ -107,6 +117,10 @@ const TreeSingleNodeActions: FC<Props> = ({
         }
         return isDimension(item) ? getCustomMetricType(item.type) : [];
     }, [item]);
+
+    const isCustomSqlEnabled = useFeatureFlagEnabled(
+        FeatureFlags.CustomSQLEnabled,
+    );
 
     const duplicateCustomMetric = (customMetric: AdditionalMetric) => {
         const newDeepCopyItem = JSON.parse(JSON.stringify(customMetric));
@@ -160,7 +174,7 @@ const TreeSingleNodeActions: FC<Props> = ({
                     <Menu.Item
                         component="button"
                         icon={<MantineIcon icon={IconFilter} />}
-                        onClick={(e) => {
+                        onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
                             e.stopPropagation();
 
                             track({
@@ -178,7 +192,9 @@ const TreeSingleNodeActions: FC<Props> = ({
                         <Menu.Item
                             component="button"
                             icon={<MantineIcon icon={IconEdit} />}
-                            onClick={(e) => {
+                            onClick={(
+                                e: React.MouseEvent<HTMLButtonElement>,
+                            ) => {
                                 e.stopPropagation();
                                 toggleAdditionalMetricModal({
                                     type: item.type,
@@ -192,7 +208,9 @@ const TreeSingleNodeActions: FC<Props> = ({
                         <Menu.Item
                             component="button"
                             icon={<MantineIcon icon={IconCopy} />}
-                            onClick={(e) => {
+                            onClick={(
+                                e: React.MouseEvent<HTMLButtonElement>,
+                            ) => {
                                 e.stopPropagation();
                                 duplicateCustomMetric(item);
                                 track({
@@ -205,12 +223,48 @@ const TreeSingleNodeActions: FC<Props> = ({
                         >
                             Duplicate custom metric
                         </Menu.Item>
+
+                        {isCustomSqlEnabled && (
+                            <Menu.Item
+                                key="custommetric"
+                                component="button"
+                                icon={<MantineIcon icon={IconCode} />}
+                                onClick={(
+                                    e: React.MouseEvent<HTMLButtonElement>,
+                                ) => {
+                                    e.stopPropagation();
+                                    if (
+                                        projectUuid &&
+                                        user.data?.organizationUuid
+                                    ) {
+                                        track({
+                                            name: EventName.WRITE_BACK_FROM_CUSTOM_METRIC_CLICKED,
+                                            properties: {
+                                                userId: user.data.userUuid,
+                                                projectId: projectUuid,
+                                                organizationId:
+                                                    user.data.organizationUuid,
+                                                customMetricsCount: 1,
+                                            },
+                                        });
+                                    }
+                                    toggleAdditionalMetricWriteBackModal({
+                                        items: [item],
+                                    });
+                                }}
+                            >
+                                Write back to dbt
+                            </Menu.Item>
+                        )}
+
                         <Menu.Item
                             color="red"
                             key="custommetric"
                             component="button"
                             icon={<MantineIcon icon={IconTrash} />}
-                            onClick={(e) => {
+                            onClick={(
+                                e: React.MouseEvent<HTMLButtonElement>,
+                            ) => {
                                 e.stopPropagation();
 
                                 track({
@@ -228,7 +282,7 @@ const TreeSingleNodeActions: FC<Props> = ({
                     <Menu.Item
                         component="button"
                         icon={<MantineIcon icon={IconDots} />}
-                        onClick={(e) => {
+                        onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
                             e.stopPropagation();
                             onViewDescription();
                         }}
@@ -242,7 +296,9 @@ const TreeSingleNodeActions: FC<Props> = ({
                         <Menu.Item
                             component="button"
                             icon={<MantineIcon icon={IconEdit} />}
-                            onClick={(e) => {
+                            onClick={(
+                                e: React.MouseEvent<HTMLButtonElement>,
+                            ) => {
                                 e.stopPropagation();
                                 toggleCustomDimensionModal({
                                     item,
@@ -255,7 +311,9 @@ const TreeSingleNodeActions: FC<Props> = ({
                         <Menu.Item
                             component="button"
                             icon={<MantineIcon icon={IconCopy} />}
-                            onClick={(e) => {
+                            onClick={(
+                                e: React.MouseEvent<HTMLButtonElement>,
+                            ) => {
                                 e.stopPropagation();
                                 duplicateCustomDimension(item);
                                 track({
@@ -272,7 +330,9 @@ const TreeSingleNodeActions: FC<Props> = ({
                             color="red"
                             component="button"
                             icon={<MantineIcon icon={IconTrash} />}
-                            onClick={(e) => {
+                            onClick={(
+                                e: React.MouseEvent<HTMLButtonElement>,
+                            ) => {
                                 e.stopPropagation();
                                 removeCustomDimension(getItemId(item));
                             }}
@@ -293,7 +353,9 @@ const TreeSingleNodeActions: FC<Props> = ({
                                 key={metric}
                                 role="menuitem"
                                 component="button"
-                                onClick={(e) => {
+                                onClick={(
+                                    e: React.MouseEvent<HTMLButtonElement>,
+                                ) => {
                                     e.stopPropagation();
                                     console.debug(
                                         'opening custom metric modal: ' +
@@ -323,7 +385,9 @@ const TreeSingleNodeActions: FC<Props> = ({
                         <Menu.Item
                             component="button"
                             icon={<MantineIcon icon={IconSparkles} />}
-                            onClick={(e) => {
+                            onClick={(
+                                e: React.MouseEvent<HTMLButtonElement>,
+                            ) => {
                                 e.stopPropagation();
 
                                 track({
@@ -344,7 +408,7 @@ const TreeSingleNodeActions: FC<Props> = ({
             {/* prevents bubbling of click event to NavLink */}
             <Box
                 component="div"
-                onClick={(e) => {
+                onClick={(e: React.MouseEvent<HTMLDivElement>) => {
                     e.stopPropagation();
                     e.preventDefault();
                 }}

@@ -10,9 +10,9 @@ import {
     type TableCalculation,
 } from '@lightdash/common';
 import { Box, Group, SegmentedControl, Stack, Tooltip } from '@mantine/core';
+import { isPieVisualizationConfig } from '../../LightdashVisualization/types';
+import { useVisualizationContext } from '../../LightdashVisualization/useVisualizationContext';
 import FieldSelect from '../../common/FieldSelect';
-import { isPieVisualizationConfig } from '../../LightdashVisualization/VisualizationConfigPie';
-import { useVisualizationContext } from '../../LightdashVisualization/VisualizationProvider';
 import { AddButton } from '../common/AddButton';
 import { Config } from '../common/Config';
 

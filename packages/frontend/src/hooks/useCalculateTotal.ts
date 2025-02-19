@@ -12,7 +12,7 @@ import {
 } from '@lightdash/common';
 import { useQuery } from '@tanstack/react-query';
 import { useMemo } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams } from 'react-router';
 import { lightdashApi } from '../api';
 import {
     convertDateDashboardFilters,
@@ -125,9 +125,12 @@ export const useCalculateTotal = ({
                       dashboardFilters,
                       invalidateCache,
                   )
-                : calculateTotalFromQuery(projectUuid, metricQuery, explore),
+                : projectUuid
+                ? calculateTotalFromQuery(projectUuid, metricQuery, explore)
+                : Promise.reject(),
         retry: false,
         enabled:
+            !window.location.pathname.startsWith('/embed/') &&
             metricsWithTotals.length > 0 &&
             (metricQuery || savedChartUuid) !== undefined,
         onError: (result) =>

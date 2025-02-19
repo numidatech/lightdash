@@ -1,8 +1,8 @@
 import { Button, Input, useMantineTheme } from '@mantine/core';
 import { IconDeviceFloppy } from '@tabler/icons-react';
 import { useCallback, type FC } from 'react';
-import MantineIcon from '../../../components/common/MantineIcon';
 import { selectCompleteConfigByKind } from '../../../components/DataViz/store/selectors';
+import MantineIcon from '../../../components/common/MantineIcon';
 import useToaster from '../../../hooks/toaster/useToaster';
 import { useAppDispatch, useAppSelector } from '../../sqlRunner/store/hooks';
 import {
@@ -103,7 +103,7 @@ const SaveSemanticViewerChart: FC = () => {
                 w="100%"
                 placeholder="Untitled chart"
                 value={name}
-                onChange={(e) => {
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
                     dispatch(updateName(e.currentTarget.value));
                 }}
                 styles={{

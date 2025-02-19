@@ -134,20 +134,12 @@
                                                 "type": "boolean"
                                             },
                                             "round": {
+                                                "description": "Rounds the metric to the specified number of decimal places",
                                                 "type": "number",
                                                 "minimum": 0
                                             },
                                             "format": {
-                                                "type": "string",
-                                                "enum": [
-                                                    "km",
-                                                    "mi",
-                                                    "usd",
-                                                    "gbp",
-                                                    "eur",
-                                                    "percent",
-                                                    "id"
-                                                ]
+                                                "type": "string"
                                             },
                                             "percentile": {
                                                 "type": "number"
@@ -160,11 +152,106 @@
                                                     "minLength": 1
                                                 },
                                                 "maxItems": 3
+                                            },
+                                            "default_time_dimension": {
+                                                "type": "object",
+                                                "description": "Specifies the default time dimension field and interval to use for time-based analysis on this metric. If specified, both field and interval are required. If there is already a default time dimension set in the model, this will override it.",
+                                                "properties": {
+                                                    "field": {
+                                                        "type": "string",
+                                                        "description": "The name of the field to use as the default time dimension"
+                                                    },
+                                                    "interval": {
+                                                        "type": "string",
+                                                        "enum": [
+                                                            "DAY",
+                                                            "WEEK",
+                                                            "MONTH",
+                                                            "YEAR"
+                                                        ],
+                                                        "description": "The default time interval to use when analyzing this time dimension"
+                                                    }
+                                                },
+                                                "required": [
+                                                    "field",
+                                                    "interval"
+                                                ]
+                                            },
+                                            "spotlight": {
+                                                "type": "object",
+                                                "description": "Set the visibility and/or categories of a metric in Spotlight",
+                                                "properties": {
+                                                    "visibility": {
+                                                        "type": "string",
+                                                        "enum": ["show", "hide"]
+                                                    },
+                                                    "categories": {
+                                                        "type": "array",
+                                                        "items": {
+                                                            "type": "string"
+                                                        },
+                                                        "description": "An array of categories for the metric in Spotlight"
+                                                    }
+                                                },
+                                                "anyOf": [
+                                                    {
+                                                        "required": [
+                                                            "visibility"
+                                                        ]
+                                                    },
+                                                    {
+                                                        "required": [
+                                                            "categories"
+                                                        ]
+                                                    }
+                                                ]
                                             }
                                         },
                                         "required": ["type", "sql"]
                                     }
                                 }
+                            },
+                            "default_time_dimension": {
+                                "type": "object",
+                                "description": "Specifies the default time dimension field and interval to use for time-based analysis (on any metric in the model). If specified, both field and interval are required.",
+                                "properties": {
+                                    "field": {
+                                        "type": "string",
+                                        "description": "The name of the field to use as the default time dimension"
+                                    },
+                                    "interval": {
+                                        "type": "string",
+                                        "enum": [
+                                            "DAY",
+                                            "WEEK",
+                                            "MONTH",
+                                            "YEAR"
+                                        ],
+                                        "description": "The default time interval to use when analyzing this time dimension"
+                                    }
+                                },
+                                "required": ["field", "interval"]
+                            },
+                            "spotlight": {
+                                "type": "object",
+                                "description": "Set the visibility and/or categories of a metric in Spotlight",
+                                "properties": {
+                                    "visibility": {
+                                        "type": "string",
+                                        "enum": ["show", "hide"]
+                                    },
+                                    "categories": {
+                                        "type": "array",
+                                        "items": {
+                                            "type": "string"
+                                        },
+                                        "description": "An optional array of categories for all metrics in this model in Spotlight"
+                                    }
+                                },
+                                "anyOf": [
+                                    { "required": ["visibility"] },
+                                    { "required": ["categories"] }
+                                ]
                             }
                         }
                     },
@@ -260,16 +347,7 @@
                                                             "minimum": 0
                                                         },
                                                         "format": {
-                                                            "type": "string",
-                                                            "enum": [
-                                                                "km",
-                                                                "mi",
-                                                                "usd",
-                                                                "gbp",
-                                                                "eur",
-                                                                "percent",
-                                                                "id"
-                                                            ]
+                                                            "type": "string"
                                                         },
                                                         "percentile": {
                                                             "type": "number"
@@ -282,6 +360,62 @@
                                                                 "minLength": 1
                                                             },
                                                             "maxItems": 3
+                                                        },
+                                                        "default_time_dimension": {
+                                                            "type": "object",
+                                                            "description": "Specifies the default time dimension field and interval to use for time-based analysis on this metric. If specified, both field and interval are required. If there is already a default time dimension set in the model, this will override it.",
+                                                            "properties": {
+                                                                "field": {
+                                                                    "type": "string",
+                                                                    "description": "The name of the field to use as the default time dimension"
+                                                                },
+                                                                "interval": {
+                                                                    "type": "string",
+                                                                    "enum": [
+                                                                        "DAY",
+                                                                        "WEEK",
+                                                                        "MONTH",
+                                                                        "YEAR"
+                                                                    ],
+                                                                    "description": "The default time interval to use when analyzing this time dimension"
+                                                                }
+                                                            },
+                                                            "required": [
+                                                                "field",
+                                                                "interval"
+                                                            ]
+                                                        },
+                                                        "spotlight": {
+                                                            "type": "object",
+                                                            "description": "Set the visibility and/or categories of a metric in Spotlight",
+                                                            "properties": {
+                                                                "visibility": {
+                                                                    "type": "string",
+                                                                    "enum": [
+                                                                        "show",
+                                                                        "hide"
+                                                                    ]
+                                                                },
+                                                                "categories": {
+                                                                    "type": "array",
+                                                                    "items": {
+                                                                        "type": "string"
+                                                                    },
+                                                                    "description": "An array of categories for the metric in Spotlight"
+                                                                }
+                                                            },
+                                                            "anyOf": [
+                                                                {
+                                                                    "required": [
+                                                                        "visibility"
+                                                                    ]
+                                                                },
+                                                                {
+                                                                    "required": [
+                                                                        "categories"
+                                                                    ]
+                                                                }
+                                                            ]
                                                         }
                                                     },
                                                     "required": ["type"]
@@ -321,16 +455,7 @@
                                                     "minimum": 0
                                                 },
                                                 "format": {
-                                                    "type": "string",
-                                                    "enum": [
-                                                        "km",
-                                                        "mi",
-                                                        "usd",
-                                                        "gbp",
-                                                        "eur",
-                                                        "percent",
-                                                        "id"
-                                                    ]
+                                                    "type": "string"
                                                 },
                                                 "time_intervals": {
                                                     "anyOf": [
@@ -521,15 +646,48 @@
                                 "minimum": 0
                             },
                             "format": {
-                                "type": "string",
-                                "enum": [
-                                    "km",
-                                    "mi",
-                                    "usd",
-                                    "gbp",
-                                    "eur",
-                                    "percent",
-                                    "id"
+                                "type": "string"
+                            },
+                            "default_time_dimension": {
+                                "type": "object",
+                                "description": "Specifies the default time dimension field and interval to use for time-based analysis on this metric. If specified, both field and interval are required. If there is already a default time dimension set in the model, this will override it.",
+                                "properties": {
+                                    "field": {
+                                        "type": "string",
+                                        "description": "The name of the field to use as the default time dimension"
+                                    },
+                                    "interval": {
+                                        "type": "string",
+                                        "enum": [
+                                            "DAY",
+                                            "WEEK",
+                                            "MONTH",
+                                            "YEAR"
+                                        ],
+                                        "description": "The default time interval to use when analyzing this time dimension"
+                                    }
+                                },
+                                "required": ["field", "interval"]
+                            },
+                            "spotlight": {
+                                "type": "object",
+                                "description": "Set the visibility and/or categories of a metric in Spotlight",
+                                "properties": {
+                                    "visibility": {
+                                        "type": "string",
+                                        "enum": ["show", "hide"]
+                                    },
+                                    "categories": {
+                                        "type": "array",
+                                        "items": {
+                                            "type": "string"
+                                        },
+                                        "description": "An array of categories for the metric in Spotlight"
+                                    }
+                                },
+                                "anyOf": [
+                                    { "required": ["visibility"] },
+                                    { "required": ["categories"] }
                                 ]
                             }
                         }

@@ -2,6 +2,7 @@ import { Ability } from '@casl/ability';
 import {
     LightdashMode,
     OrganizationMemberRole,
+    PossibleAbilities,
     SessionUser,
     ShareUrl,
 } from '@lightdash/common';
@@ -25,7 +26,7 @@ export const User: SessionUser = {
     isSetupComplete: true,
     userId: 0,
     role: OrganizationMemberRole.ADMIN,
-    ability: new Ability([
+    ability: new Ability<PossibleAbilities>([
         {
             subject: 'OrganizationMemberProfile',
             action: ['view'],
@@ -34,12 +35,14 @@ export const User: SessionUser = {
     ]),
     isActive: true,
     abilityRules: [],
+    createdAt: new Date(),
+    updatedAt: new Date(),
 };
 
 export const UserFromAnotherOrg: SessionUser = {
     ...User,
     organizationUuid: 'anotherOrg',
-    ability: new Ability([
+    ability: new Ability<PossibleAbilities>([
         {
             subject: 'OrganizationMemberProfile',
             action: ['view'],

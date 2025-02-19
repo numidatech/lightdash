@@ -11,10 +11,13 @@ import { flexRender, type Row } from '@tanstack/react-table';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import React, { type FC } from 'react';
 import { getColorFromRange, readableColor } from '../../../../utils/colorUtils';
-import { getConditionalRuleLabel } from '../../Filters/FilterInputs';
+import { getConditionalRuleLabel } from '../../Filters/FilterInputs/utils';
 import MantineIcon from '../../MantineIcon';
 import { ROW_HEIGHT_PX, Tr } from '../Table.styles';
-import { useTableContext, type TableContext } from '../TableProvider';
+import { type TableContext } from '../types';
+import { useTableContext } from '../useTableContext';
+import { countSubRows } from '../utils';
+import { SMALL_TEXT_LENGTH } from './../constants';
 import BodyCell from './BodyCell';
 
 export const VirtualizedArea: FC<{ cellCount: number; padding: number }> = ({
@@ -41,27 +44,16 @@ interface TableRowProps {
 
     cellContextMenu?: TableContext['cellContextMenu'];
     conditionalFormattings: TableContext['conditionalFormattings'];
+    minMaxMap: TableContext['minMaxMap'];
     minimal?: boolean;
 }
-
-// arbitrary number that is usually smaller than the 300px max width of the cell
-const SMALL_TEXT_LENGTH = 35;
-
-export const countSubRows = (rowNode: Row<ResultRow>): number => {
-    if (rowNode.subRows?.length) {
-        return rowNode.subRows.reduce((acc: number, nextRowNode) => {
-            return acc + countSubRows(nextRowNode);
-        }, 0);
-    } else {
-        return 1;
-    }
-};
 
 const TableRow: FC<TableRowProps> = ({
     row,
     index,
     cellContextMenu,
     conditionalFormattings,
+    minMaxMap,
     minimal = false,
 }) => {
     return (
@@ -72,19 +64,29 @@ const TableRow: FC<TableRowProps> = ({
                 const cellValue = cell.getValue() as ResultRow[0] | undefined;
 
                 const conditionalFormattingConfig =
-                    getConditionalFormattingConfig(
+                    getConditionalFormattingConfig({
                         field,
-                        cellValue?.value?.raw,
+                        value: cellValue?.value?.raw,
+                        minMaxMap,
                         conditionalFormattings,
-                    );
+                    });
 
                 const conditionalFormattingColor =
-                    getConditionalFormattingColor(
+                    getConditionalFormattingColor({
                         field,
-                        cellValue?.value?.raw,
-                        conditionalFormattingConfig,
+                        value: cellValue?.value?.raw,
+                        minMaxMap,
+                        config: conditionalFormattingConfig,
                         getColorFromRange,
-                    );
+                    });
+
+                // Frozen/locked rows should have a white background, unless there is a conditional formatting color
+                let backgroundColor: string | undefined;
+                if (conditionalFormattingColor) {
+                    backgroundColor = conditionalFormattingColor;
+                } else if (meta?.frozen) {
+                    backgroundColor = 'white';
+                }
 
                 const tooltipContent = getConditionalFormattingDescription(
                     field,
@@ -107,7 +109,7 @@ const TableRow: FC<TableRowProps> = ({
                         minimal={minimal}
                         key={cell.id}
                         style={meta?.style}
-                        backgroundColor={conditionalFormattingColor}
+                        backgroundColor={backgroundColor}
                         fontColor={fontColor}
                         className={meta?.className}
                         index={index}
@@ -139,7 +141,9 @@ const TableRow: FC<TableRowProps> = ({
                                             marginRight: 0,
                                         },
                                     })}
-                                    onClick={(e) => {
+                                    onClick={(
+                                        e: React.MouseEvent<HTMLButtonElement>,
+                                    ) => {
                                         e.stopPropagation();
                                         e.preventDefault();
                                         toggleExpander();
@@ -185,9 +189,9 @@ const TableRow: FC<TableRowProps> = ({
 };
 
 const VirtualizedTableBody: FC<{
-    tableContainerRef: React.RefObject<HTMLDivElement>;
+    tableContainerRef: React.RefObject<HTMLDivElement | null>;
 }> = ({ tableContainerRef }) => {
-    const { table, cellContextMenu, conditionalFormattings } =
+    const { table, cellContextMenu, conditionalFormattings, minMaxMap } =
         useTableContext();
     const { rows } = table.getRowModel();
 
@@ -221,6 +225,7 @@ const VirtualizedTableBody: FC<{
                         row={rows[index]}
                         cellContextMenu={cellContextMenu}
                         conditionalFormattings={conditionalFormattings}
+                        minMaxMap={minMaxMap}
                     />
                 );
             })}
@@ -235,7 +240,7 @@ const VirtualizedTableBody: FC<{
 };
 
 const NormalTableBody: FC = () => {
-    const { table, cellContextMenu, conditionalFormattings } =
+    const { table, cellContextMenu, conditionalFormattings, minMaxMap } =
         useTableContext();
     const { rows } = table.getRowModel();
 
@@ -249,6 +254,7 @@ const NormalTableBody: FC = () => {
                     row={row}
                     cellContextMenu={cellContextMenu}
                     conditionalFormattings={conditionalFormattings}
+                    minMaxMap={minMaxMap}
                 />
             ))}
         </tbody>
@@ -257,7 +263,7 @@ const NormalTableBody: FC = () => {
 
 interface TableBodyProps {
     minimal?: boolean;
-    tableContainerRef: React.RefObject<HTMLDivElement>;
+    tableContainerRef: React.RefObject<HTMLDivElement | null>;
 }
 
 const TableBody: FC<TableBodyProps> = ({ minimal, tableContainerRef }) => {

@@ -15,8 +15,8 @@ import {
 import { useDebouncedValue, useHover } from '@mantine/hooks';
 import { IconCopy, IconSearch, IconX } from '@tabler/icons-react';
 import { memo, useState, type FC } from 'react';
-import MantineIcon from '../../../components/common/MantineIcon';
 import { TableFieldIcon } from '../../../components/DataViz/Icons';
+import MantineIcon from '../../../components/common/MantineIcon';
 import { useIsTruncated } from '../../../hooks/useIsTruncated';
 import {
     useTableFields,
@@ -117,7 +117,7 @@ export const TableFields: FC = () => {
     });
 
     return (
-        <Stack spacing="xs" h="calc(100% - 20px)" pt="sm" py="xs">
+        <Stack spacing="xs" h="100%" pt="sm">
             {activeTable ? (
                 <Box px="sm">
                     <Text fz="sm" fw={600} c="gray.7">

@@ -28,6 +28,8 @@ import { UserModel } from './UserModel';
 
 type DbOrganizationMemberProfile = {
     user_uuid: string;
+    user_created_at: Date;
+    user_updated_at: Date;
     first_name: string;
     last_name: string;
     is_active: boolean;
@@ -47,6 +49,8 @@ const SelectColumns = [
     `${OrganizationTableName}.organization_uuid`,
     `${OrganizationMembershipsTableName}.role`,
     `${InviteLinkTableName}.expires_at`,
+    `${UserTableName}.created_at as user_created_at`,
+    `${UserTableName}.updated_at as user_updated_at`,
 ];
 
 export class OrganizationMemberProfileModel {
@@ -98,33 +102,9 @@ export class OrganizationMemberProfileModel {
             isActive: member.is_active,
             isInviteExpired,
             isPending,
+            userCreatedAt: member.user_created_at,
+            userUpdatedAt: member.user_updated_at,
         };
-    }
-
-    async findOrganizationMember(
-        organizationUuid: string,
-        userUuid: string,
-    ): Promise<OrganizationMemberProfile | undefined> {
-        const [member] = await this.queryBuilder()
-            .where(`${UserTableName}.user_uuid`, userUuid)
-            .andWhere(
-                `${OrganizationTableName}.organization_uuid`,
-                organizationUuid,
-            )
-            .select<DbOrganizationMemberProfile[]>(SelectColumns);
-
-        const usersHaveAuthenticationRows =
-            await UserModel.findIfUsersHaveAuthentication(this.database, {
-                userUuids: [userUuid],
-            });
-
-        return (
-            member &&
-            OrganizationMemberProfileModel.parseRow(
-                member,
-                usersHaveAuthenticationRows[0]?.has_authentication,
-            )
-        );
     }
 
     async getOrganizationMembers({
@@ -259,6 +239,8 @@ export class OrganizationMemberProfileModel {
                 `${OrganizationTableName}.organization_uuid`,
                 `${OrganizationMembershipsTableName}.role`,
                 `${InviteLinkTableName}.expires_at`,
+                `${UserTableName}.created_at as user_created_at`,
+                `${UserTableName}.updated_at as user_updated_at`,
             )
             .select<DbOrganizationMemberProfile[]>(
                 this.database.raw(
@@ -410,13 +392,61 @@ export class OrganizationMemberProfileModel {
         organizationUuid: string,
         userUuid: string,
     ): Promise<OrganizationMemberProfile> {
-        const member = await this.findOrganizationMember(
-            organizationUuid,
-            userUuid,
-        );
-        if (!member) {
+        const [dbMember] = await this.queryBuilder()
+            .where(`${UserTableName}.user_uuid`, userUuid)
+            .andWhere(
+                `${OrganizationTableName}.organization_uuid`,
+                organizationUuid,
+            )
+            .select<DbOrganizationMemberProfile[]>(SelectColumns);
+
+        if (!dbMember) {
             throw new NotFoundError('No matching member found in organization');
         }
+
+        const usersHaveAuthenticationRows =
+            await UserModel.findIfUsersHaveAuthentication(this.database, {
+                userUuids: [userUuid],
+            });
+
+        const member =
+            dbMember &&
+            OrganizationMemberProfileModel.parseRow(
+                dbMember,
+                usersHaveAuthenticationRows[0]?.has_authentication,
+            );
+
+        return member;
+    }
+
+    async getOrganizationMemberByEmail(
+        organizationUuid: string,
+        email: string,
+    ): Promise<OrganizationMemberProfile> {
+        const [dbMember] = await this.queryBuilder()
+            .where(`${EmailTableName}.email`, email)
+            .andWhere(
+                `${OrganizationTableName}.organization_uuid`,
+                organizationUuid,
+            )
+            .select<DbOrganizationMemberProfile[]>(SelectColumns);
+
+        if (!dbMember) {
+            throw new NotFoundError('No matching member found in organization');
+        }
+
+        const usersHaveAuthenticationRows =
+            await UserModel.findIfUsersHaveAuthentication(this.database, {
+                userUuids: [dbMember.user_uuid],
+            });
+
+        const member =
+            dbMember &&
+            OrganizationMemberProfileModel.parseRow(
+                dbMember,
+                usersHaveAuthenticationRows[0]?.has_authentication,
+            );
+
         return member;
     }
 

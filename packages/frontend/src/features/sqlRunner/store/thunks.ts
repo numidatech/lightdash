@@ -4,9 +4,9 @@ import type * as rtk from '@reduxjs/toolkit';
 
 import {
     ChartKind,
+    isApiError,
     isApiSqlRunnerJobSuccessResponse,
     isErrorDetails,
-    isVizCartesianChartConfig,
     type ApiErrorDetail,
     type RawResultRow,
 } from '@lightdash/common';
@@ -70,7 +70,10 @@ export const runSqlQuery = createAsyncThunk<
                 return rejectWithValue(job.error);
             }
         } catch (error) {
-            return rejectWithValue(error?.error as ApiErrorDetail);
+            if (isApiError(error)) {
+                return rejectWithValue(error.error);
+            }
+            throw error;
         }
     },
 );
@@ -89,13 +92,13 @@ export const prepareAndFetchChartData = createAsyncThunk(
             state.sqlRunner.selectedChartType,
         );
 
-        const sortBy = isVizCartesianChartConfig(currentVizConfig)
-            ? currentVizConfig.fieldConfig?.sortBy
-            : undefined;
+        const sortBy =
+            currentVizConfig && 'fieldConfig' in currentVizConfig
+                ? currentVizConfig.fieldConfig?.sortBy
+                : undefined;
+        const { selectedChartType, limit, sql } = state.sqlRunner;
 
         const resultsRunner = selectSqlRunnerResultsRunner(state, sortBy);
-
-        const { selectedChartType, limit, sql } = state.sqlRunner;
 
         const config = selectChartFieldConfigByKind(state, selectedChartType);
 
@@ -116,7 +119,7 @@ export const prepareAndFetchChartData = createAsyncThunk(
             filters: [],
         });
 
-        const getChartSpec = (orgColors: string[]) => {
+        const getChartSpec = (orgColors?: string[]) => {
             const currentState = getState() as RootState;
             const currentDisplay = selectChartDisplayByKind(
                 currentState,

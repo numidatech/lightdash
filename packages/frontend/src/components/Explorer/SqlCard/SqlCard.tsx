@@ -4,15 +4,13 @@ import { useHover } from '@mantine/hooks';
 import { IconCheck, IconClipboard } from '@tabler/icons-react';
 import { memo, type FC } from 'react';
 import { useCompiledSql } from '../../../hooks/useCompiledSql';
-import { useApp } from '../../../providers/AppProvider';
-import {
-    ExplorerSection,
-    useExplorerContext,
-} from '../../../providers/ExplorerProvider';
-import { Can } from '../../common/Authorization';
-import CollapsableCard from '../../common/CollapsableCard';
-import MantineIcon from '../../common/MantineIcon';
+import { Can } from '../../../providers/Ability';
+import useApp from '../../../providers/App/useApp';
+import { ExplorerSection } from '../../../providers/Explorer/types';
+import useExplorerContext from '../../../providers/Explorer/useExplorerContext';
 import { RenderedSql } from '../../RenderedSql';
+import CollapsableCard from '../../common/CollapsableCard/CollapsableCard';
+import MantineIcon from '../../common/MantineIcon';
 import OpenInSqlRunnerButton from './OpenInSqlRunnerButton';
 
 interface SqlCardProps {

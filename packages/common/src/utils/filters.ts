@@ -1,16 +1,17 @@
 import dayjs from 'dayjs';
 import moment from 'moment';
 import { v4 as uuidv4 } from 'uuid';
+import { type AnyType } from '../types/any';
 import { DashboardTileTypes, type DashboardTile } from '../types/dashboard';
 import { type Table } from '../types/explore';
 import {
-    convertFieldRefToFieldId,
     DimensionType,
+    MetricType,
+    TableCalculationType,
+    convertFieldRefToFieldId,
     isCustomSqlDimension,
     isDimension,
     isTableCalculation,
-    MetricType,
-    TableCalculationType,
     type CompiledField,
     type CustomSqlDimension,
     type Dimension,
@@ -25,11 +26,11 @@ import {
 import {
     FilterOperator,
     FilterType,
+    UnitOfTime,
     isAndFilterGroup,
     isFilterGroup,
     isFilterRule,
     isFilterRuleDefinedForFieldId,
-    UnitOfTime,
     type AndFilterGroup,
     type DashboardFieldTarget,
     type DashboardFilterRule,
@@ -147,10 +148,35 @@ export const getFilterTypeFromItem = (item: FilterableField): FilterType => {
     }
 };
 
+export const timeframeToUnitOfTime = (timeframe: TimeFrames) => {
+    switch (timeframe) {
+        case TimeFrames.MILLISECOND:
+            return UnitOfTime.milliseconds;
+        case TimeFrames.SECOND:
+            return UnitOfTime.seconds;
+        case TimeFrames.MINUTE:
+            return UnitOfTime.minutes;
+        case TimeFrames.HOUR:
+            return UnitOfTime.hours;
+        case TimeFrames.DAY:
+            return UnitOfTime.days;
+        case TimeFrames.WEEK:
+            return UnitOfTime.weeks;
+        case TimeFrames.MONTH:
+            return UnitOfTime.months;
+        case TimeFrames.QUARTER:
+            return UnitOfTime.quarters;
+        case TimeFrames.YEAR:
+            return UnitOfTime.years;
+        default:
+            return undefined;
+    }
+};
+
 export const getFilterRuleWithDefaultValue = <T extends FilterRule>(
     field: FilterableField,
     filterRule: T,
-    values?: any[] | null,
+    values?: AnyType[] | null,
 ): T => {
     const filterType = getFilterTypeFromItem(field);
     const filterRuleDefaults: Partial<FilterRule> = {};
@@ -180,10 +206,13 @@ export const getFilterRuleWithDefaultValue = <T extends FilterRule>(
                         value === undefined || typeof value !== 'number'
                             ? 1
                             : value;
-
+                    const defaultUnitOfTime =
+                        isDimension(field) && field.timeInterval
+                            ? timeframeToUnitOfTime(field.timeInterval)
+                            : UnitOfTime.days;
                     filterRuleDefaults.values = [numberValue];
                     filterRuleDefaults.settings = {
-                        unitOfTime: UnitOfTime.days,
+                        unitOfTime: defaultUnitOfTime,
                         completed: false,
                     } as DateFilterRule['settings'];
                 } else if (isTimestamp) {
@@ -259,7 +288,7 @@ export const getFilterRuleWithDefaultValue = <T extends FilterRule>(
 
 export const createFilterRuleFromField = (
     field: FilterableField,
-    value?: any,
+    value?: AnyType,
 ): FilterRule =>
     getFilterRuleWithDefaultValue(
         field,
@@ -310,8 +339,8 @@ export const applyDefaultTileTargets = (
     filterRule: DashboardFilterRule<
         FilterOperator,
         DashboardFieldTarget,
-        any,
-        any
+        AnyType,
+        AnyType
     >,
     field: FilterableDimension,
     availableTileFilters: Record<string, FilterableDimension[] | undefined>,
@@ -359,7 +388,7 @@ export const createDashboardFilterRuleFromField = ({
 type AddFilterRuleArgs = {
     filters: Filters;
     field: FilterableField;
-    value?: any;
+    value?: AnyType;
 };
 
 export const addFilterRule = ({
@@ -367,7 +396,7 @@ export const addFilterRule = ({
     field,
     value,
 }: AddFilterRuleArgs): Filters => {
-    const groupKey = ((f: any) => {
+    const groupKey = ((f: AnyType) => {
         if (isDimension(f) || isCustomSqlDimension(f)) {
             return 'dimensions';
         }
@@ -431,7 +460,7 @@ const flattenSameFilterGroupType = (filterGroup: FilterGroup): FilterGroup => {
  */
 export const isDimensionValueInvalidDate = (
     item: FilterableField,
-    value: any,
+    value: AnyType,
 ) => isDateItem(item) && value.raw === 'Invalid Date'; // Message from moment.js when it can't parse a date
 
 /**

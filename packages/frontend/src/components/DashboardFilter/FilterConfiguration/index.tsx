@@ -33,24 +33,13 @@ import FieldLabel from '../../common/Filters/FieldLabel';
 import MantineIcon from '../../common/MantineIcon';
 import FilterSettings from './FilterSettings';
 import TileFilterConfiguration from './TileFilterConfiguration';
+import { DEFAULT_TAB, FilterActions, FilterTabs } from './constants';
 import {
     getFilterRuleRevertableObject,
     hasFilterValueSet,
     hasSavedFilterValueChanged,
     isFilterEnabled,
 } from './utils';
-
-export enum FilterTabs {
-    SETTINGS = 'settings',
-    TILES = 'tiles',
-}
-
-const DEFAULT_TAB = FilterTabs.SETTINGS;
-
-export enum FilterActions {
-    ADD = 'add',
-    REMOVE = 'remove',
-}
 
 interface Props {
     tiles: DashboardTile[];
@@ -284,6 +273,7 @@ const FilterConfiguration: FC<Props> = ({
                             <FieldSelect
                                 data-testid="FilterConfiguration/FieldSelect"
                                 size="xs"
+                                focusOnRender={true}
                                 label={
                                     <Text>
                                         Select a dimension to filter{' '}

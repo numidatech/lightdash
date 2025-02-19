@@ -1,17 +1,15 @@
 import {
     AlreadyExistsError,
-    assertUnreachable,
+    AnyType,
     CreateProject,
-    createVirtualView,
     CreateVirtualViewPayload,
     CreateWarehouseCredentials,
     DbtProjectConfig,
     Explore,
     ExploreError,
     ExploreType,
-    generateSlug,
-    isExploreError,
     NotExistsError,
+    NotFoundError,
     OrganizationProject,
     ParameterError,
     PreviewContentMapping,
@@ -22,8 +20,6 @@ import {
     ProjectSummary,
     ProjectType,
     SemanticLayerType,
-    sensitiveCredentialsFieldNames,
-    sensitiveDbtCredentialsFieldNames,
     SpaceSummary,
     SupportedDbtAdapter,
     SupportedDbtVersions,
@@ -35,6 +31,12 @@ import {
     WarehouseClient,
     WarehouseCredentials,
     WarehouseTypes,
+    assertUnreachable,
+    createVirtualView,
+    generateSlug,
+    isExploreError,
+    sensitiveCredentialsFieldNames,
+    sensitiveDbtCredentialsFieldNames,
     type CubeSemanticLayerConnection,
     type DbtSemanticLayerConnection,
     type SemanticLayerConnection,
@@ -69,13 +71,13 @@ import {
     ProjectMembershipsTableName,
 } from '../../database/entities/projectMemberships';
 import {
-    CachedExploresTableName,
     CachedExploreTableName,
+    CachedExploresTableName,
     CachedWarehouseTableName,
-    DbCachedExplores,
     DbCachedWarehouse,
     DbProject,
     ProjectTableName,
+    type DbCachedExplore,
 } from '../../database/entities/projects';
 import {
     DbSavedChart,
@@ -123,11 +125,13 @@ export class ProjectModel {
             ...incompleteConfig,
             ...sensitiveDbtCredentialsFieldNames.reduce(
                 (sum, secretKey) =>
-                    !(incompleteConfig as any)[secretKey] &&
-                    (completeConfig as any)[secretKey]
+                    !(incompleteConfig as AnyType)[secretKey] &&
+                    (completeConfig as AnyType)[secretKey]
                         ? {
                               ...sum,
-                              [secretKey]: (completeConfig as any)[secretKey],
+                              [secretKey]: (completeConfig as AnyType)[
+                                  secretKey
+                              ],
                           }
                         : sum,
                 {},
@@ -146,11 +150,13 @@ export class ProjectModel {
             ...incompleteConfig,
             ...sensitiveCredentialsFieldNames.reduce(
                 (sum, secretKey) =>
-                    !(incompleteConfig as any)[secretKey] &&
-                    (completeConfig as any)[secretKey]
+                    !(incompleteConfig as AnyType)[secretKey] &&
+                    (completeConfig as AnyType)[secretKey]
                         ? {
                               ...sum,
-                              [secretKey]: (completeConfig as any)[secretKey],
+                              [secretKey]: (completeConfig as AnyType)[
+                                  secretKey
+                              ],
                           }
                         : sum,
                 {},
@@ -455,9 +461,38 @@ export class ProjectModel {
     }
 
     async delete(projectUuid: string): Promise<void> {
-        await this.database('projects')
-            .where('project_uuid', projectUuid)
-            .delete();
+        await this.database.transaction(async (trx) => {
+            const [project] = await trx('projects')
+                .select('project_id')
+                .where('project_uuid', projectUuid);
+
+            if (!project) {
+                throw new NotFoundError('Project not found');
+            }
+            const projectId = project.project_id;
+            // First we delete some of the content from the project
+            // to avoid getting deadlock issues
+            await trx('catalog_search')
+                .where('project_uuid', projectUuid)
+                .delete();
+
+            await trx('cached_explores')
+                .where('project_uuid', projectUuid)
+                .delete();
+
+            await trx('cached_explore')
+                .where('project_uuid', projectUuid)
+                .delete();
+
+            // Deleting spaces will also delete dashboards and charts in cascade,
+            // At the same time, charts and dashboards will delete analytic_views, schedulers, pinned content, and more.
+            await trx('spaces').where('project_id', projectId).delete();
+
+            await trx('jobs').where('project_uuid', projectUuid).delete();
+
+            // Finally, delete the project and everything else in cascade
+            await trx('projects').where('project_uuid', projectUuid).delete();
+        });
     }
 
     async getWithSensitiveFields(
@@ -699,7 +734,7 @@ export class ProjectModel {
         const nonSensitiveDbtCredentials = Object.fromEntries(
             Object.entries(project.dbtConnection).filter(
                 ([key]) =>
-                    !sensitiveDbtCredentialsFieldNames.includes(key as any),
+                    !sensitiveDbtCredentialsFieldNames.includes(key as AnyType),
             ),
         ) as DbtProjectConfig;
 
@@ -707,7 +742,9 @@ export class ProjectModel {
             ? (Object.fromEntries(
                   Object.entries(sensitiveCredentials).filter(
                       ([key]) =>
-                          !sensitiveCredentialsFieldNames.includes(key as any),
+                          !sensitiveCredentialsFieldNames.includes(
+                              key as AnyType,
+                          ),
                   ),
               ) as WarehouseCredentials)
             : undefined;
@@ -766,17 +803,6 @@ export class ProjectModel {
             .where('project_uuid', projectUuid);
     }
 
-    async getExploresFromCache(
-        projectUuid: string,
-    ): Promise<(Explore | ExploreError)[] | undefined> {
-        const explores = await this.database(CachedExploresTableName)
-            .select(['explores'])
-            .where('project_uuid', projectUuid)
-            .limit(1);
-        if (explores.length > 0) return explores[0].explores;
-        return undefined;
-    }
-
     static convertMetricFiltersFieldIdsToFieldRef = (
         explore: Explore | ExploreError,
     ) => {
@@ -805,16 +831,6 @@ export class ProjectModel {
 
         return convertedExplore;
     };
-
-    private getExploreQueryBuilder(projectUuid: string) {
-        return this.database(CachedExploresTableName)
-            .select<{ explore: Explore | ExploreError }[]>(['explore'])
-            .crossJoin(
-                this.database.raw('jsonb_array_elements(explores) as explore'),
-            )
-            .where('project_uuid', projectUuid)
-            .first();
-    }
 
     async findExploresFromCache(
         projectUuid: string,
@@ -849,132 +865,113 @@ export class ProjectModel {
         );
     }
 
+    async getAllExploresFromCache(
+        projectUuid: string,
+    ): Promise<{ [exploreUuid: string]: Explore | ExploreError }> {
+        const cachedExplores = await this.database(CachedExploreTableName)
+            .select<
+                {
+                    cached_explore_uuid: string;
+                    explore: Explore | ExploreError;
+                }[]
+            >(['explore', 'cached_explore_uuid'])
+            .where('project_uuid', projectUuid);
+
+        return cachedExplores.reduce<Record<string, Explore | ExploreError>>(
+            (acc, { cached_explore_uuid, explore }) => {
+                acc[cached_explore_uuid] = explore;
+                return acc;
+            },
+            {},
+        );
+    }
+
     async getExploreFromCache(
         projectUuid: string,
         exploreName: string,
     ): Promise<Explore | ExploreError> {
-        return wrapSentryTransaction(
-            'ProjectModel.getExploreFromCache',
-            {},
-            async (span) => {
-                // check individually cached explore
-                let exploreCache = await this.database(CachedExploreTableName)
-                    .select('explore')
-                    .where('name', exploreName)
-                    .andWhere('project_uuid', projectUuid)
-                    .first();
-
-                span.setAttribute(
-                    'foundIndividualExploreCache',
-                    !!exploreCache,
-                );
-                if (!exploreCache) {
-                    // fallback: check all cached explores
-                    exploreCache = await this.getExploreQueryBuilder(
-                        projectUuid,
-                    ).andWhereRaw("explore->>'name' = ?", [exploreName]);
-                    if (exploreCache === undefined) {
-                        throw new NotExistsError(
-                            `Explore "${exploreName}" does not exist.`,
-                        );
-                    }
-                }
-                return ProjectModel.convertMetricFiltersFieldIdsToFieldRef(
-                    exploreCache.explore,
-                );
-            },
-        );
+        const cachedExplores = await this.findExploresFromCache(projectUuid, [
+            exploreName,
+        ]);
+        const cachedExplore = cachedExplores[exploreName];
+        if (cachedExplore === undefined) {
+            throw new NotExistsError(
+                `Explore "${exploreName}" does not exist.`,
+            );
+        }
+        return cachedExplore;
     }
 
     async findExploreByTableName(
         projectUuid: string,
         tableName: string,
     ): Promise<Explore | ExploreError | undefined> {
+        const cachedExplores = await this.findExploresFromCache(projectUuid, [
+            tableName,
+        ]);
+        return cachedExplores[tableName];
+    }
+
+    // Returns explore based on the join original name rather than the explore with the join.
+    async findJoinAliasExplore(
+        projectUuid: string,
+        joinAliasName: string,
+    ): Promise<Explore | ExploreError | undefined> {
         return wrapSentryTransaction(
-            'ProjectModel.findExploreByTableName',
+            'ProjectModel.findExploreFromJoinAlias',
             {},
             async (span) => {
-                // check individually cached explore
-                let exploreCache = await this.database(CachedExploreTableName)
+                const exploreWithJoinAlias = await this.database(
+                    CachedExploreTableName,
+                )
                     .columns({
                         explore: 'explore',
                         baseMatch: this.database.raw(
                             "? = explore->>'baseTable'",
-                            [tableName],
+                            [joinAliasName],
                         ),
                     })
-                    .select()
-                    .whereRaw('? = ANY(table_names)', tableName)
+                    .select<{
+                        explore: Explore | ExploreError;
+                        baseMatch: boolean;
+                    }>()
+                    .whereRaw('? = ANY(table_names)', joinAliasName)
                     .andWhere('project_uuid', projectUuid)
                     .orderBy('baseMatch', 'desc')
                     .first();
-
-                span.setAttribute(
-                    'foundIndividualExploreCache',
-                    !!exploreCache,
-                );
-                if (!exploreCache) {
-                    // fallback: check all cached explores
-                    // try finding explore via base table name
-                    exploreCache = await this.getExploreQueryBuilder(
-                        projectUuid,
-                    ).andWhereRaw("explore->>'baseTable' = ?", [tableName]);
-
-                    if (!exploreCache) {
-                        // try finding explore via joined table alias
-                        // Note: there is an edge case where we return the wrong explore because join table aliases are not unique
-                        exploreCache = await this.getExploreQueryBuilder(
-                            projectUuid,
-                        ).andWhereRaw(
-                            "(explore->>'tables')::json->? IS NOT NULL",
-                            [tableName],
+                if (exploreWithJoinAlias) {
+                    const originalTableName =
+                        exploreWithJoinAlias.explore.tables?.[joinAliasName]
+                            .originalName;
+                    if (originalTableName) {
+                        const exploreCache = await this.database(
+                            CachedExploreTableName,
+                        )
+                            .select('explore')
+                            .where('name', originalTableName)
+                            .andWhere('project_uuid', projectUuid)
+                            .first();
+                        span.setAttribute(
+                            'foundExploreCacheViaJoinAlias',
+                            !!exploreCache,
                         );
+                        return exploreCache
+                            ? ProjectModel.convertMetricFiltersFieldIdsToFieldRef(
+                                  exploreCache.explore,
+                              )
+                            : undefined;
                     }
                 }
 
-                return exploreCache
-                    ? ProjectModel.convertMetricFiltersFieldIdsToFieldRef(
-                          exploreCache.explore,
-                      )
-                    : undefined;
+                return undefined;
             },
-        );
-    }
-
-    static getExploresWithCacheUuids(
-        explores: (Explore | ExploreError)[],
-        cachedExplore: { name: string; cached_explore_uuid: string }[],
-    ) {
-        return explores.reduce<(Explore & { cachedExploreUuid: string })[]>(
-            (acc, explore) => {
-                if (isExploreError(explore)) return acc;
-                const cachedExploreUuid = cachedExplore.find(
-                    (cached) => cached.name === explore.name,
-                )?.cached_explore_uuid;
-                if (!cachedExploreUuid) {
-                    Logger.error(
-                        `Could not find cached explore uuid for explore ${explore.name}`,
-                    );
-                    return acc;
-                }
-                return [
-                    ...acc,
-                    {
-                        ...explore,
-                        cachedExploreUuid,
-                    },
-                ];
-            },
-            [],
         );
     }
 
     async saveExploresToCache(
         projectUuid: string,
         explores: (Explore | ExploreError)[],
-    ): Promise<{
-        cachedExplores: DbCachedExplores;
-    }> {
+    ) {
         return wrapSentryTransaction(
             'ProjectModel.saveExploresToCache',
             {},
@@ -996,9 +993,14 @@ export class ProjectModel {
                     (a, b) => a.name === b.name,
                 );
 
+                if (uniqueExplores.length <= 0) {
+                    throw new ParameterError('No explores to save');
+                }
+
                 // cache explores individually
-                await this.database(CachedExploreTableName)
-                    .insert(
+                const individualCachedExplores = await this.database
+                    .batchInsert<DbCachedExplore>(
+                        CachedExploreTableName,
                         uniqueExplores.map((explore) => ({
                             project_uuid: projectUuid,
                             name: explore.name,
@@ -1006,14 +1008,10 @@ export class ProjectModel {
                             explore: JSON.stringify(explore),
                         })),
                     )
-                    .onConflict(['project_uuid', 'name'])
-                    .merge()
-                    .returning(['name', 'cached_explore_uuid']);
+                    .returning('cached_explore_uuid');
 
                 // cache explores together
-                const [cachedExplores] = await this.database(
-                    CachedExploresTableName,
-                )
+                await this.database(CachedExploresTableName)
                     .insert({
                         project_uuid: projectUuid,
                         explores: JSON.stringify(uniqueExplores),
@@ -1023,7 +1021,9 @@ export class ProjectModel {
                     .returning('*');
 
                 return {
-                    cachedExplores,
+                    cachedExploreUuids: individualCachedExplores.map(
+                        (explore) => explore.cached_explore_uuid,
+                    ),
                 };
             },
         );
@@ -1184,7 +1184,7 @@ export class ProjectModel {
                 role,
                 user_id: user.user_id,
             });
-        } catch (error: any) {
+        } catch (error: AnyType) {
             if (
                 error instanceof DatabaseError &&
                 error.constraint ===
@@ -1373,6 +1373,27 @@ export class ProjectModel {
                     ? await trx('space_user_access')
                           .insert(
                               spaceUserAccesses.map((d) => ({
+                                  ...d,
+                                  space_uuid: getNewSpaceUuid(d.space_uuid),
+                              })),
+                          )
+                          .returning('*')
+                    : [];
+
+            const spaceGroupAccesses = await trx('space_group_access').whereIn(
+                'space_uuid',
+                spaceUuids,
+            );
+
+            Logger.info(
+                `Duplicating ${spaceGroupAccesses.length} space group accesses on ${previewProjectUuid}`,
+            );
+
+            const newSpaceGroupAccesses =
+                spaceGroupAccesses.length > 0
+                    ? await trx('space_group_access')
+                          .insert(
+                              spaceGroupAccesses.map((d) => ({
                                   ...d,
                                   space_uuid: getNewSpaceUuid(d.space_uuid),
                               })),
@@ -1709,7 +1730,9 @@ export class ProjectModel {
             const copyChartVersionContent = async (
                 table: string,
                 excludedFields: string[],
-                fieldPreprocess: { [field: string]: (value: any) => any } = {},
+                fieldPreprocess: {
+                    [field: string]: (value: AnyType) => AnyType;
+                } = {},
             ) => {
                 const content = await trx(table)
                     .whereIn('saved_queries_version_id', chartVersionIds)
@@ -1751,7 +1774,7 @@ export class ProjectModel {
             await copyChartVersionContent(
                 'saved_queries_version_custom_dimensions',
                 ['saved_queries_version_custom_dimension_id'],
-                { custom_range: (value: any) => JSON.stringify(value) },
+                { custom_range: (value: AnyType) => JSON.stringify(value) },
             );
             await copyChartVersionContent(
                 SavedChartCustomSqlDimensionsTableName,
@@ -1766,7 +1789,7 @@ export class ProjectModel {
             await copyChartVersionContent(
                 'saved_queries_version_additional_metrics',
                 ['saved_queries_version_additional_metric_id', 'uuid'],
-                { filters: (value: any) => JSON.stringify(value) },
+                { filters: (value: AnyType) => JSON.stringify(value) },
             );
 
             // 8888b.     db    .dP"Y8 88  88 88""Yb  dP"Yb     db    88""Yb 8888b.  .dP"Y8
@@ -2287,16 +2310,5 @@ export class ProjectModel {
             .returning('*');
 
         return updatedProject;
-    }
-
-    async getCachedExploresWithUuid(
-        projectUuid: string,
-        explores: (Explore | ExploreError)[],
-    ) {
-        const cachedExplores = await this.database(CachedExploreTableName)
-            .select('name', 'cached_explore_uuid')
-            .where('project_uuid', projectUuid);
-
-        return ProjectModel.getExploresWithCacheUuids(explores, cachedExplores);
     }
 }

@@ -11,14 +11,39 @@ import { useQuery, type UseQueryOptions } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useDebounce } from 'react-use';
 import { lightdashApi } from '../api';
+import useEmbed from '../ee/providers/Embed/useEmbed';
 
 export const MAX_AUTOCOMPLETE_RESULTS = 100;
+
+const getEmbedFilterValues = async (options: {
+    embedToken: string;
+    projectId: string;
+    filterId: string;
+    search: string;
+    forceRefresh: boolean;
+    filters: AndFilterGroup | undefined;
+}) => {
+    return lightdashApi<FieldValueSearchResult>({
+        url: `/embed/${options.projectId}/filter/${options.filterId}/search`,
+        method: 'POST',
+        headers: {
+            'Lightdash-Embed-Token': options.embedToken!,
+        },
+        body: JSON.stringify({
+            search: options.search,
+            limit: MAX_AUTOCOMPLETE_RESULTS,
+            filters: options.filters,
+            forceRefresh: options.forceRefresh,
+        }),
+    });
+};
 
 const getFieldValues = async (
     projectId: string,
     table: string | undefined,
     fieldId: string,
     search: string,
+    forceRefresh: boolean,
     filters: AndFilterGroup | undefined,
     limit: number = MAX_AUTOCOMPLETE_RESULTS,
 ) => {
@@ -34,6 +59,7 @@ const getFieldValues = async (
             limit,
             table,
             filters,
+            forceRefresh,
         }),
     });
 };
@@ -41,12 +67,15 @@ const getFieldValues = async (
 export const useFieldValues = (
     search: string,
     initialData: string[],
-    projectId: string,
+    projectId: string | undefined,
     field: FilterableItem,
+    filterId: string | undefined,
     filters: AndFilterGroup | undefined,
     debounce: boolean = true,
+    forceRefresh: boolean = false,
     useQueryOptions?: UseQueryOptions<FieldValueSearchResult, ApiError>,
 ) => {
+    const { embedToken } = useEmbed();
     const [fieldName, setFieldName] = useState<string>(field.name);
     const [debouncedSearch, setDebouncedSearch] = useState<string>(search);
     const [searches, setSearches] = useState(new Set<string>());
@@ -54,6 +83,7 @@ export const useFieldValues = (
     const [resultCounts, setResultCounts] = useState<Map<string, number>>(
         new Map(),
     );
+    const [refreshedAt, setRefreshedAt] = useState<Date>(new Date());
 
     const tableName = useMemo(
         () => (isField(field) ? field.table : undefined),
@@ -69,6 +99,7 @@ export const useFieldValues = (
                 setResults(new Set(initialData));
                 setResultCounts(new Map());
             }
+            setRefreshedAt(new Date(data.refreshedAt));
             setSearches((s) => {
                 return s.add(data.search);
             });
@@ -87,21 +118,42 @@ export const useFieldValues = (
         },
         [filters, initialData],
     );
+    const cachekey = [
+        'project',
+        projectId,
+        tableName,
+        fieldName,
+        'search',
+        debouncedSearch,
+    ];
     const query = useQuery<FieldValueSearchResult, ApiError>(
-        ['project', projectId, tableName, fieldName, 'search', debouncedSearch],
-        () =>
-            getFieldValues(
-                projectId,
-                tableName,
-                fieldId,
-                debouncedSearch,
-                filters,
-            ),
+        cachekey,
+        () => {
+            if (embedToken && filterId && projectId) {
+                return getEmbedFilterValues({
+                    embedToken,
+                    projectId,
+                    filterId,
+                    search: debouncedSearch,
+                    forceRefresh,
+                    filters,
+                });
+            } else {
+                return getFieldValues(
+                    projectId!,
+                    tableName,
+                    fieldId,
+                    debouncedSearch,
+                    forceRefresh,
+                    filters,
+                );
+            }
+        },
         {
             // make sure we don't cache for too long
             cacheTime: 60 * 1000, // 1 minute
             ...useQueryOptions,
-            enabled: !!tableName,
+            enabled: !!tableName && !!projectId,
             staleTime: 0,
             onSuccess: (data) => {
                 const { results: newResults, search: newSearch } = data;
@@ -113,6 +165,8 @@ export const useFieldValues = (
                 const normalizedData = {
                     search: newSearch,
                     results: normalizedNewResults,
+                    cached: data.cached,
+                    refreshedAt: data.refreshedAt,
                 };
 
                 handleUpdateResults(normalizedData);
@@ -136,7 +190,7 @@ export const useFieldValues = (
             setResults(new Set(initialData));
             setResultCounts(new Map());
         }
-    }, [initialData, fieldName, field.name]);
+    }, [initialData, fieldName, field.name, forceRefresh]);
 
     return {
         ...query,
@@ -144,5 +198,6 @@ export const useFieldValues = (
         searches,
         results,
         resultCounts,
+        refreshedAt,
     };
 };

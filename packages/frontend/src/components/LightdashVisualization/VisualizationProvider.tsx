@@ -1,20 +1,17 @@
 import {
-    assertUnreachable,
     ChartType,
+    assertUnreachable,
     isDimension,
     type ApiQueryResults,
     type ChartConfig,
     type DashboardFilters,
-    type ItemsMap,
     type PivotValue,
     type TableCalculationMetadata,
 } from '@lightdash/common';
 import type EChartsReact from 'echarts-for-react';
 import isEqual from 'lodash/isEqual';
 import {
-    createContext,
     useCallback,
-    useContext,
     useEffect,
     useMemo,
     useRef,
@@ -24,88 +21,22 @@ import {
 } from 'react';
 import { type CartesianTypeOptions } from '../../hooks/cartesianChartConfig/useCartesianChartConfig';
 import { type EChartSeries } from '../../hooks/echarts/useEchartsCartesianConfig';
+import { type SeriesLike } from '../../hooks/useChartColorConfig/types';
+import { useChartColorConfig } from '../../hooks/useChartColorConfig/useChartColorConfig';
 import {
     calculateSeriesLikeIdentifier,
     isGroupedSeries,
-    useChartColorConfig,
-    type SeriesLike,
-} from '../../hooks/useChartColorConfig';
+} from '../../hooks/useChartColorConfig/utils';
 import usePivotDimensions from '../../hooks/usePivotDimensions';
 import { type EchartSeriesClickEvent } from '../SimpleChart';
-import VisualizationBigNumberConfig, {
-    type VisualizationConfigBigNumber,
-} from './VisualizationBigNumberConfig';
-import VisualizationCartesianConfig, {
-    type VisualizationConfigCartesian,
-} from './VisualizationConfigCartesian';
-import VisualizationConfigFunnel, {
-    type VisualizationConfigFunnelType,
-} from './VisualizationConfigFunnel';
-import VisualizationPieConfig, {
-    type VisualizationConfigPie,
-} from './VisualizationConfigPie';
-import VisualizationTableConfig, {
-    type VisualizationConfigTable,
-} from './VisualizationConfigTable';
-import VisualizationCustomConfig, {
-    type VisualizationCustomConfigType,
-} from './VisualizationCustomConfig';
-
-export type VisualizationConfig =
-    | VisualizationConfigBigNumber
-    | VisualizationConfigCartesian
-    | VisualizationCustomConfigType
-    | VisualizationConfigPie
-    | VisualizationConfigFunnelType
-    | VisualizationConfigTable;
-
-type VisualizationContext = {
-    minimal: boolean;
-    chartRef: RefObject<EChartsReact>;
-    pivotDimensions: string[] | undefined;
-    resultsData: ApiQueryResults | undefined;
-    isLoading: boolean;
-    columnOrder: string[];
-    isSqlRunner: boolean;
-    itemsMap: ItemsMap | undefined;
-    visualizationConfig: VisualizationConfig;
-    // cartesian config related
-    setStacking: (value: boolean | undefined) => void;
-    setCartesianType(args: CartesianTypeOptions | undefined): void;
-    // --
-    onSeriesContextMenu?: (
-        e: EchartSeriesClickEvent,
-        series: EChartSeries[],
-    ) => void;
-    setChartType: (value: ChartType) => void;
-    setPivotDimensions: (value: string[] | undefined) => void;
-
-    getSeriesColor: (seriesLike: SeriesLike) => string;
-    getGroupColor: (groupPrefix: string, groupName: string) => string;
-    colorPalette: string[];
-};
-
-const Context = createContext<VisualizationContext | undefined>(undefined);
-
-export function useVisualizationContext(): VisualizationContext {
-    const context = useContext(Context);
-    if (context === undefined) {
-        throw new Error(
-            'useVisualizationContext must be used within a VisualizationProvider',
-        );
-    }
-    return context;
-}
-
-export type VisualizationConfigCommon<T extends VisualizationConfig> = {
-    resultsData: ApiQueryResults | undefined;
-    initialChartConfig: T['chartConfig']['validConfig'] | undefined;
-    onChartConfigChange?: (chartConfig: {
-        type: T['chartType'];
-        config: T['chartConfig']['validConfig'];
-    }) => void;
-    children: (props: { visualizationConfig: T }) => JSX.Element;
-};
+import VisualizationBigNumberConfig from './VisualizationBigNumberConfig';
+import VisualizationCartesianConfig from './VisualizationConfigCartesian';
+import VisualizationConfigFunnel from './VisualizationConfigFunnel';
+import VisualizationPieConfig from './VisualizationConfigPie';
+import VisualizationTableConfig from './VisualizationConfigTable';
+import VisualizationCustomConfig from './VisualizationCustomConfig';
+import Context from './context';
+import { type useVisualizationContext } from './useVisualizationContext';
 
 type Props = {
     minimal?: boolean;
@@ -121,13 +52,13 @@ type Props = {
     onChartTypeChange?: (value: ChartType) => void;
     onChartConfigChange?: (value: ChartConfig) => void;
     onPivotDimensionsChange?: (value: string[] | undefined) => void;
-    isSqlRunner?: boolean;
     pivotTableMaxColumnLimit: number;
     savedChartUuid?: string;
     dashboardFilters?: DashboardFilters;
     invalidateCache?: boolean;
     colorPalette: string[];
     tableCalculationsMetadata?: TableCalculationMetadata[];
+    setEchartsRef?: (ref: RefObject<EChartsReact | null>) => void;
 };
 
 const VisualizationProvider: FC<React.PropsWithChildren<Props>> = ({
@@ -136,7 +67,6 @@ const VisualizationProvider: FC<React.PropsWithChildren<Props>> = ({
     resultsData,
     isLoading,
     columnOrder,
-    isSqlRunner,
     pivotTableMaxColumnLimit,
     chartConfig,
     onChartConfigChange,
@@ -149,13 +79,17 @@ const VisualizationProvider: FC<React.PropsWithChildren<Props>> = ({
     invalidateCache,
     colorPalette,
     tableCalculationsMetadata,
+    setEchartsRef,
 }) => {
     const itemsMap = useMemo(() => {
         return resultsData?.fields;
     }, [resultsData]);
 
-    const chartRef = useRef<EChartsReact>(null);
-
+    const chartRef = useRef<EChartsReact | null>(null);
+    useEffect(() => {
+        if (setEchartsRef)
+            setEchartsRef(chartRef as RefObject<EChartsReact | null>);
+    }, [chartRef, setEchartsRef]);
     const [lastValidResultsData, setLastValidResultsData] =
         useState<ApiQueryResults>();
 
@@ -311,14 +245,16 @@ const VisualizationProvider: FC<React.PropsWithChildren<Props>> = ({
         [calculateSeriesColorAssignment, fallbackColors, chartConfig, itemsMap],
     );
 
-    const value: Omit<VisualizationContext, 'visualizationConfig'> = {
+    const value: Omit<
+        ReturnType<typeof useVisualizationContext>,
+        'visualizationConfig'
+    > = {
         minimal,
         pivotDimensions: validPivotDimensions,
         chartRef,
         resultsData: lastValidResultsData,
         isLoading,
         columnOrder,
-        isSqlRunner: isSqlRunner ?? false,
         itemsMap,
         setStacking,
         setCartesianType,
@@ -337,7 +273,7 @@ const VisualizationProvider: FC<React.PropsWithChildren<Props>> = ({
                     itemsMap={itemsMap}
                     resultsData={lastValidResultsData}
                     validPivotDimensions={validPivotDimensions}
-                    columnOrder={isSqlRunner ? [] : defaultColumnOrder}
+                    columnOrder={defaultColumnOrder}
                     initialChartConfig={chartConfig.config}
                     stacking={stacking}
                     cartesianType={cartesianType}

@@ -1,3 +1,4 @@
+import { type AnyType } from './any';
 import { ConditionalOperator, type ConditionalRule } from './conditionalRule';
 import type { SchedulerFilterRule } from './scheduler';
 
@@ -32,6 +33,28 @@ export const unitOfTimeFormat: Record<UnitOfTime, string> = {
     years: 'YYYY',
 };
 
+export const getUnitsOfTimeGreaterOrEqual = (
+    unit: UnitOfTime,
+): UnitOfTime[] => {
+    const unitsInOrder: UnitOfTime[] = [
+        UnitOfTime.milliseconds,
+        UnitOfTime.seconds,
+        UnitOfTime.minutes,
+        UnitOfTime.hours,
+        UnitOfTime.days,
+        UnitOfTime.weeks,
+        UnitOfTime.months,
+        UnitOfTime.quarters,
+        UnitOfTime.years,
+    ];
+    const index = unitsInOrder.indexOf(unit);
+    if (index === -1) {
+        // return the original array if the unit is not found
+        return unitsInOrder;
+    }
+    return unitsInOrder.slice(index);
+};
+
 export type FieldTarget = {
     fieldId: string;
 };
@@ -39,8 +62,8 @@ export type FieldTarget = {
 export interface FilterRule<
     O = ConditionalOperator,
     T = FieldTarget,
-    V = any,
-    S = any,
+    V = AnyType,
+    S = AnyType,
 > extends ConditionalRule<O, V> {
     id: string;
     target: T;
@@ -62,8 +85,8 @@ export type DashboardTileTarget = DashboardFieldTarget | false;
 export type DashboardFilterRule<
     O = ConditionalOperator,
     T extends DashboardFieldTarget = DashboardFieldTarget,
-    V = any,
-    S = any,
+    V = AnyType,
+    S = AnyType,
 > = FilterRule<O, T, V, S> & {
     tileTargets?: Record<string, DashboardTileTarget>;
     label: undefined | string;
@@ -80,15 +103,26 @@ export type DashboardFilterRuleOverride = Omit<
     'tileTargets'
 >;
 
+export type DateFilterSettings = {
+    unitOfTime?: UnitOfTime;
+    completed?: boolean;
+};
+
 export type DateFilterRule = FilterRule<
     ConditionalOperator,
     unknown,
-    any,
-    {
-        unitOfTime?: UnitOfTime;
-        completed?: boolean;
-    }
+    AnyType,
+    DateFilterSettings
 >;
+
+export const isDateFilterRule = (
+    filter: FilterRule<
+        ConditionalOperator,
+        FieldTarget | unknown,
+        AnyType,
+        AnyType
+    >,
+): filter is DateFilterRule => 'unitOfTime' in (filter.settings || {});
 
 export type FilterGroupItem = FilterGroup | FilterRule;
 

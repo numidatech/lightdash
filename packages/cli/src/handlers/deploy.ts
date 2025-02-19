@@ -2,10 +2,12 @@ import {
     AuthorizationError,
     Explore,
     ExploreError,
-    friendlyName,
-    isExploreError,
     Project,
     ProjectType,
+    friendlyName,
+    isExploreError,
+    type LightdashProjectConfig,
+    type Tag,
 } from '@lightdash/common';
 import inquirer from 'inquirer';
 import path from 'path';
@@ -15,11 +17,13 @@ import { LightdashAnalytics } from '../analytics/analytics';
 import { getConfig, setProject } from '../config';
 import { getDbtContext } from '../dbt/context';
 import GlobalState from '../globalState';
+import { readAndLoadLightdashProjectConfig } from '../lightdash-config';
 import * as styles from '../styles';
 import { compile } from './compile';
 import { createProject } from './createProject';
 import { checkLightdashVersion, lightdashApi } from './dbt/apiClient';
 import { DbtCompileOptions } from './dbt/compile';
+import { getDbtVersion } from './dbt/getDbtVersion';
 
 type DeployHandlerOptions = DbtCompileOptions & {
     projectDir: string;
@@ -34,6 +38,27 @@ type DeployHandlerOptions = DbtCompileOptions & {
 
 type DeployArgs = DeployHandlerOptions & {
     projectUuid: string;
+};
+
+const replaceProjectYamlTags = async (
+    projectUuid: string,
+    lightdashProjectConfig: LightdashProjectConfig,
+) => {
+    const yamlTags: (Pick<Tag, 'name' | 'color'> & {
+        yamlReference: NonNullable<Tag['yamlReference']>;
+    })[] = Object.entries(
+        lightdashProjectConfig.spotlight?.categories ?? {},
+    ).map(([yamlReference, category]) => ({
+        yamlReference,
+        name: category.label,
+        color: category.color ?? 'gray',
+    }));
+
+    await lightdashApi<null>({
+        method: 'PUT',
+        url: `/api/v1/projects/${projectUuid}/tags/yaml`,
+        body: JSON.stringify(yamlTags),
+    });
 };
 
 export const deploy = async (
@@ -62,6 +87,13 @@ export const deploy = async (
             process.exit(1);
         }
     }
+
+    const lightdashProjectConfig = await readAndLoadLightdashProjectConfig(
+        path.resolve(options.projectDir),
+        options.projectUuid,
+    );
+
+    await replaceProjectYamlTags(options.projectUuid, lightdashProjectConfig);
 
     await lightdashApi<null>({
         method: 'PUT',
@@ -163,6 +195,7 @@ const createNewProject = async (
 
 export const deployHandler = async (options: DeployHandlerOptions) => {
     GlobalState.setVerbose(options.verbose);
+    const dbtVersion = await getDbtVersion();
     await checkLightdashVersion();
     const executionId = uuidv4();
     const explores = await compile(options);
@@ -200,11 +233,16 @@ export const deployHandler = async (options: DeployHandlerOptions) => {
     await deploy(explores, { ...options, projectUuid });
 
     const serverUrl = config.context?.serverUrl?.replace(/\/$/, '');
-    const displayUrl = options.create
+    let displayUrl = options.create
         ? `${serverUrl}/createProject/cli?projectUuid=${projectUuid}`
         : `${serverUrl}/projects/${projectUuid}/home`;
-
-    console.error(`${styles.bold('Successfully deployed project:')}`);
+    let successMessage = 'Successfully deployed project:';
+    if (dbtVersion.isDbtCloudCLI && options.create) {
+        successMessage =
+            'Successfully deployed project! Complete the setup by adding warehouse connection details here:';
+        displayUrl = `${serverUrl}/generalSettings/projectManagement/${projectUuid}/settings`;
+    }
+    console.error(`${styles.bold(successMessage)}`);
     console.error('');
     console.error(`      ${styles.bold(`⚡️ ${displayUrl}`)}`);
     console.error('');

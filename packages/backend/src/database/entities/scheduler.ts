@@ -1,4 +1,5 @@
 import {
+    AnyType,
     assertUnreachable,
     isEmailTarget,
     isSlackTarget,
@@ -25,13 +26,14 @@ export type SchedulerDb = {
     timezone: string | null;
     saved_chart_uuid: string | null;
     dashboard_uuid: string | null;
-    options: Record<string, any>;
+    options: Record<string, AnyType>;
     filters: string | null;
     custom_viewport_width: number | null;
     thresholds: string | null;
     enabled: boolean;
     notification_frequency: string | null;
     selected_tabs: string[] | null;
+    include_links: boolean;
 };
 
 export type ChartSchedulerDb = SchedulerDb & {
@@ -79,6 +81,7 @@ export type SchedulerTable = Knex.CompositeTableType<
           | 'thresholds'
           | 'notification_frequency'
           | 'selected_tabs'
+          | 'include_links'
       >
     | Pick<SchedulerDb, 'updated_at' | 'enabled'>
     | Pick<SchedulerDb, 'cron'>
@@ -106,7 +109,7 @@ export type SchedulerLogDb = {
     status: string;
     target: string | null;
     target_type: string | null;
-    details: Record<string, any> | null;
+    details: Record<string, AnyType> | null;
 };
 
 export type SchedulerLogTable = Knex.CompositeTableType<

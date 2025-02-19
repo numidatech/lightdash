@@ -13,11 +13,11 @@ import { IconArrowDownRight, IconArrowUpRight } from '@tabler/icons-react';
 import clamp from 'lodash/clamp';
 import { forwardRef, useMemo, type FC, type HTMLAttributes } from 'react';
 import { useResizeObserver } from '../../hooks/useResizeObserver';
-import MantineIcon from '../common/MantineIcon';
-import { TILE_HEADER_HEIGHT } from '../DashboardTiles/TileBase/TileBase.styles';
-import { isBigNumberVisualizationConfig } from '../LightdashVisualization/VisualizationBigNumberConfig';
-import { useVisualizationContext } from '../LightdashVisualization/VisualizationProvider';
+import { TILE_HEADER_HEIGHT } from '../DashboardTiles/TileBase/constants';
+import { isBigNumberVisualizationConfig } from '../LightdashVisualization/types';
+import { useVisualizationContext } from '../LightdashVisualization/useVisualizationContext';
 import { EmptyChart, LoadingChart } from '../SimpleChart';
+import MantineIcon from '../common/MantineIcon';
 import BigNumberContextMenu from './BigNumberContextMenu';
 
 interface SimpleStatisticsProps extends HTMLAttributes<HTMLDivElement> {
@@ -91,7 +91,7 @@ const SimpleStatistic: FC<SimpleStatisticsProps> = ({
 }) => {
     const theme = useMantineTheme();
 
-    const { resultsData, isLoading, visualizationConfig, isSqlRunner } =
+    const { resultsData, isLoading, visualizationConfig } =
         useVisualizationContext();
 
     const isBigNumber = isBigNumberVisualizationConfig(visualizationConfig);
@@ -188,11 +188,13 @@ const SimpleStatistic: FC<SimpleStatisticsProps> = ({
             component={Stack}
             spacing={0}
             pb={isDashboard && isTitleHidden ? 0 : TILE_HEADER_HEIGHT}
-            ref={(elem) => setRef(elem)}
+            ref={(elem) => {
+                setRef(elem);
+            }}
             {...wrapperProps}
         >
             <Flex style={{ flexShrink: 1 }}>
-                {minimal || isSqlRunner ? (
+                {minimal ? (
                     <BigNumberText fz={valueFontSize}>
                         {bigNumber}
                     </BigNumberText>

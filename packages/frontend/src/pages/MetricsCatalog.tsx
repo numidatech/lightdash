@@ -1,12 +1,19 @@
-import { MantineProvider } from '@mantine/core';
+import { MantineProvider, type MantineTheme } from '@mantine/core';
 import { type FC } from 'react';
 import { Provider } from 'react-redux';
 import Page from '../components/common/Page/Page';
 import { MetricsCatalogPanel } from '../features/metricsCatalog';
+import { MetricCatalogView } from '../features/metricsCatalog/types';
 import { store } from '../features/sqlRunner/store';
 import { getMantineThemeOverride } from '../mantineTheme';
 
-const MetricsCatalog: FC = () => {
+type MetricsCatalogProps = {
+    metricCatalogView?: MetricCatalogView;
+};
+
+const MetricsCatalog: FC<MetricsCatalogProps> = ({
+    metricCatalogView = MetricCatalogView.LIST,
+}) => {
     return (
         <Provider store={store}>
             <MantineProvider
@@ -16,6 +23,38 @@ const MetricsCatalog: FC = () => {
                     fontFamily: `Inter, ${
                         getMantineThemeOverride().fontFamily
                     }`,
+                    components: {
+                        ...getMantineThemeOverride().components,
+                        Tooltip: {
+                            defaultProps: {
+                                openDelay: 200,
+                                withinPortal: true,
+                                withArrow: true,
+                                multiline: true,
+                                maw: 250,
+                                fz: 'xs',
+                            },
+                        },
+                        Popover: {
+                            defaultProps: {
+                                withinPortal: true,
+                                radius: 'md',
+                                shadow: 'sm',
+                            },
+                        },
+                        Paper: {
+                            defaultProps: {
+                                radius: 'md',
+                                shadow: 'subtle',
+                                withBorder: true,
+                                sx: (theme: MantineTheme) => ({
+                                    '&[data-with-border]': {
+                                        border: `1px solid ${theme.colors.gray[2]}`,
+                                    },
+                                }),
+                            },
+                        },
+                    },
                 }}
             >
                 <Page
@@ -25,7 +64,9 @@ const MetricsCatalog: FC = () => {
                     withLargeContent
                     backgroundColor="#FAFAFA"
                 >
-                    <MetricsCatalogPanel />
+                    <MetricsCatalogPanel
+                        metricCatalogView={metricCatalogView}
+                    />
                 </Page>
             </MantineProvider>
         </Provider>

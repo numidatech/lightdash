@@ -1,9 +1,8 @@
 import { assertUnreachable } from '@lightdash/common';
 import { createStyles, type MantineTheme } from '@mantine/core';
 import { darken, rgba } from 'polished';
-import { CellType, SectionType } from '.';
-
-export const CELL_HEIGHT = 32;
+import { CELL_HEIGHT } from './constants';
+import { CellType, SectionType } from './types';
 
 const getBorderColor = (theme: MantineTheme) => theme.colors.gray[3];
 const getShadowColor = (theme: MantineTheme) => rgba(theme.black, 0.075);
@@ -25,6 +24,11 @@ export const useTableStyles = createStyles((theme) => {
                 transitionTimingFunction: 'ease-out',
 
                 boxShadow: `inset -1px -1px 0 0 ${borderColor}`,
+                '&:hover': {
+                    boxShadow: `inset -1px -1px 0 0 ${borderColor} !important`,
+                    backgroundColor: theme.colors.gray[1],
+                    transition: `background-color ${theme.other.transitionDuration}ms ${theme.other.transitionTimingFunction}`,
+                },
             },
 
             '> *:first-child > *:first-child > *': {
@@ -249,7 +253,7 @@ export const useTableCellStyles = createStyles<
                 textAlign: 'left',
                 whiteSpace: 'nowrap',
 
-                fontFamily: "'Inter', sans-serif",
+                fontFamily: theme.other.tableFont ?? "'Inter', sans-serif",
                 fontFeatureSettings: '"tnum"',
                 fontWeight: cellType === CellType.Head ? 500 : 400,
                 fontSize: 13,

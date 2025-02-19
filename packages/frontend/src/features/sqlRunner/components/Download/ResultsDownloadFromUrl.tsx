@@ -9,8 +9,8 @@ import {
 import { IconDownload } from '@tabler/icons-react';
 import { useState, type FC } from 'react';
 import MantineIcon from '../../../../components/common/MantineIcon';
+import { DEFAULT_SQL_LIMIT } from '../../constants';
 import { useDownloadResults } from '../../hooks/useDownloadResults';
-import { DEFAULT_SQL_LIMIT } from '../ContentPanel';
 
 type Props = {
     fileUrl: string | undefined;
@@ -50,14 +50,17 @@ export const ResultsDownloadFromUrl: FC<Props> = ({
                     <NumberInput
                         size="xs"
                         type="number"
-                        label="Limit"
+                        label="Row limit:"
+                        step={100}
+                        min={1}
+                        autoFocus
+                        required
                         defaultValue={DEFAULT_SQL_LIMIT}
                         onChange={(value: number) => setCustomLimit(value)}
                     />
                     <Button
                         size="xs"
                         ml="auto"
-                        leftIcon={<MantineIcon icon={IconDownload} />}
                         onClick={handleDownload}
                         loading={isLoading}
                     >

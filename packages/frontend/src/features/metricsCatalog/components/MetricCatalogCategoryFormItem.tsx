@@ -1,6 +1,7 @@
-import { type CatalogItem } from '@lightdash/common';
+import { getErrorMessage, type CatalogItem } from '@lightdash/common';
 import {
     ActionIcon,
+    Box,
     Button,
     Divider,
     Group,
@@ -11,16 +12,16 @@ import {
     TextInput,
     Tooltip,
     UnstyledButton,
-    useMantineTheme,
 } from '@mantine/core';
 import { useDisclosure, useHover } from '@mantine/hooks';
-import { IconDots, IconTrash } from '@tabler/icons-react';
+import { IconCode, IconDots, IconTrash } from '@tabler/icons-react';
 import { useCallback, useState, type FC } from 'react';
 import MantineIcon from '../../../components/common/MantineIcon';
 import { useAppSelector } from '../../sqlRunner/store/hooks';
 import { useDeleteTag, useUpdateTag } from '../hooks/useProjectTags';
-import { getTagColorSwatches } from '../utils/getRandomTagColor';
+import { TAG_COLOR_SWATCHES } from '../utils/getRandomTagColor';
 import { CatalogCategory } from './CatalogCategory';
+import { CatalogCategorySwatch } from './CatalogCategorySwatch';
 
 type EditPopoverProps = {
     hovered: boolean;
@@ -41,7 +42,6 @@ const EditPopover: FC<EditPopoverProps> = ({
     const [opened, { open, close }] = useDisclosure(false);
     const [editName, setEditName] = useState(category.name);
     const [editColor, setEditColor] = useState(category.color);
-    const colors = getTagColorSwatches(useMantineTheme().colors);
 
     const handleClose = useCallback(() => {
         close();
@@ -58,7 +58,7 @@ const EditPopover: FC<EditPopoverProps> = ({
                 });
                 close();
             } catch (error) {
-                console.error('Tag update failed:', error);
+                console.error(`Tag update failed: ${getErrorMessage(error)}`);
             }
         }
     }, [editColor, editName, projectUuid, category, updateTag, close]);
@@ -69,7 +69,7 @@ const EditPopover: FC<EditPopoverProps> = ({
                 deleteTag({ projectUuid, tagUuid: category.tagUuid });
                 close();
             } catch (error) {
-                console.error('Tag deletion failed:', error);
+                console.error(`Tag deletion failed: ${getErrorMessage(error)}`);
             }
         }
     }, [deleteTag, projectUuid, category, close]);
@@ -77,27 +77,28 @@ const EditPopover: FC<EditPopoverProps> = ({
     return (
         <Popover
             position="top"
-            shadow="lg"
             opened={opened}
-            trapFocus
-            radius="md"
             closeOnClickOutside
             width={200}
             onClose={handleClose}
-            withinPortal
+            trapFocus={opened}
         >
             <Popover.Target>
                 <ActionIcon
                     sx={{
                         visibility: hovered || opened ? 'visible' : 'hidden',
+                        '&:hover': {
+                            backgroundColor: 'white',
+                        },
                     }}
                     size="sm"
-                    onClick={(e) => {
+                    onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
                         e.stopPropagation();
                         e.preventDefault();
                         open();
                         onOpenChange?.(true);
                     }}
+                    tabIndex={-1}
                 >
                     <MantineIcon icon={IconDots} color="gray.6" size={14} />
                 </ActionIcon>
@@ -123,10 +124,10 @@ const EditPopover: FC<EditPopoverProps> = ({
                     />
 
                     <SimpleGrid cols={7} spacing="xs" verticalSpacing="xs">
-                        {colors.map((color) => (
-                            <CatalogCategory
+                        {TAG_COLOR_SWATCHES.map((color) => (
+                            <CatalogCategorySwatch
                                 key={color}
-                                category={{ name: '', color }}
+                                color={color}
                                 onClick={(e) => {
                                     e.stopPropagation();
                                     setEditColor(color);
@@ -181,14 +182,26 @@ type Props = {
     category: CatalogItem['categories'][number];
     onClick?: () => void;
     onSubPopoverChange?: (isOpen: boolean) => void;
+    canEdit: boolean;
 };
 
 export const MetricCatalogCategoryFormItem: FC<Props> = ({
     category,
     onClick,
     onSubPopoverChange,
+    canEdit,
 }) => {
     const { ref: hoverRef, hovered } = useHover<HTMLDivElement>();
+
+    const handleKeyDown = useCallback(
+        (e: React.KeyboardEvent<HTMLDivElement>) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                onClick?.();
+            }
+        },
+        [onClick],
+    );
 
     return (
         <Group
@@ -197,23 +210,53 @@ export const MetricCatalogCategoryFormItem: FC<Props> = ({
             py={3}
             pos="relative"
             position="apart"
+            tabIndex={0}
+            role="button"
+            onKeyDown={handleKeyDown}
             sx={(theme) => ({
-                borderRadius: theme.radius.sm,
-                '&:hover': { backgroundColor: theme.colors.gray[2] },
+                borderRadius: theme.radius.md,
+                outline: 'none',
+                '&:focus, &:hover': {
+                    backgroundColor: '#F8F9FA',
+                    transition: `background-color ${theme.other.transitionDuration}ms ${theme.other.transitionTimingFunction}`,
+                },
             })}
         >
             <UnstyledButton
                 onClick={onClick}
-                w="100%"
                 h="100%"
+                w="90%"
                 pos="absolute"
+                tabIndex={-1}
             />
             <CatalogCategory category={category} onClick={onClick} />
-            <EditPopover
-                hovered={hovered}
-                category={category}
-                onOpenChange={onSubPopoverChange}
-            />
+
+            {canEdit && (
+                <EditPopover
+                    hovered={hovered}
+                    category={category}
+                    onOpenChange={onSubPopoverChange}
+                />
+            )}
+
+            {!canEdit && (
+                <Tooltip
+                    variant="xs"
+                    maw={200}
+                    position="top"
+                    withinPortal
+                    label="This category was created in the .yml config and its properties cannot be edited"
+                >
+                    <Box
+                        p="xxs"
+                        sx={{
+                            visibility: hovered ? 'visible' : 'hidden',
+                        }}
+                    >
+                        <MantineIcon icon={IconCode} color="gray.6" size={14} />
+                    </Box>
+                </Tooltip>
+            )}
         </Group>
     );
 };

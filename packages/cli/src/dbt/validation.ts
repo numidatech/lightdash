@@ -2,15 +2,15 @@ import {
     DbtModelNode,
     DbtRawModelNode,
     ExploreError,
-    friendlyName,
     InlineError,
     InlineErrorType,
     ManifestValidator,
-    normaliseModelDatabase,
     SupportedDbtAdapter,
+    friendlyName,
+    normaliseModelDatabase,
+    type DbtManifestVersion,
 } from '@lightdash/common';
 import GlobalState from '../globalState';
-import { getDbtManifest } from './manifest';
 
 type DbtModelsGroupedByState = {
     valid: DbtModelNode[];
@@ -19,10 +19,10 @@ type DbtModelsGroupedByState = {
 };
 export const validateDbtModel = async (
     adapterType: string,
+    manifestVersion: DbtManifestVersion,
     models: DbtRawModelNode[],
 ): Promise<DbtModelsGroupedByState> => {
     GlobalState.debug(`> Validating ${models.length} models from dbt manifest`);
-    const manifestVersion = await getDbtManifest();
 
     GlobalState.debug(
         `> Validating models using dbt manifest version ${manifestVersion}`,

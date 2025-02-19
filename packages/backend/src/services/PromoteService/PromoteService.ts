@@ -4,6 +4,7 @@ import {
     ChartSummary,
     DashboardDAO,
     ForbiddenError,
+    getErrorMessage,
     isChartTile,
     NotFoundError,
     ParameterError,
@@ -131,10 +132,11 @@ export class PromoteService extends BaseService {
         });
     }
 
-    private async getPromoteCharts(
+    async getPromoteCharts(
         user: SessionUser,
         upstreamProjectUuid: string,
         chartUuid: string,
+        includeOrphanChartsWithinDashboard?: boolean,
     ): Promise<{
         promotedChart: PromotedChart;
         upstreamChart: UpstreamChart;
@@ -147,6 +149,7 @@ export class PromoteService extends BaseService {
         const upstreamCharts = await this.savedChartModel.find({
             projectUuid: upstreamProjectUuid,
             slug: savedChart.slug,
+            includeOrphanChartsWithinDashboard,
         });
         if (upstreamCharts.length > 1) {
             throw new AlreadyExistsError(
@@ -204,6 +207,7 @@ export class PromoteService extends BaseService {
                     subject('Space', {
                         organizationUuid,
                         projectUuid: upstreamContent.projectUuid,
+                        isPrivate: upstreamContent.space.isPrivate,
                         access: upstreamContent.access,
                     }),
                 )
@@ -330,7 +334,7 @@ export class PromoteService extends BaseService {
         PromoteService.checkPromoteSpacePermissions(user, upstreamChart);
     }
 
-    private static checkPromoteDashboardPermissions(
+    static checkPromoteDashboardPermissions(
         user: SessionUser,
         promotedDashboard: PromotedDashboard,
         upstreamDashboard: UpstreamDashboard,
@@ -525,11 +529,10 @@ export class PromoteService extends BaseService {
                                   slug: changeChart.slug,
                               };
                     return this.savedChartModel
-                        .create(
-                            changeChart.projectUuid,
-                            user.userUuid,
-                            chartData,
-                        )
+                        .create(changeChart.projectUuid, user.userUuid, {
+                            ...chartData,
+                            forceSlug: true,
+                        })
                         .then((chart) => ({
                             ...chart,
                             oldUuid: changeChart.oldUuid,
@@ -650,7 +653,7 @@ export class PromoteService extends BaseService {
                 'promote.error',
                 promotedChart,
                 upstreamChart,
-                e.message,
+                getErrorMessage(e),
             );
             throw e;
         }
@@ -743,7 +746,10 @@ export class PromoteService extends BaseService {
         // Update dashboard with new space if it was created
         const newDashboard = await this.dashboardModel.create(
             promotedDashboard.spaceUuid,
-            promotedDashboard,
+            {
+                ...promotedDashboard,
+                forceSlug: true,
+            },
             user,
             promotedDashboard.projectUuid,
         );
@@ -777,7 +783,7 @@ export class PromoteService extends BaseService {
         };
     }
 
-    private async updateDashboard(
+    async updateDashboard(
         user: SessionUser,
         promotionChanges: PromotionChanges,
     ): Promise<PromotionChanges> {
@@ -1037,6 +1043,7 @@ export class PromoteService extends BaseService {
         user: SessionUser,
         promotedDashboard: PromotedDashboard,
         upstreamDashboard: UpstreamDashboard,
+        includeOrphanChartsWithinDashboard?: boolean,
     ): Promise<
         [
             PromotionChanges,
@@ -1059,7 +1066,12 @@ export class PromoteService extends BaseService {
         );
 
         const chartPromises = chartUuids.map((chartUuid) =>
-            this.getPromoteCharts(user, upstreamProjectUuid, chartUuid),
+            this.getPromoteCharts(
+                user,
+                upstreamProjectUuid,
+                chartUuid,
+                includeOrphanChartsWithinDashboard,
+            ),
         );
         const charts = await Promise.all(chartPromises);
 
@@ -1297,7 +1309,7 @@ export class PromoteService extends BaseService {
                 'promote.error',
                 promotedDashboard,
                 upstreamDashboard,
-                e.message,
+                getErrorMessage(e),
             );
             throw e;
         }

@@ -1,13 +1,16 @@
 import {
-    applyCustomFormat,
     ComparisonDiffTypes,
     ComparisonFormatTypes,
     CustomFormatType,
+    applyCustomFormat,
     formatItemValue,
+    formatValueWithExpression,
     friendlyName,
     getCustomFormatFromLegacy,
     getItemId,
     getItemLabel,
+    hasFormatOptions,
+    hasValidFormatExpression,
     isField,
     isMetric,
     isNumericItem,
@@ -21,7 +24,7 @@ import {
 } from '@lightdash/common';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
-const calculateComparisonValue = (
+export const calculateComparisonValue = (
     a: number,
     b: number,
     format: ComparisonFormatTypes | undefined,
@@ -251,6 +254,25 @@ const useBigNumberConfig = (
             );
         } else if (item !== undefined && isTableCalculation(item)) {
             return formatItemValue(item, firstRowValueRaw);
+        } else if (item !== undefined && hasValidFormatExpression(item)) {
+            return formatValueWithExpression(item.format, firstRowValueRaw);
+        } else if (item !== undefined && hasFormatOptions(item)) {
+            // Custom metrics case
+
+            // If the custom metric has no format, but the big number has
+            // compact, treat the custom metric as a number
+            const type =
+                item.formatOptions?.type === CustomFormatType.DEFAULT
+                    ? bigNumberStyle
+                        ? CustomFormatType.NUMBER
+                        : CustomFormatType.DEFAULT
+                    : item.formatOptions?.type;
+
+            return applyCustomFormat(firstRowValueRaw, {
+                ...item.formatOptions,
+                type,
+                compact: bigNumberStyle ?? item.formatOptions?.compact,
+            });
         } else {
             return applyCustomFormat(
                 firstRowValueRaw,

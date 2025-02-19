@@ -1,7 +1,8 @@
 import {
+    FeatureFlags,
+    OrganizationMemberRole,
     getRoleDescription,
     isOrganizationMemberProfileWithGroups,
-    OrganizationMemberRole,
     type OrganizationMemberProfile,
     type OrganizationMemberProfileWithGroups,
 } from '@lightdash/common';
@@ -9,12 +10,14 @@ import {
     ActionIcon,
     Anchor,
     Badge,
+    Box,
     Button,
     Card,
     Flex,
     Group,
     HoverCard,
     List,
+    LoadingOverlay,
     Modal,
     Pagination,
     Paper,
@@ -37,21 +40,21 @@ import {
 import capitalize from 'lodash/capitalize';
 import { useEffect, useMemo, useState, type FC } from 'react';
 import { useTableStyles } from '../../../hooks/styles/useTableStyles';
+import { useFeatureFlag } from '../../../hooks/useFeatureFlagEnabled';
 import { useCreateInviteLinkMutation } from '../../../hooks/useInviteLink';
 import {
     useDeleteOrganizationUserMutation,
     usePaginatedOrganizationUsers,
     useUpdateUserMutation,
 } from '../../../hooks/useOrganizationUsers';
-import { useApp } from '../../../providers/AppProvider';
-import { useTracking } from '../../../providers/TrackingProvider';
+import useApp from '../../../providers/App/useApp';
+import useTracking from '../../../providers/Tracking/useTracking';
 import { EventName } from '../../../types/Events';
-import LoadingState from '../../common/LoadingState';
 import MantineIcon from '../../common/MantineIcon';
 import { SettingsCard } from '../../common/Settings/SettingsCard';
-import { DEFAULT_PAGE_SIZE } from '../../common/Table/types';
-import InvitesModal from './InvitesModal';
+import { DEFAULT_PAGE_SIZE } from '../../common/Table/constants';
 import InviteSuccess from './InviteSuccess';
+import InvitesModal from './InvitesModal';
 
 const UserNameDisplay: FC<{
     user: OrganizationMemberProfile;
@@ -343,7 +346,10 @@ const UserListItem: FC<{
 
 const UsersView: FC = () => {
     const [showInviteModal, setShowInviteModal] = useState(false);
-    const { user, health } = useApp();
+    const { user } = useApp();
+    const { data: UserGroupsFeatureFlag } = useFeatureFlag(
+        FeatureFlags.UserGroupsEnabled,
+    );
     const { classes } = useTableStyles();
     const [page, setPage] = useState(1);
     const [search, setSearch] = useState('');
@@ -375,13 +381,9 @@ const UsersView: FC = () => {
         return paginatedUsers?.pagination;
     }, [paginatedUsers]);
 
-    if (!user.data || !health.data) return null;
+    if (!user.data || !UserGroupsFeatureFlag) return null;
 
-    const isGroupManagementEnabled = health.data.hasGroups;
-
-    if (isLoadingUsers) {
-        return <LoadingState title="Loading users" size="md" />;
-    }
+    const isGroupManagementEnabled = UserGroupsFeatureFlag?.enabled;
 
     return (
         <Stack spacing="xs">
@@ -432,8 +434,10 @@ const UsersView: FC = () => {
                             )}
                         </tr>
                     </thead>
-                    <tbody>
-                        {organizationUsers && organizationUsers.length ? (
+                    <tbody style={{ position: 'relative' }}>
+                        {!isLoadingUsers &&
+                        organizationUsers &&
+                        organizationUsers.length ? (
                             organizationUsers.map((orgUser) => (
                                 <UserListItem
                                     key={orgUser.email}
@@ -448,6 +452,17 @@ const UsersView: FC = () => {
                                     }
                                 />
                             ))
+                        ) : isLoadingUsers ? (
+                            <tr>
+                                <td colSpan={3}>
+                                    <Box py="lg">
+                                        <LoadingOverlay
+                                            visible={true}
+                                            transitionDuration={200}
+                                        />
+                                    </Box>
+                                </td>
+                            </tr>
                         ) : (
                             <tr>
                                 <td colSpan={3}>

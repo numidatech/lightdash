@@ -1,77 +1,87 @@
 import { type CatalogField } from '@lightdash/common';
-import { Button } from '@mantine/core';
+import { Button, Tooltip } from '@mantine/core';
 import { type MRT_Row } from 'mantine-react-table';
-import { useState } from 'react';
-import { useExplore } from '../../../hooks/useExplore';
-import {
-    createMetricPreviewUnsavedChartVersion,
-    getExplorerUrlFromCreateSavedChartVersion,
-} from '../../../hooks/useExplorerRoute';
-import { useTracking } from '../../../providers/TrackingProvider';
+import { useCallback } from 'react';
+import { useLocation, useNavigate } from 'react-router';
+import useTracking from '../../../providers/Tracking/useTracking';
 import { EventName } from '../../../types/Events';
-import { useAppSelector } from '../../sqlRunner/store/hooks';
+import { useAppDispatch, useAppSelector } from '../../sqlRunner/store/hooks';
+import { toggleMetricExploreModal } from '../store/metricsCatalogSlice';
 
 type Props = {
     row: MRT_Row<CatalogField>;
 };
 
 export const ExploreMetricButton = ({ row }: Props) => {
-    const [isGeneratingPreviewUrl, setIsGeneratingPreviewUrl] = useState(false);
+    const dispatch = useAppDispatch();
+    const navigate = useNavigate();
+    const location = useLocation();
+
     const projectUuid = useAppSelector(
         (state) => state.metricsCatalog.projectUuid,
     );
     const organizationUuid = useAppSelector(
         (state) => state.metricsCatalog.organizationUuid,
     );
-    const [currentTableName, setCurrentTableName] = useState<string>();
+    const userUuid = useAppSelector(
+        (state) => state.metricsCatalog.user?.userUuid,
+    );
+
     const { track } = useTracking();
-    const { isFetching } = useExplore(currentTableName, {
-        onSuccess(explore) {
-            if (!!currentTableName && explore && projectUuid) {
-                setIsGeneratingPreviewUrl(true);
-                const unsavedChartVersion =
-                    createMetricPreviewUnsavedChartVersion(
-                        row.original,
-                        explore,
-                    );
 
-                const { pathname, search } =
-                    getExplorerUrlFromCreateSavedChartVersion(
-                        projectUuid,
-                        unsavedChartVersion,
-                    );
-                const url = new URL(pathname, window.location.origin);
-                url.search = new URLSearchParams(search).toString();
-
-                window.open(url.href, '_blank');
-                setIsGeneratingPreviewUrl(false);
-                setCurrentTableName(undefined);
-            }
-        },
-    });
-
-    const handleExploreClick = () => {
+    const handleExploreClick = useCallback(() => {
         track({
             name: EventName.METRICS_CATALOG_EXPLORE_CLICKED,
             properties: {
+                userId: userUuid,
                 organizationId: organizationUuid,
                 projectId: projectUuid,
                 metricName: row.original.name,
                 tableName: row.original.tableName,
             },
         });
-        setCurrentTableName(row.original.tableName);
-    };
+
+        void navigate({
+            pathname: `/projects/${projectUuid}/metrics/peek/${row.original.tableName}/${row.original.name}`,
+            search: location.search,
+        });
+
+        dispatch(
+            toggleMetricExploreModal({
+                name: row.original.name,
+                tableName: row.original.tableName,
+            }),
+        );
+    }, [
+        dispatch,
+        location,
+        navigate,
+        organizationUuid,
+        projectUuid,
+        row.original.name,
+        row.original.tableName,
+        track,
+        userUuid,
+    ]);
 
     return (
-        <Button
-            size="xs"
-            compact
-            variant="subtle"
-            onClick={handleExploreClick}
-            loading={isFetching || isGeneratingPreviewUrl}
+        <Tooltip
+            withinPortal
+            variant="xs"
+            label="Click to view this in the Metrics Explorer"
         >
-            Explore
-        </Button>
+            <Button
+                compact
+                variant="darkPrimary"
+                onClick={handleExploreClick}
+                py="xxs"
+                px={10}
+                h={32}
+                fz="sm"
+                fw={500}
+            >
+                Explore
+            </Button>
+        </Tooltip>
     );
 };

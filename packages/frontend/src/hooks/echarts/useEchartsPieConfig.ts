@@ -1,13 +1,15 @@
 import {
     formatItemValue,
+    PieChartLegendLabelMaxLengthDefault,
+    PieChartTooltipLabelMaxLength,
     type ResultRow,
     type ResultValue,
 } from '@lightdash/common';
+import { useMantineTheme } from '@mantine/core';
 import { type EChartsOption, type PieSeriesOption } from 'echarts';
 import { useMemo } from 'react';
-import { isPieVisualizationConfig } from '../../components/LightdashVisualization/VisualizationConfigPie';
-import { useVisualizationContext } from '../../components/LightdashVisualization/VisualizationProvider';
-
+import { isPieVisualizationConfig } from '../../components/LightdashVisualization/types';
+import { useVisualizationContext } from '../../components/LightdashVisualization/useVisualizationContext';
 export type PieSeriesDataPoint = NonNullable<
     PieSeriesOption['data']
 >[number] & {
@@ -20,6 +22,8 @@ export type PieSeriesDataPoint = NonNullable<
 const useEchartsPieConfig = (isInDashboard: boolean) => {
     const { visualizationConfig, itemsMap, getGroupColor, minimal } =
         useVisualizationContext();
+
+    const theme = useMantineTheme();
 
     const chartConfig = useMemo(() => {
         if (!isPieVisualizationConfig(visualizationConfig)) return;
@@ -137,7 +141,15 @@ const useEchartsPieConfig = (isInDashboard: boolean) => {
                         value,
                     );
 
-                    return `${marker} <b>${name}</b><br />${percent}% - ${formattedValue}`;
+                    const truncatedName =
+                        name.length > PieChartTooltipLabelMaxLength
+                            ? `${name.slice(
+                                  0,
+                                  PieChartTooltipLabelMaxLength,
+                              )}...`
+                            : name;
+
+                    return `${marker} <b>${truncatedName}</b><br />${percent}% - ${formattedValue}`;
                 },
             },
         };
@@ -147,14 +159,32 @@ const useEchartsPieConfig = (isInDashboard: boolean) => {
         if (!chartConfig || !pieSeriesOption) return;
 
         const {
-            validConfig: { showLegend, legendPosition },
+            validConfig: { showLegend, legendPosition, legendMaxItemLength },
         } = chartConfig;
 
         return {
+            textStyle: {
+                fontFamily: theme?.other?.chartFont as string | undefined,
+            },
             legend: {
                 show: showLegend,
                 orient: legendPosition,
                 type: 'scroll',
+                formatter: (name) => {
+                    return name.length >
+                        (legendMaxItemLength ??
+                            PieChartLegendLabelMaxLengthDefault)
+                        ? `${name.slice(
+                              0,
+                              legendMaxItemLength ??
+                                  PieChartLegendLabelMaxLengthDefault,
+                          )}...`
+                        : name;
+                },
+                tooltip: {
+                    show: true, // show tooltip for truncated legend items
+                    trigger: 'item',
+                },
                 ...(legendPosition === 'vertical'
                     ? {
                           left: 'left',
@@ -173,7 +203,13 @@ const useEchartsPieConfig = (isInDashboard: boolean) => {
             series: [pieSeriesOption],
             animation: !(isInDashboard || minimal),
         };
-    }, [chartConfig, isInDashboard, minimal, pieSeriesOption]);
+    }, [
+        chartConfig,
+        isInDashboard,
+        minimal,
+        pieSeriesOption,
+        theme?.other?.chartFont,
+    ]);
 
     if (!itemsMap) return;
     if (!eChartsOption || !pieSeriesOption) return;

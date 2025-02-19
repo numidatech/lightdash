@@ -11,11 +11,11 @@ import { useHotkeys, useOs } from '@mantine/hooks';
 import { IconPlayerPlay } from '@tabler/icons-react';
 import { memo, useCallback, type FC } from 'react';
 import useHealth from '../hooks/health/useHealth';
-import { useExplorerContext } from '../providers/ExplorerProvider';
-import { useTracking } from '../providers/TrackingProvider';
+import useExplorerContext from '../providers/Explorer/useExplorerContext';
+import useTracking from '../providers/Tracking/useTracking';
 import { EventName } from '../types/Events';
-import MantineIcon from './common/MantineIcon';
 import LimitButton from './LimitButton';
+import MantineIcon from './common/MantineIcon';
 
 export const RefreshButton: FC<{ size?: MantineSize }> = memo(({ size }) => {
     const health = useHealth();

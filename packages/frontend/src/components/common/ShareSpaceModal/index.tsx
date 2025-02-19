@@ -12,8 +12,8 @@ import {
 } from '@mantine/core';
 import { IconFolderShare, IconLock, IconUsers } from '@tabler/icons-react';
 import { useState, type FC } from 'react';
-import { Link } from 'react-router-dom';
-import { useApp } from '../../../providers/AppProvider';
+import { Link } from 'react-router';
+import useApp from '../../../providers/App/useApp';
 import MantineIcon from '../MantineIcon';
 import { ShareSpaceAccessType } from './ShareSpaceAccessType';
 import { ShareSpaceAddUser } from './ShareSpaceAddUser';

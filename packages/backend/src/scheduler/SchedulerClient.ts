@@ -1,36 +1,41 @@
 import {
+    AnyType,
     CompileProjectPayload,
     CreateSchedulerAndTargets,
     CreateSchedulerTarget,
     DownloadCsvPayload,
     EmailNotificationPayload,
-    getSchedulerTargetUuid,
-    getSchedulerUuid,
     GsheetsNotificationPayload,
-    hasSchedulerUuid,
-    indexCatalogJob,
-    isCreateSchedulerSlackTarget,
+    JobPriority,
     NotificationPayloadBase,
+    ReplaceCustomFieldsPayload,
+    ReplaceCustomFieldsTask,
     ScheduledDeliveryPayload,
     ScheduledJobs,
     Scheduler,
     SchedulerAndTargets,
     SchedulerFormat,
     SchedulerJobStatus,
-    semanticLayerQueryJob,
     SemanticLayerQueryPayload,
     SlackNotificationPayload,
-    sqlRunnerJob,
     SqlRunnerPayload,
-    sqlRunnerPivotQueryJob,
     SqlRunnerPivotQueryPayload,
     UploadMetricGsheetPayload,
     ValidateProjectPayload,
+    getSchedulerTargetUuid,
+    getSchedulerUuid,
+    hasSchedulerUuid,
+    indexCatalogJob,
+    isCreateSchedulerSlackTarget,
+    semanticLayerQueryJob,
+    sqlRunnerJob,
+    sqlRunnerPivotQueryJob,
+    type SchedulerCreateProjectWithCompilePayload,
     type SchedulerIndexCatalogJobPayload,
 } from '@lightdash/common';
 import * as Sentry from '@sentry/node';
 import { getSchedule, stringToArray } from 'cron-converter';
-import { makeWorkerUtils, WorkerUtils } from 'graphile-worker';
+import { WorkerUtils, makeWorkerUtils } from 'graphile-worker';
 import moment from 'moment';
 import { nanoid } from 'nanoid';
 import { LightdashAnalytics } from '../analytics/LightdashAnalytics';
@@ -94,7 +99,7 @@ export class SchedulerClient {
             connectionString: lightdashConfig.database.connectionUri,
         })
             .then((utils) => utils)
-            .catch((e: any) => {
+            .catch((e: AnyType) => {
                 Logger.error('Error migrating graphile worker', e);
                 process.exit(1);
             });
@@ -104,7 +109,7 @@ export class SchedulerClient {
         task: string,
         jobId: string,
         runAt: Date,
-        payload: any,
+        payload: AnyType,
         funct: () => Promise<void>,
     ) {
         const { traceHeader, baggageHeader, sentryMessageId } = payload;
@@ -166,8 +171,9 @@ export class SchedulerClient {
     private static async addJob(
         graphileClient: WorkerUtils,
         identifier: string,
-        payload: any,
+        payload: AnyType,
         scheduledAt: Date,
+        priority: JobPriority,
         maxAttempts: number = SCHEDULED_JOB_MAX_ATTEMPTS,
     ) {
         const messageId = nanoid();
@@ -198,6 +204,7 @@ export class SchedulerClient {
                     {
                         runAt: scheduledAt,
                         maxAttempts,
+                        priority,
                     },
                 );
 
@@ -281,6 +288,7 @@ export class SchedulerClient {
             'handleScheduledDelivery',
             payload,
             date,
+            JobPriority.LOW,
             maxAttempts,
         );
         await this.schedulerModel.logSchedulerJob({
@@ -320,6 +328,7 @@ export class SchedulerClient {
             'uploadGsheets',
             payload,
             date,
+            JobPriority.LOW,
         );
 
         this.analytics.track({
@@ -403,6 +412,7 @@ export class SchedulerClient {
             identifier,
             payload,
             date,
+            JobPriority.LOW,
         );
 
         this.analytics.track({
@@ -423,13 +433,20 @@ export class SchedulerClient {
     async generateDailyJobsForScheduler(
         scheduler: SchedulerAndTargets,
         defaultTimezone: string,
+        // startingDateTime specifies that time after which to generate jobs.
+        // If not provided, it will generate job after now, which is the desired
+        // behavior for new schedulers and updates.
+        startingDateTime?: Date,
     ): Promise<void> {
         if (scheduler.enabled === false) return; // Do not add jobs for disabled schedulers
 
-        const dates = getDailyDatesFromCron({
-            cron: scheduler.cron,
-            timezone: scheduler.timezone ?? defaultTimezone,
-        });
+        const dates = getDailyDatesFromCron(
+            {
+                cron: scheduler.cron,
+                timezone: scheduler.timezone || defaultTimezone,
+            },
+            startingDateTime,
+        );
 
         try {
             const promises = dates.map((date: Date) =>
@@ -454,7 +471,7 @@ export class SchedulerClient {
                     status: SchedulerJobStatus.SCHEDULED,
                 });
             });
-        } catch (err: any) {
+        } catch (err: AnyType) {
             Logger.error(
                 `Unable to schedule job for scheduler ${scheduler.schedulerUuid}`,
                 err,
@@ -502,7 +519,7 @@ export class SchedulerClient {
                 `Creating ${promises.length} notification jobs for scheduler ${schedulerUuid}`,
             );
             return await Promise.all(promises);
-        } catch (err: any) {
+        } catch (err: AnyType) {
             Logger.error(
                 `Unable to schedule notification job for scheduler ${schedulerUuid}`,
                 err,
@@ -519,6 +536,7 @@ export class SchedulerClient {
             'downloadCsv',
             payload,
             now,
+            JobPriority.HIGH,
         );
 
         await this.schedulerModel.logSchedulerJob({
@@ -545,6 +563,7 @@ export class SchedulerClient {
             'uploadGsheetFromQuery',
             payload,
             now,
+            JobPriority.LOW,
         );
 
         await this.schedulerModel.logSchedulerJob({
@@ -571,6 +590,7 @@ export class SchedulerClient {
             'validateProject',
             payload,
             now,
+            JobPriority.MEDIUM,
         );
 
         await this.schedulerModel.logSchedulerJob({
@@ -597,6 +617,7 @@ export class SchedulerClient {
             semanticLayerQueryJob,
             payload,
             now,
+            JobPriority.HIGH,
         );
         await this.schedulerModel.logSchedulerJob({
             task: semanticLayerQueryJob,
@@ -619,6 +640,7 @@ export class SchedulerClient {
             sqlRunnerJob,
             payload,
             now,
+            JobPriority.HIGH,
         );
         await this.schedulerModel.logSchedulerJob({
             task: sqlRunnerJob,
@@ -641,6 +663,7 @@ export class SchedulerClient {
             sqlRunnerPivotQueryJob,
             payload,
             now,
+            JobPriority.HIGH,
         );
 
         await this.schedulerModel.logSchedulerJob({
@@ -664,6 +687,8 @@ export class SchedulerClient {
             'compileProject',
             payload,
             now,
+            JobPriority.HIGH,
+            1,
         );
 
         await this.schedulerModel.logSchedulerJob({
@@ -684,6 +709,36 @@ export class SchedulerClient {
         return { jobId };
     }
 
+    async createProjectWithCompile(
+        payload: SchedulerCreateProjectWithCompilePayload,
+    ) {
+        const graphileClient = await this.graphileUtils;
+        const now = new Date();
+
+        const jobId = await SchedulerClient.addJob(
+            graphileClient,
+            'createProjectWithCompile',
+            payload,
+            now,
+            1,
+        );
+
+        await this.schedulerModel.logSchedulerJob({
+            task: 'createProjectWithCompile',
+            jobId,
+            scheduledTime: now,
+            status: SchedulerJobStatus.SCHEDULED,
+            details: {
+                createdByUserUuid: payload.createdByUserUuid,
+                organizationUuid: payload.organizationUuid,
+                requestMethod: payload.requestMethod,
+                isPreview: payload.isPreview,
+            },
+        });
+
+        return { jobId };
+    }
+
     async testAndCompileProject(payload: CompileProjectPayload) {
         const graphileClient = await this.graphileUtils;
         const now = new Date();
@@ -692,6 +747,8 @@ export class SchedulerClient {
             'testAndCompileProject',
             payload,
             now,
+            JobPriority.HIGH,
+            1,
         );
 
         await this.schedulerModel.logSchedulerJob({
@@ -712,6 +769,33 @@ export class SchedulerClient {
         return { jobId };
     }
 
+    async replaceCustomFields(payload: ReplaceCustomFieldsPayload) {
+        const graphileClient = await this.graphileUtils;
+        const now = new Date();
+        const jobId = await SchedulerClient.addJob(
+            graphileClient,
+            ReplaceCustomFieldsTask,
+            payload,
+            now,
+            JobPriority.LOW,
+            1,
+        );
+
+        await this.schedulerModel.logSchedulerJob({
+            task: ReplaceCustomFieldsTask,
+            jobId,
+            scheduledTime: now,
+            status: SchedulerJobStatus.SCHEDULED,
+            details: {
+                createdByUserUuid: payload.createdByUserUuid,
+                organizationUuid: payload.organizationUuid,
+                projectUuid: payload.projectUuid,
+            },
+        });
+
+        return { jobId };
+    }
+
     // Indexes catalog and calculates chart usages - for example, metric_1 is used by 2 charts, so its chart_usage will be 2
     async indexCatalog(payload: SchedulerIndexCatalogJobPayload) {
         const graphileClient = await this.graphileUtils;
@@ -721,6 +805,7 @@ export class SchedulerClient {
             indexCatalogJob,
             payload,
             now,
+            JobPriority.MEDIUM,
         );
         await this.schedulerModel.logSchedulerJob({
             task: indexCatalogJob,

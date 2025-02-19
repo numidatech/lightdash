@@ -23,10 +23,13 @@ lightdash_dev.yml
 
 # production
 /packages/frontend/build
+/packages/frontend/dist
 /packages/common/dist
 /packages/backend/dist
 /packages/cli/dist
 /packages/warehouses/dist
+/packages/sdk/dist
+/packages/sdk-test-app/dist
 
 # misc
 .DS_Store
@@ -51,9 +54,6 @@ package-lock.json
 /dbt
 /profile*
 
-# docs
-/docs/build
-/docs/.docusaurus
 
 # credentials
 credentials.json
@@ -68,3 +68,6 @@ logs/
 
 # dangerfile
 dangerfile.development.ts
+
+# Charts as code
+lightdash

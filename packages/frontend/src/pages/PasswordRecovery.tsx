@@ -1,10 +1,9 @@
 import { Card, Image, Stack } from '@mantine/core';
 import { type FC } from 'react';
-import { Redirect } from 'react-router-dom';
-
-import Page from '../components/common/Page/Page';
+import { Navigate } from 'react-router';
 import PageSpinner from '../components/PageSpinner';
-import { useApp } from '../providers/AppProvider';
+import Page from '../components/common/Page/Page';
+import useApp from '../providers/App/useApp';
 import LightdashLogo from '../svgs/lightdash-black.svg';
 import { PasswordRecoveryForm } from './PasswordRecoveryForm';
 
@@ -16,7 +15,7 @@ const PasswordRecovery: FC = () => {
     }
 
     if (health.status === 'success' && health.data?.isAuthenticated) {
-        return <Redirect to={{ pathname: '/' }} />;
+        return <Navigate to={{ pathname: '/' }} />;
     }
 
     return (

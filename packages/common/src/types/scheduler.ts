@@ -1,7 +1,9 @@
 import assertUnreachable from '../utils/assertUnreachable';
+import { type AnyType } from './any';
 import { type Explore, type ExploreError } from './explore';
 import { type DashboardFilterRule } from './filter';
 import { type MetricQuery } from './metricQuery';
+import { type PivotConfig } from './pivot';
 import { type ValidationTarget } from './validation';
 
 export type SchedulerCsvOptions = {
@@ -18,6 +20,7 @@ export type SchedulerGsheetsOptions = {
     gdriveName: string;
     gdriveOrganizationName: string;
     url: string;
+    tabName?: string;
 };
 export type SchedulerOptions =
     | SchedulerCsvOptions
@@ -37,6 +40,16 @@ export enum SchedulerFormat {
     GSHEETS = 'gsheets',
 }
 
+export enum JobPriority {
+    HIGH = 0, // UI-waiting jobs (queries, download csv, compile)
+    MEDIUM = 1, // Related jobs (validate/catalogindex)
+    LOW = 2, // Background jobs (scheduled deliveries, sheets sync)
+}
+
+type ReplaceCustomFieldsTaskType = 'replaceCustomFields';
+export const ReplaceCustomFieldsTask: ReplaceCustomFieldsTaskType =
+    'replaceCustomFields';
+
 export type SchedulerLog = {
     task:
         | 'handleScheduledDelivery'
@@ -45,12 +58,14 @@ export type SchedulerLog = {
         | 'uploadGsheets'
         | 'downloadCsv'
         | 'uploadGsheetFromQuery'
+        | 'createProjectWithCompile'
         | 'compileProject'
         | 'testAndCompileProject'
         | 'validateProject'
         | 'sqlRunner'
         | 'sqlRunnerPivotQuery'
         | 'semanticLayer'
+        | ReplaceCustomFieldsTaskType
         | 'indexCatalog';
     schedulerUuid?: string;
     jobId: string;
@@ -60,7 +75,7 @@ export type SchedulerLog = {
     status: SchedulerJobStatus;
     target?: string;
     targetType?: 'email' | 'slack' | 'gsheets';
-    details?: Record<string, any>;
+    details?: Record<string, AnyType>;
 };
 
 export type CreateSchedulerLog = Omit<SchedulerLog, 'createdAt'>;
@@ -122,6 +137,7 @@ export type SchedulerBase = {
     thresholds?: ThresholdOptions[]; // it can ben an array of AND conditions
     enabled: boolean;
     notificationFrequency?: NotificationFrequency;
+    includeLinks: boolean;
 };
 
 export type ChartScheduler = SchedulerBase & {
@@ -216,6 +232,7 @@ export type UpdateSchedulerAndTargets = Pick<
     | 'options'
     | 'thresholds'
     | 'notificationFrequency'
+    | 'includeLinks'
 > &
     Pick<DashboardScheduler, 'filters' | 'customViewportWidth'> & {
         targets: Array<
@@ -392,6 +409,7 @@ export type DownloadCsvPayload = {
     hiddenFields: string[] | undefined;
     chartName: string | undefined;
     fromSavedChart: boolean;
+    pivotConfig?: PivotConfig;
 };
 
 export type ApiCsvUrlResponse = {
@@ -403,6 +421,15 @@ export type ApiCsvUrlResponse = {
     };
 };
 
+export type SchedulerCreateProjectWithCompilePayload = {
+    createdByUserUuid: string;
+    organizationUuid: string;
+    requestMethod: string;
+    isPreview: boolean;
+    data: string; // base64 string (CreateProject)
+    jobUuid: string;
+};
+
 export type CompileProjectPayload = {
     createdByUserUuid: string;
     organizationUuid: string;
@@ -410,6 +437,12 @@ export type CompileProjectPayload = {
     requestMethod: string;
     jobUuid: string;
     isPreview: boolean;
+};
+
+export type ReplaceCustomFieldsPayload = {
+    createdByUserUuid: string;
+    organizationUuid: string;
+    projectUuid: string;
 };
 
 export type ValidateProjectPayload = {
@@ -432,7 +465,7 @@ export type ApiJobStatusResponse = {
     status: 'ok';
     results: {
         status: SchedulerJobStatus;
-        details: Record<string, any> | null;
+        details: Record<string, AnyType> | null;
     };
 };
 

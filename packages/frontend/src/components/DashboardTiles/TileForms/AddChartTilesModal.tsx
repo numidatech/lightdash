@@ -1,8 +1,8 @@
 import {
-    assertUnreachable,
     ChartKind,
     ChartSourceType,
     DashboardTileTypes,
+    assertUnreachable,
     defaultTileSize,
     type ChartContent,
     type Dashboard,
@@ -10,22 +10,35 @@ import {
 import {
     Button,
     Flex,
-    getDefaultZIndex,
     Group,
+    Loader,
     Modal,
     MultiSelect,
+    ScrollArea,
     Stack,
     Text,
     Title,
     Tooltip,
+    getDefaultZIndex,
+    type ScrollAreaProps,
 } from '@mantine/core';
 import { useForm } from '@mantine/form';
+import { useDebouncedValue } from '@mantine/hooks';
 import { IconChartAreaLine } from '@tabler/icons-react';
-import React, { forwardRef, useCallback, useMemo, type FC } from 'react';
-import { useParams } from 'react-router-dom';
+import { uniqBy } from 'lodash';
+import React, {
+    forwardRef,
+    useCallback,
+    useEffect,
+    useMemo,
+    useRef,
+    useState,
+    type FC,
+} from 'react';
+import { useParams } from 'react-router';
 import { v4 as uuid4 } from 'uuid';
 import { useChartSummariesV2 } from '../../../hooks/useChartSummariesV2';
-import { useDashboardContext } from '../../../providers/DashboardProvider';
+import useDashboardContext from '../../../providers/Dashboard/useDashboardContext';
 import MantineIcon from '../../common/MantineIcon';
 import { ChartIcon } from '../../common/ResourceIcon';
 
@@ -39,11 +52,19 @@ interface ItemProps extends React.ComponentPropsWithoutRef<'div'> {
     chartKind: ChartKind;
     tooltipLabel?: string;
     disabled?: boolean;
+    selected?: boolean;
 }
 
 const SelectItem = forwardRef<HTMLDivElement, ItemProps>(
     (
-        { label, tooltipLabel, chartKind, disabled, ...others }: ItemProps,
+        {
+            label,
+            tooltipLabel,
+            chartKind,
+            disabled,
+            selected,
+            ...others
+        }: ItemProps,
         ref,
     ) => (
         <div ref={ref} {...others}>
@@ -60,7 +81,13 @@ const SelectItem = forwardRef<HTMLDivElement, ItemProps>(
                             color={disabled ? 'gray.5' : undefined}
                         />
                         <Text
-                            c={disabled ? 'dimmed' : 'gray.8'}
+                            c={
+                                disabled
+                                    ? 'dimmed'
+                                    : selected
+                                    ? 'gray.0'
+                                    : 'gray.8'
+                            }
                             fw={500}
                             fz="xs"
                         >
@@ -75,8 +102,40 @@ const SelectItem = forwardRef<HTMLDivElement, ItemProps>(
 
 const AddChartTilesModal: FC<Props> = ({ onAddTiles, onClose }) => {
     const { projectUuid } = useParams<{ projectUuid: string }>();
-    const { data: savedQueries, isInitialLoading } =
-        useChartSummariesV2(projectUuid);
+    const [searchQuery, setSearchQuery] = useState<string>('');
+    const [debouncedSearchQuery] = useDebouncedValue(searchQuery, 300);
+    const selectScrollRef = useRef<HTMLDivElement>(null);
+    const {
+        data: chartPages,
+        isInitialLoading,
+        isFetching,
+        hasNextPage,
+        fetchNextPage,
+    } = useChartSummariesV2(
+        {
+            projectUuid,
+            page: 1,
+            pageSize: 25,
+            search: debouncedSearchQuery,
+        },
+        { keepPreviousData: true },
+    );
+    useEffect(() => {
+        selectScrollRef.current?.scrollTo({
+            top: selectScrollRef.current?.scrollHeight,
+        });
+    }, [chartPages]);
+    // Aggregates all fetched charts across pages and search queries into a unified list.
+    // This ensures that previously fetched chart are preserved even when the search query changes.
+    // Uses 'uuid' to remove duplicates and maintain a consistent set of unique charts.
+    const [savedQueries, setSavedQueries] = useState<ChartContent[]>([]);
+    useEffect(() => {
+        const allPages = chartPages?.pages.map((p) => p.data).flat() ?? [];
+
+        setSavedQueries((previousState) =>
+            uniqBy([...previousState, ...allPages], 'uuid'),
+        );
+    }, [chartPages?.pages]);
 
     const dashboardTiles = useDashboardContext((c) => c.dashboardTiles);
     const dashboard = useDashboardContext((c) => c.dashboard);
@@ -148,13 +207,21 @@ const AddChartTilesModal: FC<Props> = ({ onAddTiles, onClose }) => {
     );
 
     const allSavedCharts = useMemo(() => {
-        const reorderedCharts = savedQueries?.sort((chartA, chartB) =>
-            chartA.space.uuid === dashboard?.spaceUuid
-                ? -1
-                : chartB.space.uuid === dashboard?.spaceUuid
-                ? 1
-                : 0,
-        );
+        const reorderedCharts = savedQueries?.sort((chartA, chartB) => {
+            if (
+                chartA.space.uuid === chartB.space.uuid &&
+                !!chartA.lastUpdatedAt &&
+                !!chartB.lastUpdatedAt
+            ) {
+                return chartA.lastUpdatedAt > chartB.lastUpdatedAt ? -1 : 1;
+            } else if (chartA.space.uuid === dashboard?.spaceUuid) {
+                return -1;
+            } else if (chartB.space.uuid === dashboard?.spaceUuid) {
+                return 1;
+            } else {
+                return 0;
+            }
+        });
 
         return (reorderedCharts || []).map((chart) => {
             const { uuid, name, space, chartKind } = chart;
@@ -300,6 +367,46 @@ const AddChartTilesModal: FC<Props> = ({ onAddTiles, onClose }) => {
                         searchable
                         withinPortal
                         itemComponent={SelectItem}
+                        nothingFound="No charts found"
+                        clearable
+                        clearSearchOnChange
+                        clearSearchOnBlur
+                        searchValue={searchQuery}
+                        onSearchChange={setSearchQuery}
+                        maxDropdownHeight={300}
+                        rightSection={
+                            isFetching && <Loader size="xs" color="gray" />
+                        }
+                        dropdownComponent={({
+                            children,
+                            ...rest
+                        }: ScrollAreaProps) => (
+                            <ScrollArea {...rest} viewportRef={selectScrollRef}>
+                                <>
+                                    {children}
+                                    {hasNextPage && (
+                                        <Button
+                                            size="xs"
+                                            variant="white"
+                                            onClick={async () => {
+                                                await fetchNextPage();
+                                            }}
+                                            disabled={isFetching}
+                                        >
+                                            <Text>Load more</Text>
+                                        </Button>
+                                    )}
+                                </>
+                            </ScrollArea>
+                        )}
+                        filter={(searchString, selected, item) => {
+                            return Boolean(
+                                selected ||
+                                    item.label
+                                        ?.toLowerCase()
+                                        .includes(searchString.toLowerCase()),
+                            );
+                        }}
                         {...form.getInputProps('savedChartsUuids')}
                     />
                     <Group spacing="xs" position="right" mt="md">

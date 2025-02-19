@@ -1,11 +1,11 @@
 /// <reference path="../@types/rudder-sdk-node.d.ts" />
 import { Type } from '@aws-sdk/client-s3';
 import {
+    AnyType,
     CartesianSeriesType,
     ChartKind,
     ChartType,
     DbtProjectType,
-    getRequestMethod,
     LightdashInstallType,
     LightdashMode,
     LightdashRequestMethodHeader,
@@ -21,6 +21,8 @@ import {
     TableSelectionType,
     ValidateProjectPayload,
     WarehouseTypes,
+    getErrorMessage,
+    getRequestMethod,
     type SemanticLayerType,
 } from '@lightdash/common';
 import Analytics, {
@@ -57,7 +59,8 @@ type TrackSimpleEvent = BaseTrack & {
         | 'invite_link.all_revoked'
         | 'password_reset_link.created'
         | 'password_reset_link.used'
-        | 'personal_access_token.deleted';
+        | 'personal_access_token.deleted'
+        | 'personal_access_token.rotated';
 };
 
 type PersonalAccessTokenEvent = BaseTrack & {
@@ -207,6 +210,7 @@ type MetricQueryExecutionProperties = {
     tableCalculationsPercentFormatCount: number;
     tableCalculationsCurrencyFormatCount: number;
     tableCalculationsNumberFormatCount: number;
+    tableCalculationCustomFormatCount: number;
     filtersCount: number;
     sortsCount: number;
     hasExampleMetric: boolean;
@@ -215,6 +219,7 @@ type MetricQueryExecutionProperties = {
     additionalMetricsPercentFormatCount: number;
     additionalMetricsCurrencyFormatCount: number;
     additionalMetricsNumberFormatCount: number;
+    additionalMetricsCustomFormatCount: number;
     numFixedWidthBinCustomDimensions: number;
     numFixedBinsBinCustomDimensions: number;
     numCustomRangeBinCustomDimensions: number;
@@ -222,6 +227,7 @@ type MetricQueryExecutionProperties = {
     dateZoomGranularity: string | null;
     timezone?: string;
     virtualViewId?: string;
+    metricOverridesCount: number;
 };
 
 type SqlExecutionProperties = {
@@ -636,7 +642,7 @@ type PermissionsUpdated = BaseTrack & {
         userId: string;
         userIdUpdated: string;
         organizationPermissions: OrganizationMemberRole;
-        projectPermissions: any;
+        projectPermissions: Record<string, string>;
         newUser: boolean;
         generatedInvite: boolean;
     };
@@ -857,6 +863,7 @@ export type SchedulerUpsertEvent = BaseTrack & {
             type: 'slack' | 'email';
         }>;
         timeZone: string | undefined;
+        includeLinks: boolean;
     };
 };
 export type SchedulerTimezoneUpdateEvent = BaseTrack & {
@@ -974,6 +981,7 @@ export type DownloadCsv = BaseTrack & {
         numRows?: number;
         numColumns?: number;
         error?: string;
+        numPivotDimensions?: number;
     };
 };
 
@@ -1105,13 +1113,26 @@ export type GithubInstallEvent = BaseTrack & {
 };
 
 export type WriteBackEvent = BaseTrack & {
-    event: 'write_back.created';
+    event: 'write_back.created' | 'write_back.previewed';
     userId: string;
     properties: {
         name: string;
         organizationId: string;
         projectId: string;
         context: QueryExecutionContext;
+        customMetricsCount?: number;
+    };
+};
+
+export type WriteBackErrorEvent = BaseTrack & {
+    event: 'write_back.error';
+    userId: string;
+    properties: {
+        name: string;
+        organizationId: string;
+        projectId: string;
+        context: QueryExecutionContext;
+        error: string;
     };
 };
 
@@ -1122,6 +1143,28 @@ type CreateTagEvent = BaseTrack & {
         name: string;
         projectId: string;
         organizationId: string;
+        context: 'yaml' | 'ui';
+    };
+};
+
+export type CategoriesAppliedEvent = BaseTrack & {
+    event: 'categories.applied';
+    userId: string;
+    properties: {
+        count: number;
+        projectId: string;
+        organizationId: string;
+        context: 'ui' | 'yaml';
+    };
+};
+
+export type CustomFieldsReplaced = BaseTrack & {
+    event: 'custom_fields.replaced';
+    userId: string;
+    properties: {
+        projectId: string;
+        organizationId: string;
+        chartsCount: number;
     };
 };
 
@@ -1200,8 +1243,11 @@ type TypedEvent =
     | VirtualViewEvent
     | GithubInstallEvent
     | WriteBackEvent
+    | WriteBackErrorEvent
     | SchedulerTimezoneUpdateEvent
-    | CreateTagEvent;
+    | CreateTagEvent
+    | CategoriesAppliedEvent
+    | CustomFieldsReplaced;
 
 type WrapTypedEvent = SemanticLayerView;
 
@@ -1214,13 +1260,13 @@ type LightdashAnalyticsArguments = {
     lightdashConfig: LightdashConfig;
     writeKey: string;
     dataPlaneUrl: string;
-    options?: ConstructorParameters<typeof Analytics>[2];
+    options?: ConstructorParameters<typeof Analytics>[1];
 };
 
 export class LightdashAnalytics extends Analytics {
     private readonly lightdashConfig: LightdashConfig;
 
-    private readonly lightdashContext: Record<string, any>;
+    private readonly lightdashContext: Record<string, AnyType>;
 
     constructor({
         lightdashConfig,
@@ -1228,7 +1274,8 @@ export class LightdashAnalytics extends Analytics {
         dataPlaneUrl,
         options,
     }: LightdashAnalyticsArguments) {
-        super(writeKey, dataPlaneUrl, options);
+        super(writeKey, { ...options, dataPlaneUrl });
+
         this.lightdashConfig = lightdashConfig;
         this.lightdashContext = {
             app: {
@@ -1318,7 +1365,7 @@ export class LightdashAnalytics extends Analytics {
     async wrapEvent<T>(
         payload: WrapTypedEvent,
         func: () => Promise<T>,
-        extraProperties?: (r: T) => any,
+        extraProperties?: (r: T) => AnyType,
     ) {
         try {
             this.track({
@@ -1345,7 +1392,7 @@ export class LightdashAnalytics extends Analytics {
                 event: `${payload.event}.error`,
                 properties: {
                     ...payload.properties,
-                    error: e.message,
+                    error: getErrorMessage(e),
                 },
             });
             Logger.error(`Error in scheduler task: ${e}`);

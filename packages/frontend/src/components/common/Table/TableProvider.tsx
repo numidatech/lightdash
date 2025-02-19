@@ -1,61 +1,23 @@
-import {
-    type ConditionalFormattingConfig,
-    type ResultRow,
-} from '@lightdash/common';
+import type { ResultRow, ResultValue } from '@lightdash/common';
 import {
     getCoreRowModel,
     getExpandedRowModel,
     getPaginationRowModel,
     useReactTable,
+    type ColumnDefBase,
     type ColumnOrderState,
     type GroupingState,
-    type Table,
 } from '@tanstack/react-table';
-import React, {
-    createContext,
-    useContext,
-    useEffect,
-    useMemo,
-    useState,
-    type FC,
-} from 'react';
-import { getGroupedRowModelLightdash } from './getGroupedRowModelLightdash';
+import React, { useEffect, useMemo, useState, type FC } from 'react';
+import { formatCellContent } from '../../../hooks/useColumns';
 import {
     DEFAULT_PAGE_SIZE,
     MAX_PAGE_SIZE,
     ROW_NUMBER_COLUMN_ID,
-    type CellContextMenuProps,
-    type HeaderProps,
-    type TableColumn,
-    type TableHeader,
-} from './types';
-
-type Props = {
-    data: ResultRow[];
-    columns: Array<TableColumn | TableHeader>;
-    headerContextMenu?: FC<React.PropsWithChildren<HeaderProps>>;
-    cellContextMenu?: FC<React.PropsWithChildren<CellContextMenuProps>>;
-    pagination?: {
-        show?: boolean;
-        defaultScroll?: boolean;
-        showResultsTotal?: boolean;
-    };
-    showSubtotals?: boolean;
-    hideRowNumbers?: boolean;
-    showColumnCalculation?: boolean;
-    conditionalFormattings?: ConditionalFormattingConfig[];
-    footer?: {
-        show?: boolean;
-    };
-    columnOrder?: string[];
-    onColumnOrderChange?: (value: string[]) => void;
-};
-
-export type TableContext = Props & {
-    table: Table<ResultRow>;
-};
-
-const Context = createContext<TableContext | undefined>(undefined);
+} from './constants';
+import Context from './context';
+import { getGroupedRowModelLightdash } from './getGroupedRowModelLightdash';
+import { type ProviderProps, type TableColumn } from './types';
 
 const rowColumn: TableColumn = {
     id: ROW_NUMBER_COLUMN_ID,
@@ -68,7 +30,7 @@ const rowColumn: TableColumn = {
     enableGrouping: false,
 };
 
-const calculateColumnVisibility = (columns: Props['columns']) =>
+const calculateColumnVisibility = (columns: ProviderProps['columns']) =>
     columns.reduce(
         (acc, c) => ({
             ...acc,
@@ -80,7 +42,7 @@ const calculateColumnVisibility = (columns: Props['columns']) =>
         {},
     );
 
-export const TableProvider: FC<React.PropsWithChildren<Props>> = ({
+export const TableProvider: FC<React.PropsWithChildren<ProviderProps>> = ({
     hideRowNumbers,
     showColumnCalculation,
     showSubtotals,
@@ -120,7 +82,7 @@ export const TableProvider: FC<React.PropsWithChildren<Props>> = ({
                 ...col.meta,
                 className: `sticky-column ${
                     i === frozenColumns.length - 1 ? 'last-sticky-column' : ''
-                } ${hideRowNumbers ? 'first-sticky-column' : ''}`,
+                }`,
                 style: {
                     maxWidth: frozenColumnWidth,
                     minWidth: frozenColumnWidth,
@@ -128,7 +90,7 @@ export const TableProvider: FC<React.PropsWithChildren<Props>> = ({
                 },
             },
         }));
-    }, [frozenColumns, frozenColumnWidth, hideRowNumbers, rowColumnWidth]);
+    }, [frozenColumns, frozenColumnWidth, rowColumnWidth]);
 
     const otherColumns = useMemo(
         () => columns.filter((col) => !col.meta?.frozen),
@@ -141,20 +103,36 @@ export const TableProvider: FC<React.PropsWithChildren<Props>> = ({
             ...rowColumn,
             meta: {
                 ...rowColumn.meta,
-                className: 'sticky-column first-sticky-column',
+                className: 'sticky-column',
                 width: rowColumnWidth,
                 style: {
                     maxWidth: rowColumnWidth,
                     minWidth: rowColumnWidth,
+                    backgroundColor: 'white',
                 },
             },
         };
     }, [stickyColumns, rowColumnWidth]);
 
     const visibleColumns = useMemo(() => {
-        return hideRowNumbers
+        const cols = hideRowNumbers
             ? [...stickyColumns, ...otherColumns]
             : [stickyRowColumn, ...stickyColumns, ...otherColumns];
+
+        return cols.map((column) => {
+            return {
+                ...column,
+                cell: ({ getValue }) => {
+                    const value = getValue();
+
+                    if (value === undefined) {
+                        return null;
+                    }
+
+                    return formatCellContent(value);
+                },
+            } satisfies ColumnDefBase<ResultRow, { value: ResultValue }>;
+        });
     }, [hideRowNumbers, stickyColumns, otherColumns, stickyRowColumn]);
 
     const table = useReactTable({
@@ -199,11 +177,3 @@ export const TableProvider: FC<React.PropsWithChildren<Props>> = ({
         </Context.Provider>
     );
 };
-
-export function useTableContext(): TableContext {
-    const context = useContext(Context);
-    if (context === undefined) {
-        throw new Error('useTableContext must be used within a TableProvider');
-    }
-    return context;
-}

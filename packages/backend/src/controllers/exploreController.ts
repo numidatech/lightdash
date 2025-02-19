@@ -1,10 +1,12 @@
 import {
+    AnyType,
     ApiCompiledQueryResults,
     ApiErrorPayload,
     ApiExploreResults,
     ApiExploresResults,
     ApiSuccessEmpty,
     MetricQuery,
+    PivotConfig,
 } from '@lightdash/common';
 import {
     Body,
@@ -43,7 +45,7 @@ export class ExploreController extends BaseController {
     async SetExplores(
         @Path() projectUuid: string,
         @Request() req: express.Request,
-        @Body() body: any[], // tsoa doesn't seem to work with explores from CLI
+        @Body() body: AnyType[], // tsoa doesn't seem to work with explores from CLI
     ): Promise<ApiSuccessEmpty> {
         this.setStatus(200);
         await this.services
@@ -92,7 +94,7 @@ export class ExploreController extends BaseController {
         this.setStatus(200);
         const results = await this.services
             .getProjectService()
-            .getExplore(req.user!, projectUuid, exploreId);
+            .getExplore(req.user!, projectUuid, exploreId, undefined, false);
 
         return {
             status: 'ok',
@@ -141,6 +143,7 @@ export class ExploreController extends BaseController {
             columnOrder: string[];
             hiddenFields?: string[];
             chartName?: string;
+            pivotColumns?: string[];
         },
     ): Promise<{ status: 'ok'; results: { jobId: string } }> {
         this.setStatus(200);
@@ -162,7 +165,19 @@ export class ExploreController extends BaseController {
             tableCalculations: body.tableCalculations,
             additionalMetrics: body.additionalMetrics,
             customDimensions: body.customDimensions,
+            metricOverrides: body.metricOverrides,
         };
+
+        const csvPivotConfig: PivotConfig | undefined =
+            body.pivotColumns !== undefined
+                ? {
+                      pivotDimensions: body.pivotColumns,
+                      metricsAsRows: false,
+                      hiddenMetricFieldIds: body.hiddenFields,
+                      columnOrder: body.columnOrder,
+                  }
+                : undefined;
+
         const { jobId } = await req.services
             .getCsvService()
             .scheduleDownloadCsv(req.user!, {
@@ -178,6 +193,7 @@ export class ExploreController extends BaseController {
                 hiddenFields,
                 chartName: body.chartName,
                 fromSavedChart: false,
+                pivotConfig: csvPivotConfig,
             });
 
         return {

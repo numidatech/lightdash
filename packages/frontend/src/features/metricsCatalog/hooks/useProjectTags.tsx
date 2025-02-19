@@ -45,6 +45,7 @@ export const useCreateTag = () => {
             previousCatalog: unknown;
         }
     >({
+        mutationKey: ['create-tag'],
         mutationFn: async ({ projectUuid, data, catalogSearchUuid }) => {
             const newTag = await createTag(projectUuid, data);
             if (catalogSearchUuid) {
@@ -71,6 +72,8 @@ export const useCreateTag = () => {
                 color: data.color,
                 createdAt: new Date(),
                 projectUuid,
+                // created tags on the UI are not associated with a yaml reference
+                yamlReference: null,
                 createdBy: {
                     userUuid: 'user',
                     firstName: 'user',
@@ -189,6 +192,7 @@ export const useUpdateTag = () => {
             previousCatalog: unknown;
         }
     >({
+        mutationKey: ['update-tag'],
         mutationFn: ({ projectUuid, tagUuid, data }) => {
             return updateTag(projectUuid, tagUuid, data);
         },
@@ -277,6 +281,7 @@ export const useDeleteTag = () => {
             previousCatalog: unknown;
         }
     >({
+        mutationKey: ['delete-tag'],
         mutationFn: ({ projectUuid, tagUuid }) => {
             return deleteTag(projectUuid, tagUuid);
         },

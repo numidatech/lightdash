@@ -1,4 +1,9 @@
-import { assertUnreachable, SemanticLayerType } from '@lightdash/common';
+import {
+    assertUnreachable,
+    getErrorMessage,
+    isApiError,
+    SemanticLayerType,
+} from '@lightdash/common';
 import {
     Anchor,
     Avatar,
@@ -19,12 +24,12 @@ import {
 import { SettingsGridCard } from '../common/Settings/SettingsCard';
 import CubeLogo from './Assets/cube.svg';
 import DbtLogo from './Assets/dbt.svg';
-import CubeSemanticLayerForm, {
+import CubeSemanticLayerForm from './CubeSemanticLayerForm';
+import DbtSemanticLayerForm from './DbtSemanticLayerForm';
+import {
     cubeSemanticLayerFormSchema,
-} from './CubeSemanticLayerForm';
-import DbtSemanticLayerForm, {
     dbtSemanticLayerFormSchema,
-} from './DbtSemanticLayerForm';
+} from './types';
 
 interface Props {
     projectUuid: string;
@@ -97,9 +102,12 @@ const SettingsSemanticLayer: FC<Props> = ({ projectUuid }) => {
                 title: `Successfully updated project's semantic layer connection with ${SemanticLayerLabels[semanticLayerType]} credentials.`,
             });
         } catch (e) {
+            const errorMessage = isApiError(e)
+                ? e.error.message
+                : getErrorMessage(e);
             showToastError({
                 title: 'Failed saving semantic layer connection',
-                ...(e.error.message ? { subtitle: e.error.message } : {}),
+                subtitle: errorMessage,
             });
         }
 

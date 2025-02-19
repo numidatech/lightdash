@@ -7,15 +7,18 @@ import {
     GroupWithMembers,
     NotExistsError,
     NotFoundError,
+    ParameterError,
     ProjectGroupAccess,
     UnexpectedDatabaseError,
     UpdateGroupWithMembers,
+    getErrorMessage,
     type KnexPaginateArgs,
     type KnexPaginatedData,
 } from '@lightdash/common';
 import { Knex } from 'knex';
 import { uniq } from 'lodash';
 import differenceBy from 'lodash/differenceBy';
+import { DatabaseError } from 'pg';
 import { DbEmail, EmailTableName } from '../database/entities/emails';
 import {
     DbGroupMembership,
@@ -269,7 +272,7 @@ export class GroupsModel {
                 return row.group_uuid;
             } catch (error) {
                 // Unique violation in PostgreSQL
-                if (error.code === '23505') {
+                if (error instanceof DatabaseError && error.code === '23505') {
                     throw new AlreadyExistsError(`Group name already exists`);
                 }
                 throw error; // Re-throw other errors
@@ -418,12 +421,15 @@ export class GroupsModel {
                         .where('group_uuid', groupUuid);
                 } catch (error) {
                     // Unique violation in PostgreSQL
-                    if (error.code === '23505') {
+                    if (
+                        error instanceof DatabaseError &&
+                        error.code === '23505'
+                    ) {
                         throw new AlreadyExistsError(
                             `Group name already exists`,
                         );
                     }
-                    throw error; // Re-throw other errors
+                    throw new UnexpectedDatabaseError(getErrorMessage(error));
                 }
             }
 
@@ -462,9 +468,10 @@ export class GroupsModel {
                         )
                         .andWhere('groups.group_uuid', groupUuid);
 
-                    // Check if the initial and resulting counts match
                     if (newMembers.length !== membersToAdd.length) {
-                        throw new Error(`Some provided user UUIDs are invalid`);
+                        throw new ParameterError(
+                            'Some provided user UUIDs are invalid',
+                        );
                     }
 
                     await trx('group_memberships')
@@ -488,7 +495,6 @@ export class GroupsModel {
                 }
             }
         });
-        // TODO: fix include member count
         return this.getGroupWithMembers(groupUuid, 10000);
     }
 

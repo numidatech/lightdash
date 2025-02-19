@@ -1,4 +1,10 @@
-import type { AdditionalMetric, currencies } from '..';
+import type {
+    AdditionalMetric,
+    currencies,
+    DefaultTimeDimension,
+    LightdashProjectConfig,
+} from '..';
+import { type AnyType } from './any';
 import { CompileError } from './errors';
 import { type MetricFilterRule } from './filter';
 import { type TimeFrames } from './timeFrames';
@@ -31,6 +37,7 @@ export enum NumberSeparator {
 type CompactConfig = {
     compact: Compact;
     alias: Array<typeof CompactAlias[number]>;
+    orderOfMagnitude: number;
     convertFn: (value: number) => number;
     label: string;
     suffix: string;
@@ -42,6 +49,7 @@ export const CompactConfigMap: Record<Compact, CompactConfig> = {
     [Compact.THOUSANDS]: {
         compact: Compact.THOUSANDS,
         alias: ['K', 'thousand'],
+        orderOfMagnitude: 3,
         convertFn: (value: number) => value / 1000,
         label: 'thousands (K)',
         suffix: 'K',
@@ -49,6 +57,7 @@ export const CompactConfigMap: Record<Compact, CompactConfig> = {
     [Compact.MILLIONS]: {
         compact: Compact.MILLIONS,
         alias: ['M', 'million'],
+        orderOfMagnitude: 6,
         convertFn: (value: number) => value / 1000000,
         label: 'millions (M)',
         suffix: 'M',
@@ -56,6 +65,7 @@ export const CompactConfigMap: Record<Compact, CompactConfig> = {
     [Compact.BILLIONS]: {
         compact: Compact.BILLIONS,
         alias: ['B', 'billion'],
+        orderOfMagnitude: 9,
         convertFn: (value: number) => value / 1000000000,
         label: 'billions (B)',
         suffix: 'B',
@@ -63,6 +73,7 @@ export const CompactConfigMap: Record<Compact, CompactConfig> = {
     [Compact.TRILLIONS]: {
         compact: Compact.TRILLIONS,
         alias: ['T', 'trillion'],
+        orderOfMagnitude: 12,
         convertFn: (value: number) => value / 1000000000000,
         label: 'trillions (T)',
         suffix: 'T',
@@ -74,7 +85,8 @@ export function findCompactConfig(
 ): CompactConfig | undefined {
     return Object.values(CompactConfigMap).find(
         ({ compact, alias }) =>
-            compact === compactOrAlias || alias.includes(compactOrAlias as any),
+            compact === compactOrAlias ||
+            alias.includes(compactOrAlias as AnyType),
     );
 }
 
@@ -118,16 +130,20 @@ export interface CustomSqlDimension extends BaseCustomDimension {
 
 export type CustomDimension = CustomBinDimension | CustomSqlDimension;
 
-export const isCustomDimension = (value: any): value is CustomDimension =>
+export const isCustomDimension = (value: AnyType): value is CustomDimension =>
     value !== undefined &&
     Object.values(CustomDimensionType).includes(value.type);
 
-export const isCustomBinDimension = (value: any): value is CustomBinDimension =>
+export const isCustomBinDimension = (
+    value: AnyType,
+): value is CustomBinDimension =>
     value !== undefined &&
     isCustomDimension(value) &&
     value.type === CustomDimensionType.BIN;
 
-export const isCustomSqlDimension = (value: any): value is CustomSqlDimension =>
+export const isCustomSqlDimension = (
+    value: AnyType,
+): value is CustomSqlDimension =>
     value !== undefined &&
     isCustomDimension(value) &&
     value.type === CustomDimensionType.SQL;
@@ -142,7 +158,7 @@ export type CompiledCustomDimension =
     | CompiledCustomSqlDimension;
 
 export const isCompiledCustomSqlDimension = (
-    value: any,
+    value: AnyType,
 ): value is CompiledCustomSqlDimension =>
     isCustomSqlDimension(value) && 'compiledSql' in value;
 
@@ -161,6 +177,7 @@ export interface CustomFormat {
     prefix?: string | undefined;
     suffix?: string | undefined;
     timeInterval?: TimeFrames;
+    custom?: string | undefined;
 }
 
 export enum CustomFormatType {
@@ -171,6 +188,7 @@ export enum CustomFormatType {
     ID = 'id',
     DATE = 'date',
     TIMESTAMP = 'timestamp',
+    CUSTOM = 'custom',
 }
 
 export enum TableCalculationType {
@@ -234,9 +252,11 @@ export interface Field {
     description?: string;
     source?: Source | undefined;
     hidden: boolean;
+    // @deprecated Use format expression instead
     compact?: CompactOrAlias;
+    // @deprecated Use format expression instead
     round?: number;
-    format?: Format;
+    format?: Format | string; // Format type is deprecated, use format expression(string) instead
     /**
      * @deprecated Use groups property instead.
      */
@@ -247,7 +267,7 @@ export interface Field {
     tags?: string[];
 }
 
-export const isField = (field: any): field is Field =>
+export const isField = (field: AnyType): field is Field =>
     field ? !!field.fieldType : false;
 
 // Field ids are unique across the project
@@ -375,6 +395,8 @@ export enum Format {
     USD = 'usd',
     GBP = 'gbp',
     EUR = 'eur',
+    JPY = 'jpy',
+    DKK = 'dkk',
     ID = 'id',
     PERCENT = 'percent',
 }
@@ -445,6 +467,11 @@ export interface Metric extends Field {
     formatOptions?: CustomFormat;
     dimensionReference?: string; // field id of the dimension this metric is based on
     requiredAttributes?: Record<string, string | string[]>; // Required attributes for the dimension this metric is based on
+    defaultTimeDimension?: DefaultTimeDimension; // Default time dimension for the metric when the user has not specified a time dimension
+    spotlight?: {
+        visibility: LightdashProjectConfig['spotlight']['default_visibility'];
+        categories?: string[]; // yaml_reference
+    };
 }
 
 export const isFilterableDimension = (
@@ -517,4 +544,25 @@ export const friendlyName = (text: string): string => {
     // Join the normalized parts with spaces and capitalize the first letter of the resulting string
     const result = normalizedParts.join(' ');
     return capitalize(result);
+};
+
+export const isSummable = (item: Item | undefined) => {
+    if (!item) {
+        return false;
+    }
+
+    if (isTableCalculation(item)) {
+        return false;
+    }
+    if (isCustomDimension(item)) {
+        return false;
+    }
+    const numericTypes: string[] = [MetricType.COUNT, MetricType.SUM];
+    const isNumberDimension =
+        isDimension(item) && item.type === DimensionType.NUMBER;
+    const isNumbericType =
+        numericTypes.includes(item.type) || isNumberDimension;
+    const isPercent = item.format === 'percent';
+    const isDatePart = isDimension(item) && item.timeInterval;
+    return isNumbericType && !isPercent && !isDatePart;
 };

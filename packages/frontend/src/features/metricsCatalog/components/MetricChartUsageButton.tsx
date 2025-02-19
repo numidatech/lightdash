@@ -1,9 +1,8 @@
 import { type CatalogField } from '@lightdash/common';
-import { Button } from '@mantine/core';
-import { IconChartBar } from '@tabler/icons-react';
+import { Button, Text, Tooltip } from '@mantine/core';
 import { type MRT_Row } from 'mantine-react-table';
-import MantineIcon from '../../../components/common/MantineIcon';
-import { useTracking } from '../../../providers/TrackingProvider';
+import useTracking from '../../../providers/Tracking/useTracking';
+import { BarChart } from '../../../svgs/metricsCatalog';
 import { EventName } from '../../../types/Events';
 import { useAppDispatch, useAppSelector } from '../../sqlRunner/store/hooks';
 import { setActiveMetric } from '../store/metricsCatalogSlice';
@@ -20,6 +19,9 @@ export const MetricChartUsageButton = ({
     const projectUuid = useAppSelector(
         (state) => state.metricsCatalog.projectUuid,
     );
+    const userUuid = useAppSelector(
+        (state) => state.metricsCatalog.user?.userUuid,
+    );
     const dispatch = useAppDispatch();
     const { track } = useTracking();
 
@@ -28,6 +30,7 @@ export const MetricChartUsageButton = ({
             track({
                 name: EventName.METRICS_CATALOG_CHART_USAGE_CLICKED,
                 properties: {
+                    userId: userUuid,
                     metricName: row.original.name,
                     chartCount: row.original.chartUsage ?? 0,
                     tableName: row.original.tableName,
@@ -40,36 +43,43 @@ export const MetricChartUsageButton = ({
     };
 
     return (
-        <Button
-            size="xs"
-            compact
-            color="gray.6"
-            variant="default"
+        <Tooltip
+            variant="xs"
             disabled={!hasChartsUsage}
-            onClick={handleChartUsageClick}
-            leftIcon={
-                <MantineIcon
-                    display={hasChartsUsage ? 'block' : 'none'}
-                    icon={IconChartBar}
-                    color="gray.6"
-                    size={12}
-                    strokeWidth={1.2}
-                    fill="gray.2"
-                />
+            label={
+                <Text>
+                    Used by {row.original.chartUsage} charts.
+                    <br />
+                    Click to view the full list.
+                </Text>
             }
-            sx={{
-                '&[data-disabled]': {
-                    backgroundColor: 'transparent',
-                    fontWeight: 400,
-                },
-            }}
-            styles={{
-                leftIcon: {
-                    marginRight: 4,
-                },
-            }}
         >
-            {hasChartsUsage ? `${row.original.chartUsage}` : 'No usage'}
-        </Button>
+            <Button
+                size="xs"
+                compact
+                color="gray.6"
+                variant="subtle"
+                disabled={!hasChartsUsage}
+                onClick={handleChartUsageClick}
+                leftIcon={<BarChart />}
+                opacity={hasChartsUsage ? 1 : 0.8}
+                fz="sm"
+                c="dark.4"
+                fw={500}
+                sx={{
+                    '&[data-disabled]': {
+                        backgroundColor: 'transparent',
+                        fontWeight: 400,
+                    },
+                }}
+                styles={(theme) => ({
+                    leftIcon: {
+                        marginRight: theme.spacing.xxs,
+                    },
+                })}
+            >
+                {row.original.chartUsage}
+            </Button>
+        </Tooltip>
     );
 };

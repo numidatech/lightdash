@@ -7,11 +7,12 @@ import {
     type ResultValue,
     type TableCalculation,
 } from '@lightdash/common';
+import { useMantineTheme } from '@mantine/core';
 import { type EChartsOption, type FunnelSeriesOption } from 'echarts';
 import { round } from 'lodash';
 import { useMemo } from 'react';
-import { isFunnelVisualizationConfig } from '../../components/LightdashVisualization/VisualizationConfigFunnel';
-import { useVisualizationContext } from '../../components/LightdashVisualization/VisualizationProvider';
+import { isFunnelVisualizationConfig } from '../../components/LightdashVisualization/types';
+import { useVisualizationContext } from '../../components/LightdashVisualization/useVisualizationContext';
 
 export type FunnelSeriesDataPoint = NonNullable<
     FunnelSeriesOption['data']
@@ -42,6 +43,8 @@ const getValueAndPercentage = ({
 const useEchartsFunnelConfig = (isInDashboard: boolean) => {
     const { visualizationConfig, itemsMap, colorPalette } =
         useVisualizationContext();
+
+    const theme = useMantineTheme();
 
     const chartConfig = useMemo(() => {
         if (!isFunnelVisualizationConfig(visualizationConfig)) return;
@@ -153,6 +156,9 @@ const useEchartsFunnelConfig = (isInDashboard: boolean) => {
         } = chartConfig;
 
         return {
+            textStyle: {
+                fontFamily: theme?.other.chartFont as string | undefined,
+            },
             tooltip: {
                 trigger: 'item',
             },
@@ -175,7 +181,13 @@ const useEchartsFunnelConfig = (isInDashboard: boolean) => {
                       }),
             },
         };
-    }, [chartConfig, funnelSeriesOptions, seriesData, isInDashboard]);
+    }, [
+        chartConfig,
+        funnelSeriesOptions,
+        seriesData,
+        isInDashboard,
+        theme?.other?.chartFont,
+    ]);
 
     if (!itemsMap) return;
     if (!eChartsOptions) return;

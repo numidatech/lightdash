@@ -2,16 +2,14 @@ import {
     assertUnreachable,
     DbtProjectType,
     DbtProjectTypeLabels,
-    DefaultSupportedDbtVersion,
     FeatureFlags,
-    SupportedDbtVersions,
     WarehouseTypes,
 } from '@lightdash/common';
-import { Select, Stack, TextInput } from '@mantine/core';
+import { Anchor, Select, Stack, TextInput } from '@mantine/core';
 import { useEffect, useMemo, useState, type FC } from 'react';
 import { Controller, useFormContext, useWatch } from 'react-hook-form';
 import { useFeatureFlagEnabled } from '../../hooks/useFeatureFlagEnabled';
-import { useApp } from '../../providers/AppProvider';
+import useApp from '../../providers/App/useApp';
 import FormSection from '../ReactHookForm/FormSection';
 import { MultiKeyValuePairsInput } from '../ReactHookForm/MultiKeyValuePairsInput';
 import AzureDevOpsForm from './DbtForms/AzureDevOpsForm';
@@ -22,7 +20,7 @@ import DbtNoneForm from './DbtForms/DbtNoneForm';
 import GithubForm from './DbtForms/GithubForm';
 import GitlabForm from './DbtForms/GitlabForm';
 import FormCollapseButton from './FormCollapseButton';
-import { type SelectedWarehouse } from './ProjectConnectFlow/SelectWarehouse';
+import { type SelectedWarehouse } from './ProjectConnectFlow/types';
 import { BigQuerySchemaInput } from './WarehouseForms/BigQueryForm';
 import { DatabricksSchemaInput } from './WarehouseForms/DatabricksForm';
 import { PostgresSchemaInput } from './WarehouseForms/PostgresForm';
@@ -174,24 +172,7 @@ const DbtSettingsForm: FC<DbtSettingsFormProps> = ({
                         />
                     )}
                 />
-                <Controller
-                    name="dbtVersion"
-                    defaultValue={DefaultSupportedDbtVersion}
-                    render={({ field }) => (
-                        <Select
-                            label="dbt version"
-                            data={Object.values(SupportedDbtVersions).map(
-                                (version) => ({
-                                    value: version,
-                                    label: version,
-                                }),
-                            )}
-                            value={field.value}
-                            onChange={field.onChange}
-                            disabled={disabled}
-                        />
-                    )}
-                />
+
                 {form}
                 {type !== DbtProjectType.NONE && (
                     <>
@@ -221,6 +202,30 @@ const DbtSettingsForm: FC<DbtSettingsFormProps> = ({
                             isOpen={isAdvancedSettingsOpen}
                         >
                             <Stack style={{ marginTop: '8px' }}>
+                                {type !== DbtProjectType.DBT_CLOUD_IDE && (
+                                    <TextInput
+                                        {...register('dbt.selector')}
+                                        label="dbt selector"
+                                        description={
+                                            <p>
+                                                Add dbt selectors to filter out
+                                                models from your dbt project.
+                                                You can see more details in{' '}
+                                                <Anchor
+                                                    href="https://docs.lightdash.com/get-started/setup-lightdash/connect-project/#dbt-selector"
+                                                    target="_blank"
+                                                    rel="noreferrer"
+                                                >
+                                                    our docs
+                                                </Anchor>
+                                                .
+                                            </p>
+                                        }
+                                        disabled={disabled}
+                                        placeholder="tag:lightdash"
+                                    />
+                                )}
+
                                 <MultiKeyValuePairsInput
                                     name="dbt.environment"
                                     label="Environment variables"

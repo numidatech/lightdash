@@ -1,9 +1,9 @@
 import {
     DashboardTileTypes,
     ResourceViewItemType,
-    type Dashboard as IDashboard,
     type DashboardTab,
     type DashboardTile,
+    type Dashboard as IDashboard,
 } from '@lightdash/common';
 import { Box, Button, Flex, Group, Modal, Stack, Text } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
@@ -11,18 +11,17 @@ import { captureException, useProfiler } from '@sentry/react';
 import { IconAlertCircle } from '@tabler/icons-react';
 import { useCallback, useEffect, useMemo, useState, type FC } from 'react';
 import { type Layout } from 'react-grid-layout';
-import { useHistory, useParams } from 'react-router-dom';
+import { useBlocker, useNavigate, useParams } from 'react-router';
+import DashboardFilter from '../components/DashboardFilter';
+import DashboardTabs from '../components/DashboardTabs';
 import DashboardHeader from '../components/common/Dashboard/DashboardHeader';
 import ErrorState from '../components/common/ErrorState';
 import MantineIcon from '../components/common/MantineIcon';
+import Page from '../components/common/Page/Page';
+import SuboptimalState from '../components/common/SuboptimalState/SuboptimalState';
 import DashboardDeleteModal from '../components/common/modal/DashboardDeleteModal';
 import DashboardDuplicateModal from '../components/common/modal/DashboardDuplicateModal';
 import { DashboardExportModal } from '../components/common/modal/DashboardExportModal';
-import DashboardFiltersWarningModal from '../components/common/modal/DashboardFiltersWarningModal';
-import Page from '../components/common/Page/Page';
-import SuboptimalState from '../components/common/SuboptimalState/SuboptimalState';
-import DashboardFilter from '../components/DashboardFilter';
-import DashboardTabs from '../components/DashboardTabs';
 import { useDashboardCommentsCheck } from '../features/comments';
 import { DateZoom } from '../features/dateZoom';
 import {
@@ -36,51 +35,14 @@ import { useDashboardPinningMutation } from '../hooks/pinning/useDashboardPinnin
 import { usePinnedItems } from '../hooks/pinning/usePinnedItems';
 import useToaster from '../hooks/toaster/useToaster';
 import { useSpaceSummaries } from '../hooks/useSpaces';
-import { useApp } from '../providers/AppProvider';
-import {
-    DashboardProvider,
-    useDashboardContext,
-} from '../providers/DashboardProvider';
+import useApp from '../providers/App/useApp';
+import DashboardProvider from '../providers/Dashboard/DashboardProvider';
+import useDashboardContext from '../providers/Dashboard/useDashboardContext';
+import useFullscreen from '../providers/Fullscreen/useFullscreen';
 import '../styles/react-grid.css';
 
-export const getReactGridLayoutConfig = (
-    tile: DashboardTile,
-    isEditMode = false,
-): Layout => ({
-    minH: 1,
-    minW: 6,
-    x: tile.x,
-    y: tile.y,
-    w: tile.w,
-    h: tile.h,
-    i: tile.uuid,
-    isDraggable: isEditMode,
-    isResizable: isEditMode,
-});
-
-export const getResponsiveGridLayoutProps = ({
-    enableAnimation = false,
-    stackVerticallyOnSmallestBreakpoint = false,
-}: {
-    enableAnimation?: boolean;
-
-    /**
-     * If enabled, we set the grid on the smallest breakpoint to have a single
-     * column, which makes it behave like a simple vertical stack on mobile
-     * viewports.
-     */
-    stackVerticallyOnSmallestBreakpoint?: boolean;
-} = {}) => ({
-    draggableCancel: '.non-draggable',
-    useCSSTransforms: enableAnimation,
-    measureBeforeMount: !enableAnimation,
-    breakpoints: { lg: 1200, md: 996, sm: 768 },
-    cols: { lg: 36, md: 30, sm: stackVerticallyOnSmallestBreakpoint ? 1 : 18 },
-    rowHeight: 50,
-});
-
 const Dashboard: FC = () => {
-    const history = useHistory();
+    const navigate = useNavigate();
     const { projectUuid, dashboardUuid, mode, tabUuid } = useParams<{
         projectUuid: string;
         dashboardUuid: string;
@@ -113,6 +75,7 @@ const Dashboard: FC = () => {
     const setHaveTilesChanged = useDashboardContext(
         (c) => c.setHaveTilesChanged,
     );
+
     const haveTabsChanged = useDashboardContext((c) => c.haveTabsChanged);
     const setHaveTabsChanged = useDashboardContext((c) => c.setHaveTabsChanged);
     const dashboardTabs = useDashboardContext((c) => c.dashboardTabs);
@@ -126,9 +89,21 @@ const Dashboard: FC = () => {
     const setDashboardTemporaryFilters = useDashboardContext(
         (c) => c.setDashboardTemporaryFilters,
     );
+    const isDateZoomDisabled = useDashboardContext((c) => c.isDateZoomDisabled);
+
+    const hasDateZoomDisabledChanged = useMemo(() => {
+        return (
+            (dashboard?.config?.isDateZoomDisabled || false) !==
+            isDateZoomDisabled
+        );
+    }, [dashboard, isDateZoomDisabled]);
     const oldestCacheTime = useDashboardContext((c) => c.oldestCacheTime);
 
-    const { isFullscreen, toggleFullscreen } = useApp();
+    const {
+        enabled: isFullScreenFeatureEnabled,
+        isFullscreen,
+        toggleFullscreen,
+    } = useFullscreen();
     const { showToastError } = useToaster();
 
     const { data: organization } = useOrganization();
@@ -151,7 +126,6 @@ const Dashboard: FC = () => {
     const [isDuplicateModalOpen, duplicateModalHandlers] = useDisclosure();
     const [isExportDashboardModalOpen, exportDashboardModalHandlers] =
         useDisclosure();
-    const [isSaveWarningModalOpen, saveWarningModalHandlers] = useDisclosure();
     const { mutate: toggleDashboardPinning } = useDashboardPinningMutation();
     const { data: pinnedItems } = usePinnedItems(
         projectUuid,
@@ -159,6 +133,7 @@ const Dashboard: FC = () => {
     );
 
     const handleDashboardPinning = useCallback(() => {
+        if (!dashboardUuid) return;
         toggleDashboardPinning({ uuid: dashboardUuid });
     }, [dashboardUuid, toggleDashboardPinning]);
 
@@ -179,9 +154,6 @@ const Dashboard: FC = () => {
             (tile) => tile.type === DashboardTileTypes.SEMANTIC_VIEWER_CHART,
         );
     }, [dashboardTiles]);
-
-    const [isFilterWarningModalOpen, setIsFilterWarningModalOpen] =
-        useState(false);
 
     // tabs state
     const [activeTab, setActiveTab] = useState<DashboardTab | undefined>();
@@ -300,18 +272,20 @@ const Dashboard: FC = () => {
             });
             reset();
             if (dashboardTabs.length > 0) {
-                history.replace(
+                void navigate(
                     `/projects/${projectUuid}/dashboards/${dashboardUuid}/view/tabs/${activeTab?.uuid}`,
+                    { replace: true },
                 );
             } else {
-                history.replace(
-                    `/projects/${projectUuid}/dashboards/${dashboardUuid}/view/`,
+                void navigate(
+                    `/projects/${projectUuid}/dashboards/${dashboardUuid}/view`,
+                    { replace: true },
                 );
             }
         }
     }, [
         dashboardUuid,
-        history,
+        navigate,
         isSuccess,
         projectUuid,
         reset,
@@ -323,6 +297,8 @@ const Dashboard: FC = () => {
     ]);
 
     const handleToggleFullscreen = useCallback(async () => {
+        if (!isFullScreenFeatureEnabled) return;
+
         const willBeFullscreen = !isFullscreen;
 
         if (document.fullscreenElement && !willBeFullscreen) {
@@ -336,9 +312,11 @@ const Dashboard: FC = () => {
         }
 
         toggleFullscreen();
-    }, [isFullscreen, toggleFullscreen]);
+    }, [isFullScreenFeatureEnabled, isFullscreen, toggleFullscreen]);
 
     useEffect(() => {
+        if (!isFullScreenFeatureEnabled) return;
+
         const onFullscreenChange = () => {
             if (isFullscreen && !document.fullscreenElement) {
                 toggleFullscreen(false);
@@ -460,18 +438,20 @@ const Dashboard: FC = () => {
         setDashboardTabs(dashboard.tabs);
 
         if (dashboardTabs.length > 0) {
-            history.replace(
+            void navigate(
                 `/projects/${projectUuid}/dashboards/${dashboardUuid}/view/tabs/${activeTab?.uuid}`,
+                { replace: true },
             );
         } else {
-            history.replace(
-                `/projects/${projectUuid}/dashboards/${dashboardUuid}/view/`,
+            void navigate(
+                `/projects/${projectUuid}/dashboards/${dashboardUuid}/view`,
+                { replace: true },
             );
         }
     }, [
         dashboard,
         dashboardUuid,
-        history,
+        navigate,
         projectUuid,
         setDashboardTiles,
         setHaveFiltersChanged,
@@ -496,9 +476,6 @@ const Dashboard: FC = () => {
         [dashboard, moveDashboardToSpace],
     );
 
-    const [blockedNavigationLocation, setBlockedNavigationLocation] =
-        useState<string>();
-
     useEffect(() => {
         const checkReload = (event: BeforeUnloadEvent) => {
             if (isEditMode && (haveTilesChanged || haveFiltersChanged)) {
@@ -512,68 +489,35 @@ const Dashboard: FC = () => {
         return () => window.removeEventListener('beforeunload', checkReload);
     }, [haveTilesChanged, haveFiltersChanged, isEditMode]);
 
-    useEffect(() => {
-        // Check if in edit mode and changes have been made
+    // Block navigating away if there are unsaved changes
+    const blocker = useBlocker(({ nextLocation }) => {
         if (
             isEditMode &&
-            (haveTilesChanged || haveFiltersChanged || haveTabsChanged)
+            (haveTilesChanged || haveFiltersChanged || haveTabsChanged) &&
+            !nextLocation.pathname.includes(
+                `/projects/${projectUuid}/dashboards/${dashboardUuid}`,
+            ) &&
+            // Allow user to add a new table
+            !sessionStorage.getItem('unsavedDashboardTiles')
         ) {
-            // Define the navigation block function
-            const navigationBlockFunction = (prompt: { pathname: string }) => {
-                // Check if the user is navigating away from the current dashboard
-                if (
-                    !prompt.pathname.includes(
-                        `/projects/${projectUuid}/dashboards/${dashboardUuid}`,
-                    ) &&
-                    // Allow user to add a new table
-                    !sessionStorage.getItem('unsavedDashboardTiles')
-                ) {
-                    // Set the blocked navigation location to navigate on confirming from user
-                    setBlockedNavigationLocation(prompt.pathname);
-                    // Open a warning modal before blocking navigation
-                    saveWarningModalHandlers.open();
-                    // Return false to block history navigation
-                    return false;
-                }
-                // Allow history navigation
-                return undefined;
-            };
-
-            // Set up navigation blocking
-            const unblockNavigation = history.block(navigationBlockFunction);
-
-            // Clean up navigation blocking when the component unmounts
-            return () => {
-                unblockNavigation();
-            };
+            return true; //blocks navigation
         }
-    }, [
-        isEditMode,
-        history,
-        haveTilesChanged,
-        saveWarningModalHandlers,
-        haveFiltersChanged,
-        projectUuid,
-        dashboardUuid,
-        haveTabsChanged,
-    ]);
+        return false; // allow navigation
+    });
 
     const handleEnterEditMode = useCallback(() => {
         resetDashboardFilters();
-        setIsFilterWarningModalOpen(false);
-        history.replace({
-            pathname: `/projects/${projectUuid}/dashboards/${dashboardUuid}/edit`,
-            search: '',
+        // Defer the redirect
+        void Promise.resolve().then(() => {
+            return navigate(
+                {
+                    pathname: `/projects/${projectUuid}/dashboards/${dashboardUuid}/edit`,
+                    search: '',
+                },
+                { replace: true },
+            );
         });
-    }, [history, projectUuid, dashboardUuid, resetDashboardFilters]);
-
-    const handleEditModeClicked = useCallback(() => {
-        if (haveFiltersChanged) {
-            setIsFilterWarningModalOpen(true);
-        } else {
-            handleEnterEditMode();
-        }
-    }, [haveFiltersChanged, handleEnterEditMode]);
+    }, [projectUuid, dashboardUuid, resetDashboardFilters, navigate]);
 
     if (dashboardError) {
         return <ErrorState error={dashboardError.error} />;
@@ -591,43 +535,49 @@ const Dashboard: FC = () => {
 
     return (
         <>
-            <Modal
-                opened={isSaveWarningModalOpen}
-                onClose={saveWarningModalHandlers.close}
-                title={null}
-                withCloseButton={false}
-                closeOnClickOutside={false}
-            >
-                <Stack>
-                    <Group noWrap spacing="xs">
-                        <MantineIcon
-                            icon={IconAlertCircle}
-                            color="red"
-                            size={50}
-                        />
-                        <Text fw={500}>
-                            You have unsaved changes to your dashboard! Are you
-                            sure you want to leave without saving?
-                        </Text>
-                    </Group>
+            {blocker.state === 'blocked' && (
+                <Modal
+                    opened
+                    onClose={() => {
+                        blocker.reset();
+                    }}
+                    title={null}
+                    withCloseButton={false}
+                    closeOnClickOutside={false}
+                >
+                    <Stack>
+                        <Group noWrap spacing="xs">
+                            <MantineIcon
+                                icon={IconAlertCircle}
+                                color="red"
+                                size={50}
+                            />
+                            <Text fw={500}>
+                                You have unsaved changes to your dashboard! Are
+                                you sure you want to leave without saving?
+                            </Text>
+                        </Group>
 
-                    <Group position="right">
-                        <Button onClick={saveWarningModalHandlers.close}>
-                            Stay
-                        </Button>
-                        <Button
-                            color="red"
-                            onClick={() => {
-                                history.block(() => {});
-                                if (blockedNavigationLocation)
-                                    history.push(blockedNavigationLocation);
-                            }}
-                        >
-                            Leave
-                        </Button>
-                    </Group>
-                </Stack>
-            </Modal>
+                        <Group position="right">
+                            <Button
+                                onClick={() => {
+                                    blocker.reset();
+                                }}
+                            >
+                                Stay
+                            </Button>
+                            <Button
+                                color="red"
+                                onClick={() => {
+                                    blocker.proceed();
+                                }}
+                            >
+                                Leave
+                            </Button>
+                        </Group>
+                    </Stack>
+                </Modal>
+            )}
 
             <Page
                 title={dashboard.name}
@@ -643,12 +593,14 @@ const Dashboard: FC = () => {
                         isPinned={isPinned}
                         activeTabUuid={activeTab?.uuid}
                         dashboardTabs={dashboardTabs}
+                        isFullScreenFeatureEnabled={isFullScreenFeatureEnabled}
                         onToggleFullscreen={handleToggleFullscreen}
                         hasDashboardChanged={
                             haveTilesChanged ||
                             haveFiltersChanged ||
                             hasTemporaryFilters ||
-                            haveTabsChanged
+                            haveTabsChanged ||
+                            hasDateZoomDisabledChanged
                         }
                         hasNewSemanticLayerChart={hasNewSemanticLayerChart}
                         onAddTiles={handleAddTiles}
@@ -685,6 +637,9 @@ const Dashboard: FC = () => {
                                 },
                                 name: dashboard.name,
                                 tabs: dashboardTabs,
+                                config: {
+                                    isDateZoomDisabled,
+                                },
                             });
                         }}
                         onCancel={handleCancel}
@@ -694,20 +649,35 @@ const Dashboard: FC = () => {
                         onExport={exportDashboardModalHandlers.open}
                         setAddingTab={setAddingTab}
                         onTogglePin={handleDashboardPinning}
-                        onEditClicked={handleEditModeClicked}
+                        onEditClicked={handleEnterEditMode}
                     />
                 }
                 withFullHeight={true}
             >
                 <Group position="apart" align="flex-start" noWrap px={'lg'}>
-                    {dashboardChartTiles && dashboardChartTiles.length > 0 && (
-                        <DashboardFilter
-                            isEditMode={isEditMode}
-                            activeTabUuid={activeTab?.uuid}
-                        />
-                    )}
+                    {/* This Group will take up remaining space (and not push DateZoom) */}
+                    <Group
+                        position="apart"
+                        align="flex-start"
+                        noWrap
+                        grow
+                        sx={{
+                            overflow: 'auto',
+                        }}
+                    >
+                        {dashboardChartTiles &&
+                            dashboardChartTiles.length > 0 && (
+                                <DashboardFilter
+                                    isEditMode={isEditMode}
+                                    activeTabUuid={activeTab?.uuid}
+                                />
+                            )}
+                    </Group>
+                    {/* DateZoom section will adjust width dynamically */}
                     {hasDashboardTiles && !hasNewSemanticLayerChart && (
-                        <DateZoom isEditMode={isEditMode} />
+                        <Box style={{ marginLeft: 'auto' }}>
+                            <DateZoom isEditMode={isEditMode} />
+                        </Box>
                     )}
                 </Group>
                 <Flex style={{ flexGrow: 1, flexDirection: 'column' }}>
@@ -735,8 +705,11 @@ const Dashboard: FC = () => {
                         uuid={dashboard.uuid}
                         onClose={deleteModalHandlers.close}
                         onConfirm={() => {
-                            history.replace(
+                            void navigate(
                                 `/projects/${projectUuid}/dashboards`,
+                                {
+                                    replace: true,
+                                },
                             );
                         }}
                     />
@@ -755,13 +728,6 @@ const Dashboard: FC = () => {
                         uuid={dashboard.uuid}
                         onClose={duplicateModalHandlers.close}
                         onConfirm={duplicateModalHandlers.close}
-                    />
-                )}
-                {isFilterWarningModalOpen && (
-                    <DashboardFiltersWarningModal
-                        onConfirm={handleEnterEditMode}
-                        onClose={() => setIsFilterWarningModalOpen(false)}
-                        opened={isFilterWarningModalOpen}
                     />
                 )}
             </Page>

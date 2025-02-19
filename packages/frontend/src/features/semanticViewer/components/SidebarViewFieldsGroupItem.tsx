@@ -1,7 +1,7 @@
 import {
-    assertUnreachable,
     FieldType as FieldKind,
     SemanticLayerFieldType,
+    assertUnreachable,
     type SemanticLayerField,
     type SemanticLayerTimeDimension,
 } from '@lightdash/common';
@@ -124,7 +124,9 @@ const SidebarViewFieldGroupItem: FC<SidebarViewFieldGroupItemProps> = ({
                                         <ActionIcon
                                             component="div"
                                             variant="transparent"
-                                            onClick={(e) => {
+                                            onClick={(
+                                                e: React.MouseEvent<HTMLButtonElement>,
+                                            ) => {
                                                 e.stopPropagation();
                                                 e.preventDefault();
                                             }}
@@ -180,7 +182,9 @@ const SidebarViewFieldGroupItem: FC<SidebarViewFieldGroupItemProps> = ({
                                     <ActionIcon
                                         component="div"
                                         variant="transparent"
-                                        onClick={(e) => {
+                                        onClick={(
+                                            e: React.MouseEvent<HTMLButtonElement>,
+                                        ) => {
                                             e.stopPropagation();
                                             e.preventDefault();
                                         }}

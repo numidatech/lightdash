@@ -2,8 +2,9 @@ import { subject } from '@casl/ability';
 import { Group, Stack, Text, Title } from '@mantine/core';
 import { type FC } from 'react';
 
-import { useApp } from '../../../providers/AppProvider';
-import { Can } from '../../common/Authorization';
+import { Can } from '../../../providers/Ability';
+import useApp from '../../../providers/App/useApp';
+import { EventName } from '../../../types/Events';
 import MantineLinkButton from '../../common/MantineLinkButton';
 
 interface Props {
@@ -32,7 +33,16 @@ const LandingPanel: FC<Props> = ({ userName, projectUuid }) => {
                     projectUuid: projectUuid,
                 })}
             >
-                <MantineLinkButton href={`/projects/${projectUuid}/tables`}>
+                <MantineLinkButton
+                    href={`/projects/${projectUuid}/tables`}
+                    trackingEvent={{
+                        name: EventName.LANDING_RUN_QUERY_CLICKED,
+                        properties: {
+                            organizationId: user.data?.organizationUuid || '',
+                            projectId: projectUuid,
+                        },
+                    }}
+                >
                     Run a query
                 </MantineLinkButton>
             </Can>

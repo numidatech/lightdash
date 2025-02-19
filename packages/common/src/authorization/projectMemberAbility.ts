@@ -59,6 +59,12 @@ export const projectMemberAbilities: Record<
         can('view', 'Tags', {
             projectUuid: member.projectUuid,
         });
+        can('view', 'MetricsTree', {
+            projectUuid: member.projectUuid,
+        });
+        can('view', 'SpotlightTableConfig', {
+            projectUuid: member.projectUuid,
+        });
     },
     interactive_viewer(member, { can }) {
         projectMemberAbilities.viewer(member, { can });
@@ -125,8 +131,10 @@ export const projectMemberAbilities: Record<
                 },
             },
         });
+
         can('manage', 'Space', {
             projectUuid: member.projectUuid,
+
             access: {
                 $elemMatch: {
                     userUuid: member.userUuid,
@@ -139,6 +147,10 @@ export const projectMemberAbilities: Record<
         projectMemberAbilities.interactive_viewer(member, { can });
         can('create', 'Space', {
             projectUuid: member.projectUuid,
+        });
+        can('manage', 'Space', {
+            projectUuid: member.projectUuid,
+            isPrivate: false,
         });
         can('manage', 'Job');
         can('manage', 'PinnedItems', {
@@ -157,6 +169,9 @@ export const projectMemberAbilities: Record<
             projectUuid: member.projectUuid,
         });
         can('manage', 'Tags', {
+            projectUuid: member.projectUuid,
+        });
+        can('manage', 'MetricsTree', {
             projectUuid: member.projectUuid,
         });
     },
@@ -206,6 +221,12 @@ export const projectMemberAbilities: Record<
         can('create', 'Project', {
             upstreamProjectUuid: member.projectUuid,
             type: ProjectType.PREVIEW,
+        });
+        can('manage', 'SpotlightTableConfig', {
+            projectUuid: member.projectUuid,
+        });
+        can('manage', 'ContentAsCode', {
+            projectUuid: member.projectUuid,
         });
     },
     admin(member, { can }) {

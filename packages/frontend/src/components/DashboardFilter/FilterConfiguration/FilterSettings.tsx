@@ -4,8 +4,8 @@ import {
     getFilterRuleWithDefaultValue,
     getFilterTypeFromItem,
     type DashboardFilterRule,
-    type FilterableDimension,
     type FilterRule,
+    type FilterableDimension,
 } from '@lightdash/common';
 import {
     Box,
@@ -19,10 +19,8 @@ import {
     type PopoverProps,
 } from '@mantine/core';
 import { useEffect, useMemo, useState, type FC } from 'react';
-import {
-    FilterInputComponent,
-    getFilterOperatorOptions,
-} from '../../common/Filters/FilterInputs';
+import FilterInputComponent from '../../common/Filters/FilterInputs';
+import { getFilterOperatorOptions } from '../../common/Filters/FilterInputs/utils';
 import { getPlaceholderByFilterTypeAndOperator } from '../../common/Filters/utils/getPlaceholderByFilterTypeAndOperator';
 
 interface FilterSettingsProps {

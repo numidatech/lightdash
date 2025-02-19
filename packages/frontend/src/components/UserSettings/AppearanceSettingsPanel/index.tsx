@@ -32,8 +32,9 @@ import { isEqual } from 'lodash';
 import { useCallback, useEffect, useState, type FC } from 'react';
 import { useOrganization } from '../../../hooks/organization/useOrganization';
 import { useOrganizationUpdateMutation } from '../../../hooks/organization/useOrganizationUpdateMutation';
+import { Can } from '../../../providers/Ability';
+import { useAbilityContext } from '../../../providers/Ability/useAbilityContext';
 import { isHexCodeColor } from '../../../utils/colorUtils';
-import { Can, useAbilityContext } from '../../common/Authorization';
 import MantineIcon from '../../common/MantineIcon';
 import { SettingsCard } from '../../common/Settings/SettingsCard';
 
@@ -336,7 +337,9 @@ const AppearanceColorSettings: FC = () => {
                         <Tooltip label="Restore default color">
                             <ActionIcon
                                 size="xs"
-                                onClick={(event) => {
+                                onClick={(
+                                    event: React.MouseEvent<HTMLButtonElement>,
+                                ) => {
                                     event.stopPropagation();
                                     event.preventDefault();
                                     form.setFieldValue(inputKey, defaultColor);

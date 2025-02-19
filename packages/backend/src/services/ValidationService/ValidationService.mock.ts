@@ -1,7 +1,7 @@
 import { Ability } from '@casl/ability';
 import {
-    Dashboard,
-    DashboardTileTypes,
+    AbilityAction,
+    AnyType,
     DimensionType,
     Explore,
     ExploreError,
@@ -13,8 +13,8 @@ import {
     OrganizationMemberRole,
     SessionUser,
     SupportedDbtAdapter,
-    TablesConfiguration,
     TableSelectionType,
+    TablesConfiguration,
     type DashboardFilters,
 } from '@lightdash/common';
 import { LightdashConfig } from '../../config/parseConfig';
@@ -39,7 +39,7 @@ export const user: SessionUser = {
     isSetupComplete: true,
     userId: 0,
     role: OrganizationMemberRole.ADMIN,
-    ability: new Ability([
+    ability: new Ability<[AbilityAction, AnyType]>([
         {
             subject: 'Validation',
             action: ['manage'],
@@ -47,6 +47,8 @@ export const user: SessionUser = {
     ]),
     isActive: true,
     abilityRules: [],
+    createdAt: new Date(),
+    updatedAt: new Date(),
 };
 
 export const chartForValidation: Awaited<
@@ -93,6 +95,7 @@ export const chartForValidation: Awaited<
     customBinDimensions: [],
     customSqlDimensions: [],
     sorts: ['table_dimension'],
+    dashboardUuid: undefined,
 };
 
 export const chartForValidationWithJoinedField: Awaited<
@@ -173,7 +176,7 @@ export const exploreWithoutDimension: Explore = {
     ...explore,
     tables: {
         table: {
-            ...explore.tables.table,
+            ...explore.tables.table!,
             dimensions: {},
         },
     },
@@ -182,7 +185,7 @@ export const exploreWithoutMetric: Explore = {
     ...explore,
     tables: {
         table: {
-            ...explore.tables.table,
+            ...explore.tables.table!,
             metrics: {},
         },
     },
@@ -196,7 +199,7 @@ export const exploreWithJoin: Explore = {
     baseTable: 'another_table',
     joinedTables: [], // This would normally be set, but we don't need it for this test
     tables: {
-        table: explore.tables.table, // same as explore
+        table: explore.tables.table!, // same as explore
         another_table: {
             name: 'another_table',
             label: 'another_table',

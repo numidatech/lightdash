@@ -1,4 +1,9 @@
-import { HealthState, LightdashMode, SessionUser } from '@lightdash/common';
+import {
+    AnyType,
+    HealthState,
+    LightdashMode,
+    SessionUser,
+} from '@lightdash/common';
 
 export const BaseResponse: HealthState = {
     healthy: true,
@@ -13,7 +18,6 @@ export const BaseResponse: HealthState = {
     hasEmailClient: false,
     hasExtendedUsageAnalytics: false,
     hasGithub: false,
-    hasGroups: false,
     hasHeadlessBrowser: false,
     hasSlack: false,
     auth: {
@@ -40,6 +44,9 @@ export const BaseResponse: HealthState = {
             enabled: false,
             loginPath: '',
         },
+        pat: {
+            maxExpirationTimeInDays: undefined,
+        },
     },
     intercom: {
         apiBase: '',
@@ -58,6 +65,7 @@ export const BaseResponse: HealthState = {
     query: {
         csvCellsLimit: 100000,
         maxLimit: 5000,
+        defaultLimit: 500,
     },
     rudder: {
         dataPlaneUrl: '',
@@ -72,9 +80,10 @@ export const BaseResponse: HealthState = {
         tracesSampleRate: 0,
         profilesSampleRate: 0,
     },
+    hasCacheAutocompleResults: false,
 };
 
 export const userMock = {
     userUuid: 'uuid',
     organizationUuid: 'orguuid',
-} as any as SessionUser;
+} as AnyType as SessionUser;

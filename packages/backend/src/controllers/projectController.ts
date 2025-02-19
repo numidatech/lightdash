@@ -1,8 +1,13 @@
 import {
+    AnyType,
     ApiCalculateTotalResponse,
+    ApiChartAsCodeListResponse,
+    ApiChartAsCodeUpsertResponse,
     ApiChartListResponse,
     ApiChartSummaryListResponse,
     ApiCreateTagResponse,
+    ApiDashboardAsCodeListResponse,
+    ApiDashboardAsCodeUpsertResponse,
     ApiErrorPayload,
     ApiGetProjectGroupAccesses,
     ApiGetProjectMemberResponse,
@@ -12,14 +17,16 @@ import {
     ApiSqlQueryResults,
     ApiSuccessEmpty,
     CalculateTotalFromQuery,
+    ChartAsCode,
     CreateProjectMember,
+    DashboardAsCode,
     DbtExposure,
-    isDuplicateDashboardParams,
     ParameterError,
     RequestMethod,
     UpdateMetadata,
     UpdateProjectMember,
     UserWarehouseCredentials,
+    isDuplicateDashboardParams,
     type ApiCreateDashboardResponse,
     type ApiGetDashboardsResponse,
     type ApiGetTagsResponse,
@@ -34,6 +41,7 @@ import {
 import {
     Body,
     Delete,
+    Deprecated,
     Get,
     Hidden,
     Middlewares,
@@ -41,6 +49,7 @@ import {
     Patch,
     Path,
     Post,
+    Put,
     Query,
     Request,
     Response,
@@ -112,6 +121,7 @@ export class ProjectController extends BaseController {
     @Middlewares([allowApiKeyAuthentication, isAuthenticated])
     @SuccessResponse('200', 'Success')
     @Get('{projectUuid}/chart-summaries')
+    @Deprecated()
     @OperationId('ListChartSummariesInProject')
     async getChartSummariesInProject(
         @Path() projectUuid: string,
@@ -309,6 +319,7 @@ export class ProjectController extends BaseController {
 
     /**
      * Run a raw sql query against the project's warehouse connection
+     * @deprecated Use /api/v1/projects/<project id>/sqlRunner/run instead
      * @param projectUuid The uuid of the project to run the query against
      * @param body The query to run
      * @param req express request
@@ -322,6 +333,7 @@ export class ProjectController extends BaseController {
     @Post('{projectUuid}/sqlQuery')
     @OperationId('RunSqlQuery')
     @Tags('Exploring')
+    @Deprecated()
     async runSqlQuery(
         @Path() projectUuid: string,
         @Body() body: { sql: string },
@@ -788,6 +800,28 @@ export class ProjectController extends BaseController {
         };
     }
 
+    @Middlewares([allowApiKeyAuthentication, isAuthenticated])
+    @SuccessResponse('200', 'Success')
+    @Put('{projectUuid}/tags/yaml')
+    @OperationId('replaceYamlTags')
+    async replaceYamlTags(
+        @Path() projectUuid: string,
+        @Body()
+        body: (Pick<Tag, 'name' | 'color'> & {
+            yamlReference: string;
+        })[],
+        @Request() req: express.Request,
+    ): Promise<ApiSuccessEmpty> {
+        await this.services
+            .getProjectService()
+            .replaceYamlTags(req.user!, projectUuid, body);
+
+        return {
+            status: 'ok',
+            results: undefined,
+        };
+    }
+
     @Middlewares([
         allowApiKeyAuthentication,
         isAuthenticated,
@@ -809,6 +843,105 @@ export class ProjectController extends BaseController {
         return {
             status: 'ok',
             results,
+        };
+    }
+
+    /** Charts as code */
+    @Middlewares([allowApiKeyAuthentication, isAuthenticated])
+    @SuccessResponse('200', 'Success')
+    @Get('{projectUuid}/charts/code')
+    @OperationId('getChartsAsCode')
+    async getChartsAsCode(
+        @Path() projectUuid: string,
+        @Request() req: express.Request,
+        @Query() ids?: string[],
+        @Query() offset?: number,
+    ): Promise<ApiChartAsCodeListResponse> {
+        this.setStatus(200);
+        return {
+            status: 'ok',
+            results: await this.services
+                .getCoderService()
+                .getCharts(req.user!, projectUuid, ids, offset),
+        };
+    }
+
+    @Middlewares([allowApiKeyAuthentication, isAuthenticated])
+    @SuccessResponse('200', 'Success')
+    @Get('{projectUuid}/dashboards/code')
+    @OperationId('getDashboardsAsCode')
+    async getDashboardsAsCode(
+        @Path() projectUuid: string,
+        @Request() req: express.Request,
+        @Query() ids?: string[],
+        @Query() offset?: number,
+    ): Promise<ApiDashboardAsCodeListResponse> {
+        this.setStatus(200);
+        return {
+            status: 'ok',
+            results: await this.services
+                .getCoderService()
+                .getDashboards(req.user!, projectUuid, ids, offset),
+        };
+    }
+
+    @Middlewares([allowApiKeyAuthentication, isAuthenticated])
+    @SuccessResponse('200', 'Success')
+    @Post('{projectUuid}/charts/{slug}/code')
+    @OperationId('upsertChartAsCode')
+    async upsertChartAsCode(
+        @Path() projectUuid: string,
+        @Path() slug: string,
+        @Body()
+        chart: Omit<
+            ChartAsCode,
+            'metricQuery' | 'chartConfig' | 'description'
+        > & {
+            chartConfig: AnyType;
+            metricQuery: AnyType;
+            description?: string | null; // Allow both undefined and null
+        },
+        @Request() req: express.Request,
+    ): Promise<ApiChartAsCodeUpsertResponse> {
+        this.setStatus(200);
+        return {
+            status: 'ok',
+            results: await this.services
+                .getCoderService()
+                .upsertChart(req.user!, projectUuid, slug, {
+                    ...chart,
+                    description: chart.description ?? undefined,
+                }),
+        };
+    }
+
+    @Middlewares([allowApiKeyAuthentication, isAuthenticated])
+    @SuccessResponse('200', 'Success')
+    @Post('{projectUuid}/dashboards/{slug}/code')
+    @OperationId('upsertDashboardAsCode')
+    async upsertDashboardAsCode(
+        @Path() projectUuid: string,
+        @Path() slug: string,
+        @Body()
+        dashboard: Omit<
+            DashboardAsCode,
+            'filters' | 'tiles' | 'description'
+        > & {
+            filters: AnyType;
+            tiles: AnyType;
+            description?: string | null; // Allow both undefined and null
+        }, // Simplify filter type for tsoa
+        @Request() req: express.Request,
+    ): Promise<ApiDashboardAsCodeUpsertResponse> {
+        this.setStatus(200);
+        return {
+            status: 'ok',
+            results: await this.services
+                .getCoderService()
+                .upsertDashboard(req.user!, projectUuid, slug, {
+                    ...dashboard,
+                    description: dashboard.description ?? undefined,
+                }),
         };
     }
 }

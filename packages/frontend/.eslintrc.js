@@ -36,6 +36,7 @@ module.exports = {
         'react',
         'jest-dom',
         'testing-library',
+        'react-refresh',
     ],
 
     settings: {
@@ -66,6 +67,9 @@ module.exports = {
         '@typescript-eslint/no-inferrable-types': 'off',
         '@typescript-eslint/no-non-null-assertion': 'off',
         '@typescript-eslint/no-throw-literal': 'off',
+        '@typescript-eslint/no-unsafe-assignment': 'off',
+        '@typescript-eslint/no-unsafe-call': 'off',
+        '@typescript-eslint/no-unsafe-member-access': 'off',
         'import/no-extraneous-dependencies': 'off',
         'import/no-named-as-default': 'off',
         'jsx-a11y/click-events-have-key-events': 'off',
@@ -104,5 +108,6 @@ module.exports = {
                 ignoreRestSiblings: true,
             },
         ],
+        'react-refresh/only-export-components': 'error',
     },
 };

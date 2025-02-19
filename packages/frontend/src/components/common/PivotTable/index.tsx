@@ -1,4 +1,5 @@
 import {
+    MetricType,
     formatItemValue,
     getConditionalFormattingColor,
     getConditionalFormattingConfig,
@@ -8,8 +9,9 @@ import {
     isField,
     isMetric,
     isNumericItem,
-    MetricType,
+    isSummable,
     type ConditionalFormattingConfig,
+    type ConditionalFormattingMinMaxMap,
     type ItemsMap,
     type PivotData,
     type ResultRow,
@@ -31,21 +33,26 @@ import last from 'lodash/last';
 import { readableColor } from 'polished';
 import React, { useCallback, useEffect, useMemo, useRef, type FC } from 'react';
 import { getDecimalPrecision } from '../../../hooks/tableVisualization/getDataAndColumns';
-import { isSummable } from '../../../hooks/useColumnTotals';
+import { formatCellContent } from '../../../hooks/useColumns';
 import { getColorFromRange, isHexCodeColor } from '../../../utils/colorUtils';
-import { getConditionalRuleLabel } from '../Filters/FilterInputs';
+import { getConditionalRuleLabel } from '../Filters/FilterInputs/utils';
 import Table from '../LightTable';
-import { CELL_HEIGHT } from '../LightTable/styles';
+import { CELL_HEIGHT } from '../LightTable/constants';
 import MantineIcon from '../MantineIcon';
+import { ROW_NUMBER_COLUMN_ID } from '../Table/constants';
 import { getGroupedRowModelLightdash } from '../Table/getGroupedRowModelLightdash';
-import { countSubRows } from '../Table/ScrollableTable/TableBody';
-import {
-    columnHelper,
-    ROW_NUMBER_COLUMN_ID,
-    type TableColumn,
-} from '../Table/types';
+import { columnHelper, type TableColumn } from '../Table/types';
+import { countSubRows } from '../Table/utils';
 import TotalCellMenu from './TotalCellMenu';
 import ValueCellMenu from './ValueCellMenu';
+
+type MenuCallbackProps = {
+    isOpen: boolean;
+    onClose: () => void;
+    onCopy: () => void;
+};
+
+type RenderCallback = () => React.ReactNode;
 
 const rowColumn: TableColumn = {
     id: ROW_NUMBER_COLUMN_ID,
@@ -76,6 +83,7 @@ type PivotTableProps = BoxProps & // TODO: remove this
     React.RefAttributes<HTMLTableElement> & {
         data: PivotData;
         conditionalFormattings: ConditionalFormattingConfig[];
+        minMaxMap: ConditionalFormattingMinMaxMap | undefined;
         hideRowNumbers: boolean;
         getFieldLabel: (fieldId: string) => string | undefined;
         getField: (fieldId: string) => ItemsMap[string] | undefined;
@@ -85,6 +93,7 @@ type PivotTableProps = BoxProps & // TODO: remove this
 const PivotTable: FC<PivotTableProps> = ({
     data,
     conditionalFormattings,
+    minMaxMap = {},
     hideRowNumbers = false,
     getFieldLabel,
     getField,
@@ -140,7 +149,7 @@ const PivotTable: FC<PivotTableProps> = ({
             (col, colIndex) => {
                 newColumnOrder.push(col.fieldId);
 
-                const itemId = col.underlyingId || col.baseId;
+                const itemId = col.underlyingId || col.baseId || col.fieldId;
                 const item = itemId ? getField(itemId) : undefined;
 
                 const shouldAggregate =
@@ -194,9 +203,7 @@ const PivotTable: FC<PivotTableProps> = ({
                     },
                     {
                         id: col.fieldId,
-                        cell: (info: any) => {
-                            return info.getValue()?.value?.formatted || '-';
-                        },
+                        cell: (info) => formatCellContent(info.getValue()),
                         meta: {
                             item: item,
                             type: col.columnType,
@@ -396,7 +403,6 @@ const PivotTable: FC<PivotTableProps> = ({
                                 #
                             </Table.CellHead>
                         )}
-
                         {/* renders the title labels */}
                         {data.titleFields[headerRowIndex].map(
                             (titleField, titleFieldIndex) => {
@@ -433,7 +439,6 @@ const PivotTable: FC<PivotTableProps> = ({
                                 );
                             },
                         )}
-
                         {/* renders the header values or labels */}
                         {headerValues.map((headerValue, headerColIndex) => {
                             const isLabel = headerValue.type === 'label';
@@ -457,11 +462,10 @@ const PivotTable: FC<PivotTableProps> = ({
                                 >
                                     {isLabel
                                         ? getFieldLabel(headerValue.fieldId)
-                                        : headerValue.value.formatted}
+                                        : formatCellContent(headerValue)}
                                 </Table.CellHead>
                             ) : null;
                         })}
-
                         {/* render the total label */}
                         {hasRowTotals
                             ? data.rowTotalFields?.[headerRowIndex].map(
@@ -521,7 +525,7 @@ const PivotTable: FC<PivotTableProps> = ({
                                     )?.fieldId;
                                     item = underlyingId
                                         ? getField(underlyingId)
-                                        : undefined;
+                                        : item;
                                 }
 
                                 const fullValue =
@@ -529,19 +533,21 @@ const PivotTable: FC<PivotTableProps> = ({
                                 const value = fullValue?.value;
 
                                 const conditionalFormattingConfig =
-                                    getConditionalFormattingConfig(
-                                        item,
-                                        value?.raw,
+                                    getConditionalFormattingConfig({
+                                        field: item,
+                                        value: value?.raw,
+                                        minMaxMap,
                                         conditionalFormattings,
-                                    );
+                                    });
 
                                 const conditionalFormattingColor =
-                                    getConditionalFormattingColor(
-                                        item,
-                                        value?.raw,
-                                        conditionalFormattingConfig,
+                                    getConditionalFormattingColor({
+                                        field: item,
+                                        value: value?.raw,
+                                        config: conditionalFormattingConfig,
+                                        minMaxMap,
                                         getColorFromRange,
-                                    );
+                                    });
 
                                 const conditionalFormatting = (() => {
                                     const tooltipContent =
@@ -590,7 +596,6 @@ const PivotTable: FC<PivotTableProps> = ({
                                 const TableCellComponent = isRowTotal
                                     ? Table.CellHead
                                     : Table.Cell;
-
                                 return (
                                     <TableCellComponent
                                         key={`value-${rowIndex}-${colIndex}`}
@@ -606,8 +611,12 @@ const PivotTable: FC<PivotTableProps> = ({
                                         withInteractions={allowInteractions}
                                         withValue={value?.formatted}
                                         withMenu={(
-                                            { isOpen, onClose, onCopy },
-                                            render,
+                                            {
+                                                isOpen,
+                                                onClose,
+                                                onCopy,
+                                            }: MenuCallbackProps,
+                                            render: RenderCallback,
                                         ) => (
                                             <ValueCellMenu
                                                 opened={isOpen}
@@ -651,7 +660,9 @@ const PivotTable: FC<PivotTableProps> = ({
                                                             marginRight: 0,
                                                         },
                                                     })}
-                                                    onClick={(e) => {
+                                                    onClick={(
+                                                        e: React.MouseEvent<HTMLButtonElement>,
+                                                    ) => {
                                                         e.stopPropagation();
                                                         e.preventDefault();
                                                         toggleExpander();
@@ -757,8 +768,12 @@ const PivotTable: FC<PivotTableProps> = ({
                                         withInteractions
                                         withValue={value.formatted}
                                         withMenu={(
-                                            { isOpen, onClose, onCopy },
-                                            render,
+                                            {
+                                                isOpen,
+                                                onClose,
+                                                onCopy,
+                                            }: MenuCallbackProps,
+                                            render: RenderCallback,
                                         ) => (
                                             <TotalCellMenu
                                                 opened={isOpen}

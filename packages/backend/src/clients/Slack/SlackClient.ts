@@ -1,9 +1,12 @@
 import {
+    friendlyName,
+    getErrorMessage,
     MissingConfigError,
     SlackAppCustomSettings,
     SlackChannel,
     SlackInstallationNotFoundError,
     SlackSettings,
+    UnexpectedServerError,
 } from '@lightdash/common';
 import * as Sentry from '@sentry/node';
 import { Block } from '@slack/bolt';
@@ -11,7 +14,9 @@ import {
     ChatPostMessageArguments,
     ChatUpdateArguments,
     ConversationsListResponse,
+    FilesCompleteUploadExternalResponse,
     UsersListResponse,
+    WebAPICallResult,
     WebClient,
 } from '@slack/web-api';
 import { LightdashConfig } from '../../config/parseConfig';
@@ -25,10 +30,17 @@ type SlackClientArguments = {
 
 const DEFAULT_CACHE_TIME = 1000 * 60 * 10; // 10 minutes
 const MAX_CHANNELS_LIMIT = 100000;
-const cachedChannels: Record<
-    string,
-    { lastCached: Date; channels: SlackChannel[] }
-> = {};
+
+export type PostSlackFile = {
+    organizationUuid: string;
+    channelId: string;
+    threadTs: string;
+    file: Buffer;
+    title: string;
+    comment?: string;
+    filename: string;
+    fileType?: string;
+};
 
 export class SlackClient {
     slackAuthenticationModel: SlackAuthenticationModel;
@@ -36,6 +48,11 @@ export class SlackClient {
     lightdashConfig: LightdashConfig;
 
     public isEnabled: boolean = false;
+
+    private channelsCache: Map<
+        string,
+        { lastCached: Date; channels: SlackChannel[] }
+    > = new Map();
 
     constructor({
         slackAuthenticationModel,
@@ -67,30 +84,37 @@ export class SlackClient {
     async getChannels(
         organizationUuid: string,
         search?: string,
+        filter: { excludeArchived?: boolean; forceRefresh?: boolean } = {
+            excludeArchived: true,
+        },
     ): Promise<SlackChannel[] | undefined> {
         const getCachedChannels = () => {
-            let finalResults: SlackChannel[];
-            if (!search) {
-                finalResults = cachedChannels[organizationUuid].channels;
-            } else {
-                finalResults = cachedChannels[organizationUuid].channels.filter(
-                    (channel) => channel.name.includes(search),
+            const cached = this.channelsCache.get(organizationUuid);
+            if (!cached) return undefined;
+
+            let finalResults = cached.channels;
+            if (search) {
+                finalResults = finalResults.filter((channel) =>
+                    channel.name.includes(search),
                 );
             }
-
-            if (finalResults.length > MAX_CHANNELS_LIMIT) {
-                return finalResults.slice(0, MAX_CHANNELS_LIMIT);
-            }
-            return finalResults;
+            return finalResults.slice(0, MAX_CHANNELS_LIMIT);
         };
 
-        if (
-            cachedChannels[organizationUuid] &&
-            new Date().getTime() -
-                cachedChannels[organizationUuid].lastCached.getTime() <
+        const isCacheValid = () => {
+            if (filter.forceRefresh) return false;
+            const cached = this.channelsCache.get(organizationUuid);
+            if (!cached) return false;
+
+            const cacheAge = new Date().getTime() - cached.lastCached.getTime();
+            return (
+                cacheAge <
                 (this.lightdashConfig.slack?.channelsCachedTime ||
                     DEFAULT_CACHE_TIME)
-        ) {
+            );
+        };
+
+        if (isCacheValid()) {
             return getCachedChannels();
         }
 
@@ -118,6 +142,7 @@ export class SlackClient {
                     // eslint-disable-next-line no-await-in-loop
                     await webClient.conversations.list({
                         types: 'public_channel,private_channel',
+                        exclude_archived: filter?.excludeArchived,
                         limit: 900,
                         cursor: nextCursor,
                     });
@@ -127,7 +152,9 @@ export class SlackClient {
                     ? [...allChannels, ...conversations.channels]
                     : allChannels;
             } catch (e) {
-                Logger.error(`Unable to fetch slack channels ${e}`);
+                Logger.error(
+                    `Unable to fetch slack channels: ${getErrorMessage(e)}`,
+                );
                 Sentry.captureException(e);
                 break;
             }
@@ -151,7 +178,9 @@ export class SlackClient {
                     ? [...allUsers, ...users.members]
                     : allUsers;
             } catch (e) {
-                Logger.error(`Unable to fetch slack users ${e}`);
+                Logger.error(
+                    `Unable to fetch slack users: ${getErrorMessage(e)}`,
+                );
                 Sentry.captureException(e);
 
                 break;
@@ -176,7 +205,10 @@ export class SlackClient {
             .sort((a, b) => a.name.localeCompare(b.name));
 
         const channels = [...sortedChannels, ...sortedUsers];
-        cachedChannels[organizationUuid] = { lastCached: new Date(), channels };
+        this.channelsCache.set(organizationUuid, {
+            lastCached: new Date(),
+            channels,
+        });
 
         return getCachedChannels();
     }
@@ -196,7 +228,9 @@ export class SlackClient {
             await Promise.all(joinPromises);
         } catch (e) {
             Logger.error(
-                `Unable to join channels ${channels} on organization ${organizationUuid}: ${e}`,
+                `Unable to join channels ${channels} on organization ${organizationUuid}: ${getErrorMessage(
+                    e,
+                )}`,
             );
         }
     }
@@ -225,9 +259,9 @@ export class SlackClient {
                 ...(appProfilePhotoUrl ? { icon_url: appProfilePhotoUrl } : {}),
                 ...slackMessageArgs,
             })
-            .catch((e: any) => {
+            .catch((e) => {
                 Logger.error(
-                    `Unable to post message on Slack: ${JSON.stringify(e)}`,
+                    `Unable to post message on Slack: ${getErrorMessage(e)}`,
                 );
                 throw e;
             });
@@ -261,9 +295,9 @@ export class SlackClient {
                         ? { icon_url: appProfilePhotoUrl }
                         : {}),
                 })
-                .catch((e: any) => {
+                .catch((e) => {
                     Logger.error(
-                        `Unable to post message on Slack. You might need to add the Slack app to the channel you wish you sent notifications to. Error: ${JSON.stringify(
+                        `Unable to post message on Slack. You might need to add the Slack app to the channel you wish you sent notifications to. Error: ${getErrorMessage(
                             e,
                         )}`,
                     );
@@ -345,27 +379,116 @@ export class SlackClient {
         });
     }
 
-    /**
-     *
-     * @param args.filename - you must provide an extension for slack to recognize the file type
-     */
-    async postFileToThread(args: {
-        organizationUuid: string;
-        channelId: string;
-        threadTs: string;
-        file: Buffer;
-        title: string;
-        comment: string;
-        filename: string;
-    }): Promise<void> {
+    async postFileToThread(args: PostSlackFile) {
         const webClient = await this.getWebClient(args.organizationUuid);
-        await webClient.files.uploadV2({
+
+        const result = await webClient.files.uploadV2({
             channel_id: args.channelId,
             thread_ts: args.threadTs,
             file: args.file,
             title: args.title,
             initial_comment: args.comment,
             filename: args.filename,
+            filetype: args.fileType || 'png',
         });
+
+        if (!result.ok) {
+            Logger.error(`Failed to upload file to slack`, result.error);
+            throw new Error(`Failed to upload file to slack: ${result.error}`);
+        } else {
+            Logger.debug(`Uploaded file to slack`, result.file);
+        }
+    }
+
+    /* 
+    This method will try to upload an image to slack, so it can be used in blocks, 
+    instead of sharing the file directly on a channel or a thread
+    It returns a promise that resolves to the file url, but it takes a while for the file to be uploaded
+    Note: method sharedPublicURL will not work here because it requires a user token, and we only use bot tokens
+    */
+    async uploadFile(args: {
+        organizationUuid: string;
+        file: Buffer;
+        title: string;
+    }) {
+        const webClient = await this.getWebClient(args.organizationUuid);
+        const filename = friendlyName(args.title);
+        const result = (await webClient.files.uploadV2({
+            file: args.file,
+            title: args.title,
+            filename,
+        })) as WebAPICallResult & {
+            files: FilesCompleteUploadExternalResponse[];
+        };
+
+        const uploadedFile = result.files?.[0].files?.[0];
+
+        if (!uploadedFile?.id) {
+            throw new UnexpectedServerError('Slack file was not uploaded');
+        }
+
+        // We need to wait for the file to be ready, otherwise slack will fail with invalid_blocks error
+        async function waitForFileReady(fileId: string): Promise<string> {
+            const maxRetries = 10;
+            const delay = 1000;
+
+            const checkFile = async (attempt: number): Promise<string> => {
+                if (attempt >= maxRetries) {
+                    throw new UnexpectedServerError(
+                        'File URL not available after maximum retries.',
+                    );
+                }
+
+                const fileInfo = await webClient.files.info({ file: fileId });
+                const urlPrivate = fileInfo.file?.url_private;
+                const mimeType = fileInfo.file?.mimetype;
+
+                if (mimeType && urlPrivate) {
+                    Logger.debug(`Slack image ready after ${attempt} retries`);
+                    return urlPrivate;
+                }
+
+                return new Promise((resolve) => {
+                    setTimeout(() => {
+                        resolve(checkFile(attempt + 1));
+                    }, delay);
+                });
+            };
+
+            return checkFile(0);
+        }
+
+        const fileUrl = await waitForFileReady(uploadedFile?.id);
+
+        return fileUrl;
+    }
+
+    /**
+     * Helper method to try to upload an image to slack, so it can be used in blocks without expiration
+     * If it fails, we will keep using the same URL (s3)
+     */
+    async tryUploadingImageToSlack(
+        organizationUuid: string,
+        imageUrl: string | undefined,
+        name: string,
+    ) {
+        try {
+            if (!imageUrl) {
+                return { url: imageUrl, expiring: true };
+            }
+            const response = await fetch(imageUrl);
+            const buffer = Buffer.from(await response.arrayBuffer());
+            const slackFileUrl = await this.uploadFile({
+                organizationUuid,
+                file: buffer,
+                title: name,
+            });
+            return { url: slackFileUrl, expiring: false };
+        } catch (e) {
+            Logger.error(
+                `Failed to upload image to slack: ${getErrorMessage(e)}`,
+            );
+            return { url: imageUrl, expiring: true };
+        }
     }
 }

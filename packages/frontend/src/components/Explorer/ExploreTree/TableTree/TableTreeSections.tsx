@@ -1,20 +1,35 @@
 import { subject } from '@casl/ability';
 import {
+    DbtProjectType,
+    FeatureFlags,
     getItemId,
     type AdditionalMetric,
     type CompiledTable,
     type CustomDimension,
 } from '@lightdash/common';
-import { Button, Center, Group, Text, Tooltip } from '@mantine/core';
-import { IconAlertTriangle, IconPlus } from '@tabler/icons-react';
+import {
+    ActionIcon,
+    Button,
+    Center,
+    Group,
+    Text,
+    Tooltip,
+} from '@mantine/core';
+import { IconAlertTriangle, IconCode, IconPlus } from '@tabler/icons-react';
 import { useMemo, type FC } from 'react';
-import { useParams } from 'react-router-dom';
-import { useApp } from '../../../../providers/AppProvider';
-import { useExplorerContext } from '../../../../providers/ExplorerProvider';
-import MantineIcon from '../../../common/MantineIcon';
+import { useParams } from 'react-router';
+import { useGitIntegration } from '../../../../hooks/gitIntegration/useGitIntegration';
+import { useFeatureFlagEnabled } from '../../../../hooks/useFeatureFlagEnabled';
+import { useProject } from '../../../../hooks/useProject';
+import useApp from '../../../../providers/App/useApp';
+import useExplorerContext from '../../../../providers/Explorer/useExplorerContext';
+import useTracking from '../../../../providers/Tracking/useTracking';
+import { EventName } from '../../../../types/Events';
 import DocumentationHelpButton from '../../../DocumentationHelpButton';
-import { getSearchResults, TreeProvider } from './Tree/TreeProvider';
+import MantineIcon from '../../../common/MantineIcon';
+import { TreeProvider } from './Tree/TreeProvider';
 import TreeRoot from './Tree/TreeRoot';
+import { getSearchResults } from './Tree/utils';
 
 type Props = {
     searchQuery?: string;
@@ -42,6 +57,7 @@ const TableTreeSections: FC<Props> = ({
 }) => {
     const { projectUuid } = useParams<{ projectUuid: string }>();
     const { user } = useApp();
+    const { track } = useTracking();
     const canManageCustomSql = user.data?.ability?.can(
         'manage',
         subject('CustomSql', {
@@ -51,6 +67,14 @@ const TableTreeSections: FC<Props> = ({
     );
     const toggleCustomDimensionModal = useExplorerContext(
         (context) => context.actions.toggleCustomDimensionModal,
+    );
+    const toggleAdditionalMetricWriteBackModal = useExplorerContext(
+        (context) => context.actions.toggleAdditionalMetricWriteBackModal,
+    );
+
+    const allAdditionalMetrics = useExplorerContext(
+        (context) =>
+            context.state.unsavedChartVersion.metricQuery.additionalMetrics,
     );
 
     const dimensions = useMemo(() => {
@@ -98,16 +122,47 @@ const TableTreeSections: FC<Props> = ({
     const hasCustomMetrics = additionalMetrics.length > 0;
     const hasCustomDimensions = customDimensions && customDimensions.length > 0;
 
+    const { data: project } = useProject(projectUuid);
+
+    const isGithubProject =
+        project?.dbtConnection.type === DbtProjectType.GITHUB;
+    const { data: gitIntegration } = useGitIntegration();
+    const isCustomSqlEnabled = useFeatureFlagEnabled(
+        FeatureFlags.CustomSQLEnabled,
+    );
+
+    const customMetricsIssues: {
+        [id: string]: {
+            errors: { message: string }[];
+        };
+    } = useMemo(() => {
+        return additionalMetrics.reduce((acc, item) => {
+            const foundDuplicateId = Object.keys(metrics).includes(
+                getItemId(item),
+            );
+            return {
+                ...acc,
+                [getItemId(item)]: {
+                    errors: foundDuplicateId
+                        ? [
+                              `A metric with this ID already exists in the table. Rename your custom metric to prevent conflicts.`,
+                          ]
+                        : undefined,
+                },
+            };
+        }, {});
+    }, [metrics, additionalMetrics]);
+
     return (
         <>
             {missingFields && missingFields.all.length > 0 && (
                 <>
-                    {' '}
                     <Group mt="sm" mb="xs">
                         <Text fw={600} color="gray.6">
                             Missing fields
                         </Text>
                     </Group>
+
                     {missingFields.all.map((missingField) => {
                         return (
                             <Tooltip
@@ -130,20 +185,25 @@ const TableTreeSections: FC<Props> = ({
                                         );
                                     }}
                                     ml={12}
+                                    my="xs"
                                     sx={{ cursor: 'pointer' }}
+                                    noWrap
+                                    spacing="sm"
                                 >
                                     <MantineIcon
                                         icon={IconAlertTriangle}
                                         color="yellow.9"
                                         style={{ flexShrink: 0 }}
                                     />
-                                    <Text>{missingField}</Text>
+
+                                    <Text truncate>{missingField}</Text>
                                 </Group>
                             </Tooltip>
                         );
                     })}
                 </>
             )}
+
             {isSearching &&
             getSearchResults(dimensions, searchQuery).size === 0 ? null : (
                 <Group mt="sm" mb="xs" position={'apart'}>
@@ -244,26 +304,58 @@ const TableTreeSections: FC<Props> = ({
                 getSearchResults(customMetrics, searchQuery).size === 0
             ) ? (
                 <Group position="apart" mt="sm" mb="xs" pr="sm">
-                    <Text fw={600} color="yellow.9">
-                        Custom metrics
-                    </Text>
-
-                    <DocumentationHelpButton
-                        href="https://docs.lightdash.com/guides/how-to-create-metrics#-adding-custom-metrics-in-the-explore-view"
-                        tooltipProps={{
-                            label: (
-                                <>
-                                    Add custom metrics by hovering over the
-                                    dimension of your choice & selecting the
-                                    three-dot Action Menu.{' '}
-                                    <Text component="span" fw={600}>
-                                        Click to view docs.
-                                    </Text>
-                                </>
-                            ),
-                            multiline: true,
-                        }}
-                    />
+                    <Group>
+                        <Text fw={600} color="yellow.9">
+                            Custom metrics
+                        </Text>
+                        <DocumentationHelpButton
+                            href="https://docs.lightdash.com/guides/how-to-create-metrics#-adding-custom-metrics-in-the-explore-view"
+                            tooltipProps={{
+                                label: (
+                                    <>
+                                        Add custom metrics by hovering over the
+                                        dimension of your choice & selecting the
+                                        three-dot Action Menu.{' '}
+                                        <Text component="span" fw={600}>
+                                            Click to view docs.
+                                        </Text>
+                                    </>
+                                ),
+                                multiline: true,
+                            }}
+                        />
+                    </Group>
+                    {isCustomSqlEnabled && (
+                        <Tooltip label="Write back custom metrics">
+                            <ActionIcon
+                                onClick={() => {
+                                    if (
+                                        projectUuid &&
+                                        user.data?.organizationUuid
+                                    ) {
+                                        track({
+                                            name: EventName.WRITE_BACK_FROM_CUSTOM_METRIC_HEADER_CLICKED,
+                                            properties: {
+                                                userId: user.data.userUuid,
+                                                projectId: projectUuid,
+                                                organizationId:
+                                                    user.data.organizationUuid,
+                                                customMetricsCount:
+                                                    allAdditionalMetrics?.length ||
+                                                    0,
+                                            },
+                                        });
+                                    }
+                                    toggleAdditionalMetricWriteBackModal({
+                                        items: allAdditionalMetrics || [],
+                                        multiple: true,
+                                    });
+                                }}
+                            >
+                                <MantineIcon icon={IconCode} />
+                            </ActionIcon>
+                        </Tooltip>
+                    )}
                 </Group>
             ) : null}
 
@@ -274,8 +366,13 @@ const TableTreeSections: FC<Props> = ({
                     itemsMap={customMetrics}
                     selectedItems={selectedItems}
                     missingCustomMetrics={missingFields?.customMetrics}
+                    itemsAlerts={customMetricsIssues}
                     groupDetails={table.groupDetails}
                     onItemClick={(key) => onSelectedNodeChange(key, false)}
+                    isGithubIntegrationEnabled={
+                        isGithubProject && isCustomSqlEnabled
+                    }
+                    gitIntegration={gitIntegration}
                 >
                     <TreeRoot />
                 </TreeProvider>

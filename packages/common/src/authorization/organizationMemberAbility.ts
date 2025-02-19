@@ -7,15 +7,24 @@ import { ProjectType } from '../types/projects';
 import { SpaceMemberRole } from '../types/space';
 import { type MemberAbility } from './types';
 
-// eslint-disable-next-line import/prefer-default-export
-export const organizationMemberAbilities: Record<
+const applyOrganizationMemberDynamicAbilities = ({
+    role,
+    builder: { can },
+    permissionsConfig,
+}: OrganizationMemberAbilitiesArgs) => {
+    if (
+        permissionsConfig.pat.enabled &&
+        permissionsConfig.pat.allowedOrgRoles.includes(role)
+    ) {
+        can('manage', 'PersonalAccessToken', {});
+    }
+};
+
+const applyOrganizationMemberStaticAbilities: Record<
     OrganizationMemberRole,
     (
-        member: Pick<
-            OrganizationMemberProfile,
-            'organizationUuid' | 'userUuid'
-        >,
-        builder: Pick<AbilityBuilder<MemberAbility>, 'can'>,
+        member: OrganizationMemberAbilitiesArgs['member'],
+        builder: OrganizationMemberAbilitiesArgs['builder'],
     ) => void
 > = {
     member(member, { can }) {
@@ -30,7 +39,7 @@ export const organizationMemberAbilities: Record<
         });
     },
     viewer(member, { can }) {
-        organizationMemberAbilities.member(member, { can });
+        applyOrganizationMemberStaticAbilities.member(member, { can });
         can('view', 'Dashboard', {
             organizationUuid: member.organizationUuid,
             isPrivate: false,
@@ -76,9 +85,15 @@ export const organizationMemberAbilities: Record<
         can('view', 'Tags', {
             organizationUuid: member.organizationUuid,
         });
+        can('view', 'MetricsTree', {
+            organizationUuid: member.organizationUuid,
+        });
+        can('view', 'SpotlightTableConfig', {
+            organizationUuid: member.organizationUuid,
+        });
     },
     interactive_viewer(member, { can }) {
-        organizationMemberAbilities.viewer(member, { can });
+        applyOrganizationMemberStaticAbilities.viewer(member, { can });
         can('create', 'Job');
         can('view', 'Job', { userUuid: member.userUuid });
         can('view', 'UnderlyingData', {
@@ -145,6 +160,7 @@ export const organizationMemberAbilities: Record<
                 },
             },
         });
+
         can('manage', 'Space', {
             organizationUuid: member.organizationUuid,
             access: {
@@ -156,7 +172,13 @@ export const organizationMemberAbilities: Record<
         });
     },
     editor(member, { can }) {
-        organizationMemberAbilities.interactive_viewer(member, { can });
+        applyOrganizationMemberStaticAbilities.interactive_viewer(member, {
+            can,
+        });
+        can('manage', 'Space', {
+            organizationUuid: member.organizationUuid,
+            isPrivate: false,
+        });
         can('create', 'Space', {
             organizationUuid: member.organizationUuid,
         });
@@ -179,9 +201,12 @@ export const organizationMemberAbilities: Record<
         can('manage', 'Tags', {
             organizationUuid: member.organizationUuid,
         });
+        can('manage', 'MetricsTree', {
+            organizationUuid: member.organizationUuid,
+        });
     },
     developer(member, { can }) {
-        organizationMemberAbilities.editor(member, { can });
+        applyOrganizationMemberStaticAbilities.editor(member, { can });
         can('manage', 'VirtualView', {
             organizationUuid: member.organizationUuid,
         });
@@ -219,13 +244,20 @@ export const organizationMemberAbilities: Record<
             organizationUuid: member.organizationUuid,
             type: ProjectType.PREVIEW,
         });
+
         can('delete', 'Project', {
             organizationUuid: member.organizationUuid,
             type: ProjectType.PREVIEW,
         });
+        can('manage', 'SpotlightTableConfig', {
+            organizationUuid: member.organizationUuid,
+        });
+        can('manage', 'ContentAsCode', {
+            organizationUuid: member.organizationUuid,
+        });
     },
     admin(member, { can }) {
-        organizationMemberAbilities.developer(member, { can });
+        applyOrganizationMemberStaticAbilities.developer(member, { can });
         can('manage', 'Dashboard', {
             organizationUuid: member.organizationUuid,
         });
@@ -265,3 +297,30 @@ export const organizationMemberAbilities: Record<
         });
     },
 };
+
+export type OrganizationMemberAbilitiesArgs = {
+    role: OrganizationMemberRole;
+    member: Pick<OrganizationMemberProfile, 'organizationUuid' | 'userUuid'>;
+    builder: Pick<AbilityBuilder<MemberAbility>, 'can'>;
+    permissionsConfig: {
+        pat: {
+            enabled: boolean;
+            allowedOrgRoles: OrganizationMemberRole[];
+        };
+    };
+};
+
+export default function applyOrganizationMemberAbilities({
+    role,
+    member,
+    builder,
+    permissionsConfig,
+}: OrganizationMemberAbilitiesArgs) {
+    applyOrganizationMemberStaticAbilities[role](member, builder);
+    applyOrganizationMemberDynamicAbilities({
+        role,
+        member,
+        builder,
+        permissionsConfig,
+    });
+}

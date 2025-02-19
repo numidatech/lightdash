@@ -3,14 +3,15 @@ import {
     ActionIcon,
     Box,
     Button,
-    getDefaultZIndex,
     Group,
     Highlight,
     Paper,
     Portal,
+    Tooltip,
+    getDefaultZIndex,
 } from '@mantine/core';
 import { useClickOutside } from '@mantine/hooks';
-import { IconTrash } from '@tabler/icons-react';
+import { IconTable, IconTrash } from '@tabler/icons-react';
 import EmojiPicker, {
     Emoji,
     EmojiStyle,
@@ -19,11 +20,11 @@ import EmojiPicker, {
 import { type MRT_Row, type MRT_TableInstance } from 'mantine-react-table';
 import { forwardRef, useCallback, useEffect, useState } from 'react';
 import MantineIcon from '../../../components/common/MantineIcon';
-import { useTracking } from '../../../providers/TrackingProvider';
+import useTracking from '../../../providers/Tracking/useTracking';
 import { MetricIconPlaceholder } from '../../../svgs/metricsCatalog';
 import { EventName } from '../../../types/Events';
 import { useAppSelector } from '../../sqlRunner/store/hooks';
-import { useUpdateCatalogItemIcon } from '../hooks/useCatalogCategories';
+import { useUpdateCatalogItemIcon } from '../hooks/useCatalogItemIcon';
 
 import '../../../styles/emoji-picker-react.css';
 
@@ -97,11 +98,17 @@ type Props = {
 export const MetricsCatalogColumnName = forwardRef<HTMLDivElement, Props>(
     ({ row, table }, ref) => {
         const { track } = useTracking();
+        const userUuid = useAppSelector(
+            (state) => state.metricsCatalog.user?.userUuid,
+        );
         const organizationUuid = useAppSelector(
             (state) => state.metricsCatalog.organizationUuid,
         );
         const projectUuid = useAppSelector(
             (state) => state.metricsCatalog.projectUuid,
+        );
+        const canManageTags = useAppSelector(
+            (state) => state.metricsCatalog.abilities.canManageTags,
         );
 
         const [isPickerOpen, setIsPickerOpen] = useState(false);
@@ -182,6 +189,7 @@ export const MetricsCatalogColumnName = forwardRef<HTMLDivElement, Props>(
                 track({
                     name: EventName.METRICS_CATALOG_ICON_APPLIED,
                     properties: {
+                        userId: userUuid,
                         organizationId: organizationUuid,
                         projectId: projectUuid,
                     },
@@ -196,6 +204,7 @@ export const MetricsCatalogColumnName = forwardRef<HTMLDivElement, Props>(
                     <ActionIcon
                         ref={setIconRef}
                         variant="default"
+                        disabled={!canManageTags}
                         onClick={handleIconClick}
                         sx={(theme) => ({
                             width: 28,
@@ -207,20 +216,48 @@ export const MetricsCatalogColumnName = forwardRef<HTMLDivElement, Props>(
                                 boxShadow:
                                     '0px -2px 0px 0px rgba(10, 13, 18, 0.07) inset, 0px 1px 2px 0px rgba(16, 24, 40, 0.05)',
                             }),
+                            '&:disabled': {
+                                backgroundColor: 'initial',
+                            },
                         })}
                     >
                         {isEmojiIcon(row.original.icon) ? (
                             <Emoji
-                                size={18}
+                                size={16}
                                 unified={row.original.icon.unicode}
                             />
                         ) : (
                             <MetricIconPlaceholder width={12} height={12} />
                         )}
                     </ActionIcon>
-                    <Highlight highlight={table.getState().globalFilter || ''}>
-                        {row.original.label}
-                    </Highlight>
+                    <Tooltip
+                        label={
+                            <Group spacing={4}>
+                                <MantineIcon
+                                    color="gray.2"
+                                    icon={IconTable}
+                                    stroke={2.0}
+                                />
+                                {row.original.tableName}
+                            </Group>
+                        }
+                        disabled={!row.original.tableName}
+                        variant="xs"
+                        openDelay={300}
+                    >
+                        <Highlight
+                            highlight={table.getState().globalFilter || ''}
+                            c="dark.9"
+                            fw={500}
+                            fz="sm"
+                            lh="150%"
+                            sx={{
+                                cursor: 'default',
+                            }}
+                        >
+                            {row.original.label}
+                        </Highlight>
+                    </Tooltip>
                 </Group>
                 <SharedEmojiPicker
                     emoji={row.original.icon}

@@ -1,8 +1,13 @@
+import { friendlyName } from '@lightdash/common';
 import {
     Anchor,
+    Badge,
     Box,
+    Code,
+    Divider,
     Group,
     Popover,
+    Stack,
     Text,
     Title,
     useMantineTheme,
@@ -10,9 +15,10 @@ import {
 import { IconTable } from '@tabler/icons-react';
 import ReactMarkdownPreview from '@uiw/react-markdown-preview';
 import { type FC, type PropsWithChildren } from 'react';
+import rehypeExternalLinks from 'rehype-external-links';
 import { rehypeRemoveHeaderLinks } from '../../../../utils/markdownUtils';
 import MantineIcon from '../../../common/MantineIcon';
-import { useItemDetail } from './ItemDetailContext';
+import { useItemDetail } from './useItemDetails';
 
 /**
  * Renders markdown for an item's description, with additional constraints
@@ -24,17 +30,18 @@ export const ItemDetailMarkdown: FC<{ source: string }> = ({ source }) => {
     return (
         <ReactMarkdownPreview
             skipHtml
-            linkTarget="_blank"
             components={{
                 h1: ({ children }) => <Title order={2}>{children}</Title>,
                 h2: ({ children }) => <Title order={3}>{children}</Title>,
                 h3: ({ children }) => <Title order={4}>{children}</Title>,
             }}
+            rehypePlugins={[[rehypeExternalLinks, { target: '_blank' }]]}
             rehypeRewrite={rehypeRemoveHeaderLinks}
             source={source}
             disallowedElements={['img']}
             style={{
                 fontSize: theme.fontSizes.sm,
+                color: theme.colors.gray[7],
             }}
         />
     );
@@ -47,9 +54,11 @@ export const ItemDetailMarkdown: FC<{ source: string }> = ({ source }) => {
 export const ItemDetailPreview: FC<{
     description?: string;
     onViewDescription: () => void;
-}> = ({ description, onViewDescription }) => {
-    if (!description) return null;
-
+    metricInfo?: {
+        type: string;
+        sql: string;
+    };
+}> = ({ description, onViewDescription, metricInfo }) => {
     /**
      * This value is pretty arbitrary - it's an amount of characters that will exceed
      * a single line, and for which the 'Read more' option should make sense, and not
@@ -59,28 +68,61 @@ export const ItemDetailPreview: FC<{
      * if unnecessarily so.
      */
     const isTruncated =
-        description.length > 180 || description.split('\n').length > 2;
+        (description && description.length > 180) ||
+        (description && description.split('\n').length > 2);
 
     return (
-        <Box>
-            <Box
-                mah={120}
-                style={{
-                    overflow: 'hidden',
+        <Stack spacing="xs">
+            {metricInfo && (
+                <>
+                    <Group spacing="xs">
+                        <Text fz="xs" fw={500} c="dark.7">
+                            Type:
+                        </Text>
+                        <Badge
+                            radius="sm"
+                            color="indigo"
+                            sx={(theme) => ({
+                                boxShadow: theme.shadows.subtle,
+                                border: `1px solid ${theme.colors.indigo[1]}`,
+                            })}
+                        >
+                            {friendlyName(metricInfo.type)}
+                        </Badge>
+                    </Group>
+                    <Divider color="gray.2" />
+                    <Stack spacing="xs">
+                        <Text fz="xs" fw={500} c="dark.7">
+                            SQL
+                        </Text>
+                        <Code>{metricInfo.sql}</Code>
+                    </Stack>
+                </>
+            )}
+            {description && (
+                <Box
+                    mah={120}
+                    sx={{
+                        overflow: 'hidden',
 
-                    // If we're over the truncation limit, use a mask to fade out the bottom of the container.
-                    maskImage: isTruncated
-                        ? 'linear-gradient(180deg, white 0%, white 80%, transparent 100%)'
-                        : undefined,
-                }}
-            >
-                <ItemDetailMarkdown source={description} />
-            </Box>
+                        // If we're over the truncation limit, use a mask to fade out the bottom of the container.
+                        maskImage: isTruncated
+                            ? 'linear-gradient(180deg, white 0%, white 80%, transparent 100%)'
+                            : undefined,
+                    }}
+                >
+                    <Stack spacing="xs">
+                        {metricInfo && <Divider color="gray.2" />}
+
+                        <ItemDetailMarkdown source={description} />
+                    </Stack>
+                </Box>
+            )}
             {isTruncated && (
                 <Box ta={'center'}>
                     <Anchor
                         size={'xs'}
-                        onClick={(e) => {
+                        onClick={(e: React.MouseEvent<HTMLAnchorElement>) => {
                             e.preventDefault();
                             onViewDescription();
                         }}
@@ -89,7 +131,7 @@ export const ItemDetailPreview: FC<{
                     </Anchor>
                 </Box>
             )}
-        </Box>
+        </Stack>
     );
 };
 

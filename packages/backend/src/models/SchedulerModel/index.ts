@@ -1,12 +1,6 @@
 import {
     CreateSchedulerAndTargets,
     CreateSchedulerLog,
-    isChartScheduler,
-    isCreateSchedulerSlackTarget,
-    isDashboardScheduler,
-    isSlackTarget,
-    isUpdateSchedulerEmailTarget,
-    isUpdateSchedulerSlackTarget,
     NotFoundError,
     Scheduler,
     SchedulerAndTargets,
@@ -16,9 +10,16 @@ import {
     SchedulerSlackTarget,
     SchedulerWithLogs,
     UpdateSchedulerAndTargets,
+    isChartScheduler,
+    isCreateSchedulerSlackTarget,
+    isDashboardScheduler,
+    isSlackTarget,
+    isUpdateSchedulerEmailTarget,
+    isUpdateSchedulerSlackTarget,
     type SchedulerCronUpdate,
 } from '@lightdash/common';
 import { Knex } from 'knex';
+import { DatabaseError } from 'pg';
 import { DashboardsTableName } from '../../database/entities/dashboards';
 import { ProjectTableName } from '../../database/entities/projects';
 import { SavedChartsTableName } from '../../database/entities/savedCharts';
@@ -73,6 +74,7 @@ export class SchedulerModel {
             enabled: scheduler.enabled,
             notificationFrequency: scheduler.notification_frequency,
             selectedTabs: scheduler.selected_tabs,
+            includeLinks: scheduler.include_links,
         } as Scheduler;
     }
 
@@ -270,6 +272,7 @@ export class SchedulerModel {
                         newScheduler.selectedTabs
                             ? newScheduler.selectedTabs
                             : null,
+                    include_links: newScheduler.includeLinks !== false,
                 })
                 .returning('*');
             const targetPromises = newScheduler.targets.map(async (target) => {
@@ -339,6 +342,7 @@ export class SchedulerModel {
                         'selectedTabs' in scheduler && scheduler.selectedTabs
                             ? (scheduler.selectedTabs as string[])
                             : null,
+                    include_links: scheduler.includeLinks !== false,
                 })
                 .where('scheduler_uuid', scheduler.schedulerUuid);
 
@@ -617,6 +621,7 @@ export class SchedulerModel {
 
             if (
                 !(
+                    error instanceof DatabaseError &&
                     error.code === FOREIGN_KEY_VIOLATION_ERROR_CODE &&
                     error.constraint === 'scheduler_log_scheduler_uuid_foreign'
                 )

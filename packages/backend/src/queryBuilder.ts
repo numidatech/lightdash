@@ -1,5 +1,6 @@
 import {
     assertUnreachable,
+    AuthorizationError,
     BinType,
     CompiledCustomSqlDimension,
     CompiledDimension,
@@ -79,6 +80,22 @@ const getDimensionFromId = (
                 };
         }
 
+        // At this point, we couldn't find the dimension with the given id in the explore
+        // it is possible that the explore is a joined table and is filtered by user_attributes
+        // So we check if the dimension exists in the unfiltered tables
+        if (
+            explore.unfilteredTables &&
+            getDimensionFromId(
+                dimId,
+                { ...explore, tables: explore.unfilteredTables },
+                adapterType,
+                startOfWeek,
+            )
+        ) {
+            throw new AuthorizationError(
+                "You don't have authorization to access this explore",
+            );
+        }
         throw new FieldReferenceError(
             `Tried to reference dimension with unknown field id: ${dimId}`,
         );
@@ -124,17 +141,30 @@ const getMetricFromId = (
     return metric;
 };
 
+const getWrapChars = (wrapChar: string): [string, string] => {
+    switch (wrapChar) {
+        case '(':
+        case ')':
+            return ['(', ')'];
+        case '':
+            return ['', ''];
+        default:
+            return ['', ''];
+    }
+};
+
 const replaceAttributes = (
     regex: RegExp,
-    sqlFilter: string,
+    sql: string,
     userAttributes: Record<string, string | string[]>,
-    stringQuoteChar: string,
-    filter: string,
+    quoteChar: string | '',
+    wrapChar: string | '',
 ): string => {
-    const sqlAttributes = sqlFilter.match(regex);
+    const sqlAttributes = sql.match(regex);
+    const [leftWrap, rightWrap] = getWrapChars(wrapChar);
 
     if (sqlAttributes === null || sqlAttributes.length === 0) {
-        return sqlFilter;
+        return sql;
     }
 
     const replacedUserAttributesSql = sqlAttributes.reduce<string>(
@@ -144,12 +174,12 @@ const replaceAttributes = (
 
             if (attributeValues === undefined) {
                 throw new ForbiddenError(
-                    `Missing user attribute "${attribute}" on ${filter}: "${sqlFilter}"`,
+                    `Missing user attribute "${attribute}": "${sql}"`,
                 );
             }
             if (attributeValues.length === 0) {
                 throw new ForbiddenError(
-                    `Invalid or missing user attribute "${attribute}" on ${filter}: "${sqlFilter}"`,
+                    `Invalid or missing user attribute "${attribute}": "${sql}"`,
                 );
             }
 
@@ -157,26 +187,26 @@ const replaceAttributes = (
                 ? attributeValues
                       .map(
                           (attributeValue) =>
-                              `${stringQuoteChar}${attributeValue}${stringQuoteChar}`,
+                              `${quoteChar}${attributeValue}${quoteChar}`,
                       )
                       .join(', ')
-                : `${stringQuoteChar}${attributeValues}${stringQuoteChar}`;
+                : `${quoteChar}${attributeValues}${quoteChar}`;
 
             return acc.replace(sqlAttribute, valueString);
         },
-        sqlFilter,
+        sql,
     );
 
     // NOTE: Wrap the replaced user attributes in parentheses to avoid issues with AND/OR operators
-    return `(${replacedUserAttributesSql})`;
+    return `${leftWrap}${replacedUserAttributesSql}${rightWrap}`;
 };
 
 export const replaceUserAttributes = (
-    sqlFilter: string,
+    sql: string,
     intrinsicUserAttributes: IntrinsicUserAttributes,
     userAttributes: UserAttributeValueMap,
-    stringQuoteChar: string = "'",
-    filter: string = 'sql_filter',
+    quoteChar: string,
+    wrapChar: string,
 ): string => {
     const userAttributeRegex =
         /\$\{(?:lightdash|ld)\.(?:attribute|attributes|attr)\.(\w+)\}/g;
@@ -186,10 +216,10 @@ export const replaceUserAttributes = (
     // Replace user attributes in the SQL filter
     const replacedSqlFilter = replaceAttributes(
         userAttributeRegex,
-        sqlFilter,
+        sql,
         userAttributes,
-        stringQuoteChar,
-        filter,
+        quoteChar,
+        wrapChar,
     );
 
     // Replace intrinsic user attributes in the SQL filter
@@ -197,10 +227,37 @@ export const replaceUserAttributes = (
         intrinsicUserAttributeRegex,
         replacedSqlFilter,
         intrinsicUserAttributes,
-        stringQuoteChar,
-        filter,
+        quoteChar,
+        wrapChar,
     );
 };
+
+export const replaceUserAttributesAsStrings = (
+    sql: string,
+    intrinsicUserAttributes: IntrinsicUserAttributes,
+    userAtttributes: UserAttributeValueMap,
+    warehouseClient: WarehouseClient,
+) =>
+    replaceUserAttributes(
+        sql,
+        intrinsicUserAttributes,
+        userAtttributes,
+        warehouseClient.getStringQuoteChar(),
+        '(',
+    );
+
+const replaceUserAttributesRaw = (
+    sql: string,
+    intrinsicUserAttributes: IntrinsicUserAttributes,
+    userAtttributes: UserAttributeValueMap,
+) =>
+    replaceUserAttributes(
+        sql,
+        intrinsicUserAttributes,
+        userAtttributes,
+        '',
+        '',
+    );
 
 export const assertValidDimensionRequiredAttribute = (
     dimension: CompiledDimension,
@@ -298,7 +355,106 @@ export const sortDayOfWeekName = (
         END
     )${descending ? ' DESC' : ''}`;
 };
+// Remove comments and limit clauses from SQL
+const removeComments = (sql: string): string => {
+    let s = sql.trim();
+    // remove single-line comments
+    s = s.replace(/--.*$/gm, '');
+    // remove multi-line comments
+    s = s.replace(/\/\*[\s\S]*?\*\//g, '');
+    return s;
+};
 
+// Replace strings with placeholders and return the placeholders
+const replaceStringsWithPlaceholders = (
+    sql: string,
+): { sqlWithoutStrings: string; placeholders: string[] } => {
+    const stringRegex = /('([^'\\]|\\.)*')|("([^"\\]|\\.)*")/gm;
+    const placeholders: string[] = [];
+    let index = 0;
+    const sqlWithoutStrings = sql.replace(stringRegex, (match) => {
+        placeholders.push(match);
+        // eslint-disable-next-line no-plusplus
+        return `__string_placeholder_${index++}__`;
+    });
+    return { sqlWithoutStrings, placeholders };
+};
+
+// Restore strings from placeholders
+const restoreStringsFromPlaceholders = (
+    sql: string,
+    placeholders: string[],
+): string =>
+    sql.replace(
+        /__string_placeholder_(\d+)__/g,
+        (_, p1) => placeholders[Number(p1)],
+    );
+
+interface LimitOffsetClause {
+    limit: number;
+    offset?: number;
+}
+
+// Extract the outer limit and offset clauses from a SQL query
+const extractOuterLimitOffsetFromSQL = (
+    sql: string,
+): LimitOffsetClause | undefined => {
+    let s = sql.trim();
+    // remove comments
+    s = removeComments(s);
+    // replace strings with placeholders
+    const { sqlWithoutStrings } = replaceStringsWithPlaceholders(s);
+    // match both LIMIT and optional OFFSET in any order
+    const limitOffsetRegex =
+        /\b(?:(?:limit\s+(\d+)(?:\s+offset\s+(\d+))?)|(?:offset\s+(\d+)\s+limit\s+(\d+)))\s*(?:;|\s*$)/gi;
+    const matches = [...sqlWithoutStrings.matchAll(limitOffsetRegex)];
+    if (matches.length > 0) {
+        const lastMatch = matches[matches.length - 1];
+        // If LIMIT comes first
+        if (lastMatch[1] !== undefined) {
+            return {
+                limit: parseInt(lastMatch[1], 10),
+                offset: lastMatch[2] ? parseInt(lastMatch[2], 10) : undefined,
+            };
+        }
+        // If OFFSET comes first
+        if (lastMatch[3] !== undefined) {
+            return {
+                limit: parseInt(lastMatch[4], 10),
+                offset: parseInt(lastMatch[3], 10),
+            };
+        }
+    }
+    return undefined;
+};
+
+// Remove the outermost limit and offset clauses from SQL
+const removeCommentsAndOuterLimitOffset = (sql: string): string => {
+    let s = sql.trim();
+    // remove comments
+    s = removeComments(s);
+    // replace strings with placeholders
+    const { sqlWithoutStrings, placeholders } =
+        replaceStringsWithPlaceholders(s);
+    // remove either "LIMIT x OFFSET y" or "OFFSET y LIMIT x" at the end of the query
+    const limitOffsetRegex =
+        /(\b(?:(?:limit\s+\d+(?:\s+offset\s+\d+)?)|(?:offset\s+\d+\s+limit\s+\d+))\s*(?:;|\s*)?)$/i;
+    let sqlWithoutLimit = sqlWithoutStrings.replace(limitOffsetRegex, '');
+    // remove semicolon from the end of the query
+    sqlWithoutLimit = sqlWithoutLimit.trim().replace(/;+$/g, '');
+    // restore strings
+    let sqlRestored = restoreStringsFromPlaceholders(
+        sqlWithoutLimit,
+        placeholders,
+    );
+    // normalize multiple spaces to a single space
+    sqlRestored = sqlRestored.replace(/\s+/g, ' ');
+    // remove any trailing semicolons, including those preceded by whitespace
+    sqlRestored = sqlRestored.replace(/\s*;+\s*$/g, '').trim();
+    return sqlRestored;
+};
+
+// Apply a limit (and optional offset) to a SQL query
 export const applyLimitToSqlQuery = ({
     sqlQuery,
     limit,
@@ -306,11 +462,29 @@ export const applyLimitToSqlQuery = ({
     sqlQuery: string;
     limit: number | undefined;
 }): string => {
-    if (limit === undefined) return sqlQuery;
-    return `WITH user_sql AS (\n${sqlQuery.replace(
-        /;\s*$/,
-        '',
-    )}\n) select * from user_sql limit ${limit}`;
+    // do nothing if limit is undefined
+    if (limit === undefined) {
+        // strip any trailing semicolons and comments
+        let sql = sqlQuery.trim().replace(/;+$/g, '');
+        sql = removeComments(sql);
+        return sql.trim();
+    }
+    // get any existing outer limit and offset from the SQL query
+    const existingLimitOffset = extractOuterLimitOffsetFromSQL(sqlQuery);
+    // calculate the new limit
+    const limitToAppend =
+        existingLimitOffset?.limit !== undefined
+            ? Math.min(existingLimitOffset.limit, limit)
+            : limit;
+    // remove comments and limit/offset clauses from the SQL query
+    const sqlWithoutCommentsAndLimits =
+        removeCommentsAndOuterLimitOffset(sqlQuery);
+    // append the limit and offset (if any) to the SQL query
+    let result = `${sqlWithoutCommentsAndLimits} LIMIT ${limitToAppend}`;
+    if (existingLimitOffset?.offset !== undefined) {
+        result += ` OFFSET ${existingLimitOffset.offset}`;
+    }
+    return result;
 };
 
 export const getCustomSqlDimensionSql = ({
@@ -339,12 +513,14 @@ export const getCustomBinDimensionSql = ({
     warehouseClient,
     explore,
     customDimensions,
+    intrinsicUserAttributes,
     userAttributes = {},
     sorts = [],
 }: {
     warehouseClient: WarehouseClient;
     explore: Explore;
     customDimensions: CustomBinDimension[] | undefined;
+    intrinsicUserAttributes: IntrinsicUserAttributes;
     userAttributes: UserAttributeValueMap | undefined;
     sorts: SortField[] | undefined;
 }):
@@ -373,8 +549,11 @@ export const getCustomBinDimensionSql = ({
                     adapterType,
                     startOfWeek,
                 );
-                const baseTable =
-                    explore.tables[customDimension.table].sqlTable;
+                const baseTable = replaceUserAttributesRaw(
+                    explore.tables[customDimension.table].sqlTable,
+                    intrinsicUserAttributes,
+                    userAttributes,
+                );
                 const cte = ` ${getCteReference(customDimension)} AS (
                     SELECT
                         FLOOR(MIN(${dimension.compiledSql})) AS min_id,
@@ -722,8 +901,11 @@ export const buildQuery = ({
         additionalMetrics,
         compiledCustomDimensions,
     } = compiledMetricQuery;
-
-    const baseTable = explore.tables[explore.baseTable].sqlTable;
+    const baseTable = replaceUserAttributesRaw(
+        explore.tables[explore.baseTable].sqlTable,
+        intrinsicUserAttributes,
+        userAttributes,
+    );
     const fieldQuoteChar = getFieldQuoteChar(warehouseClient.credentials.type);
     const stringQuoteChar = warehouseClient.getStringQuoteChar();
     const escapeStringQuoteChar = warehouseClient.getEscapeStringQuoteChar();
@@ -760,6 +942,7 @@ export const buildQuery = ({
         explore,
         customDimensions:
             selectedCustomDimensions?.filter(isCustomBinDimension),
+        intrinsicUserAttributes,
         userAttributes,
         sorts,
     });
@@ -870,16 +1053,19 @@ export const buildQuery = ({
     const sqlJoins = explore.joinedTables
         .filter((join) => joinedTables.has(join.table) || join.always)
         .map((join) => {
-            const joinTable = explore.tables[join.table].sqlTable;
+            const joinTable = replaceUserAttributesRaw(
+                explore.tables[join.table].sqlTable,
+                intrinsicUserAttributes,
+                userAttributes,
+            );
             const joinType = getJoinType(join.type);
 
             const alias = join.table;
-            const parsedSqlOn = replaceUserAttributes(
+            const parsedSqlOn = replaceUserAttributesAsStrings(
                 join.compiledSqlOn,
                 intrinsicUserAttributes,
                 userAttributes,
-                stringQuoteChar,
-                'sql_on',
+                warehouseClient,
             );
             return `${joinType} ${joinTable} AS ${fieldQuoteChar}${alias}${fieldQuoteChar}\n  ON ${parsedSqlOn}`;
         })
@@ -1101,11 +1287,11 @@ export const buildQuery = ({
 
     const tableSqlWhereWithReplacedAttributes = tableCompiledSqlWhere
         ? [
-              replaceUserAttributes(
+              replaceUserAttributesAsStrings(
                   tableCompiledSqlWhere,
                   intrinsicUserAttributes,
                   userAttributes,
-                  stringQuoteChar,
+                  warehouseClient,
               ),
           ]
         : [];

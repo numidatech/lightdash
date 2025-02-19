@@ -1,7 +1,9 @@
 import {
+    AnyType,
     CreatePostgresCredentials,
     CreatePostgresLikeCredentials,
     DimensionType,
+    getErrorMessage,
     Metric,
     MetricType,
     SupportedDbtAdapter,
@@ -24,7 +26,7 @@ const POSTGRES_CA_BUNDLES = [
 ];
 
 types.setTypeParser(types.builtins.NUMERIC, (value) => parseFloat(value));
-types.setTypeParser(types.builtins.INT8, (value) => parseInt(value, 10));
+types.setTypeParser(types.builtins.INT8, BigInt);
 
 export enum PostgresTypes {
     INTEGER = 'integer',
@@ -155,7 +157,7 @@ export class PostgresClient<
     }
 
     static convertQueryResultFields(
-        fields: QueryResult<any>['fields'],
+        fields: QueryResult<AnyType>['fields'],
     ): Record<string, { type: DimensionType }> {
         return fields.reduce(
             (acc, { name, dataTypeID }) => ({
@@ -172,7 +174,7 @@ export class PostgresClient<
         sql: string,
         streamCallback: (data: WarehouseResults) => void,
         options: {
-            values?: any[];
+            values?: AnyType[];
             tags?: Record<string, string>;
             timezone?: string;
         },
@@ -182,10 +184,13 @@ export class PostgresClient<
             pool = new pg.Pool({
                 ...this.config,
                 connectionTimeoutMillis: 5000,
+                query_timeout: this.credentials.timeoutSeconds
+                    ? this.credentials.timeoutSeconds * 1000
+                    : 1000 * 60 * 5, // sets the default query timeout to 5 minutes
             });
 
             pool.on('error', (err) => {
-                console.error(`Postgres pool error ${err.message}`);
+                console.error(`Postgres pool error ${getErrorMessage(err)}`);
                 reject(err);
             });
 
@@ -193,7 +198,7 @@ export class PostgresClient<
                 // On each new client initiated, need to register for error(this is a serious bug on pg, the client throw errors although it should not)
                 _client.on('error', (err: Error) => {
                     console.error(
-                        `Postgres client connect error ${err.message}`,
+                        `Postgres client connect error ${getErrorMessage(err)}`,
                     );
                     reject(err);
                 });
@@ -211,7 +216,9 @@ export class PostgresClient<
                 }
 
                 client.on('error', (e) => {
-                    console.error(`Postgres client error ${e.message}`);
+                    console.error(
+                        `Postgres client error ${getErrorMessage(e)}`,
+                    );
                     reject(e);
                     done();
                 });
@@ -220,11 +227,18 @@ export class PostgresClient<
                     // CodeQL: This will raise a security warning because user defined raw SQL is being passed into the database module.
                     //         In this case this is exactly what we want to do. We're hitting the user's warehouse not the application's database.
                     const stream = client.query(
+                        // callback is not defined in types when using QueryStream
+                        // @ts-ignore
                         new QueryStream(
                             this.getSQLWithMetadata(sql, options?.tags),
                             options?.values,
                         ),
-                    );
+                        // there is a bug in PG lib where callback is required when passing `query_timeout` to the Pool
+                        // see the code: https://github.com/brianc/node-postgres/blob/master/packages/pg/lib/client.js#L541-L542
+                        () => {},
+                        // typecast is necessary to fix the type issue described above
+                    ) as unknown as QueryStream;
+
                     // release the client when the stream is finished
                     stream.on('end', () => {
                         done();
@@ -240,8 +254,8 @@ export class PostgresClient<
                                 objectMode: true,
                                 write(
                                     chunk: {
-                                        row: any;
-                                        fields: QueryResult<any>['fields'];
+                                        row: AnyType;
+                                        fields: QueryResult<AnyType>['fields'];
                                     },
                                     encoding,
                                     callback,
@@ -340,7 +354,7 @@ export class PostgresClient<
 
             UNION ALL
 
-            SELECT mv.matviewowner AS table_catalog,
+            SELECT current_database() AS table_catalog,
                 n.nspname AS table_schema,
                 c.relname AS table_name,
                 a.attname AS column_name,
@@ -350,7 +364,7 @@ export class PostgresClient<
             JOIN pg_catalog.pg_namespace n ON c.relnamespace = n.oid
             JOIN pg_catalog.pg_matviews mv ON n.nspname = mv.schemaname AND c.relname = mv.matviewname
             WHERE c.relkind = 'm'
-            AND mv.matviewowner IN (${Array.from(databases)})
+            AND current_database() IN (${Array.from(databases)})
             AND n.nspname IN (${Array.from(schemas)})
             AND c.relname IN (${Array.from(tables)})
             AND a.attnum > 0
@@ -532,8 +546,6 @@ export class PostgresClient<
             lineNumber,
             charNumber,
         });
-
-        return new WarehouseQueryError(error?.message || 'Unknown error');
     }
 }
 

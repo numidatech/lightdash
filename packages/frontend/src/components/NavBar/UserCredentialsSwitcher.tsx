@@ -1,7 +1,7 @@
 import { ActionIcon, MantineProvider, Menu, Text, Title } from '@mantine/core';
 import { IconCheck, IconDatabaseCog, IconPlus } from '@tabler/icons-react';
 import { useEffect, useMemo, useState } from 'react';
-import { useLocation, useRouteMatch } from 'react-router-dom';
+import { matchRoutes, useLocation } from 'react-router';
 import { useActiveProjectUuid } from '../../hooks/useActiveProject';
 import { useProjects } from '../../hooks/useProjects';
 import {
@@ -9,10 +9,10 @@ import {
     useProjectUserWarehouseCredentialsPreferenceMutation,
 } from '../../hooks/userWarehouseCredentials/useProjectUserWarehouseCredentialsPreference';
 import { useUserWarehouseCredentials } from '../../hooks/userWarehouseCredentials/useUserWarehouseCredentials';
-import { useApp } from '../../providers/AppProvider';
-import MantineIcon from '../common/MantineIcon';
-import { getWarehouseLabel } from '../ProjectConnection/ProjectConnectFlow/SelectWarehouse';
+import useApp from '../../providers/App/useApp';
+import { getWarehouseLabel } from '../ProjectConnection/ProjectConnectFlow/utils';
 import { CreateCredentialsModal } from '../UserSettings/MyWarehouseConnectionsPanel/CreateCredentialsModal';
+import MantineIcon from '../common/MantineIcon';
 
 const routesThatNeedWarehouseCredentials = [
     '/projects/:projectUuid/tables/:tableId',
@@ -26,9 +26,10 @@ const UserCredentialsSwitcher = () => {
     const location = useLocation();
     const [showCreateModalOnPageLoad, setShowCreateModalOnPageLoad] =
         useState(false);
-    const isRouteThatNeedsWarehouseCredentials = useRouteMatch({
-        path: routesThatNeedWarehouseCredentials,
-    });
+    const isRouteThatNeedsWarehouseCredentials = !!matchRoutes(
+        routesThatNeedWarehouseCredentials.map((path) => ({ path })),
+        location,
+    );
     const [isCreatingCredentials, setIsCreatingCredentials] = useState(false);
     const {
         isInitialLoading: isLoadingCredentials,

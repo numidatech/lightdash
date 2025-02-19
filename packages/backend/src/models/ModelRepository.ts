@@ -9,6 +9,7 @@ import { DashboardModel } from './DashboardModel/DashboardModel';
 import { PersonalAccessTokenModel } from './DashboardModel/PersonalAccessTokenModel';
 import { DownloadFileModel } from './DownloadFileModel';
 import { EmailModel } from './EmailModel';
+import { FeatureFlagModel } from './FeatureFlagModel/FeatureFlagModel';
 import { GithubAppInstallationsModel } from './GithubAppInstallations/GithubAppInstallationsModel';
 import { GroupsModel } from './GroupsModel';
 import { InviteLinkModel } from './InviteLinkModel';
@@ -33,6 +34,7 @@ import { SessionModel } from './SessionModel';
 import { ShareModel } from './ShareModel';
 import { SlackAuthenticationModel } from './SlackAuthenticationModel';
 import { SpaceModel } from './SpaceModel';
+import { SpotlightTableConfigModel } from './SpotlightTableConfigModel';
 import { SshKeyPairModel } from './SshKeyPairModel';
 import { TagsModel } from './TagsModel';
 import { UserAttributesModel } from './UserAttributesModel';
@@ -40,7 +42,6 @@ import { UserModel } from './UserModel';
 import { UserWarehouseCredentialsModel } from './UserWarehouseCredentials/UserWarehouseCredentialsModel';
 import { ValidationModel } from './ValidationModel/ValidationModel';
 import { WarehouseAvailableTablesModel } from './WarehouseAvailableTablesModel/WarehouseAvailableTablesModel';
-
 /**
  * Interface outlining all models. Add new models to
  * this list (in alphabetical order, please!).
@@ -86,10 +87,13 @@ export type ModelManifest = {
     SavedSemanticViewerChartModel: SavedSemanticViewerChartModel;
     contentModel: ContentModel;
     tagsModel: TagsModel;
+    featureFlagModel: FeatureFlagModel;
+    spotlightTableConfigModel: SpotlightTableConfigModel;
     /** An implementation signature for these models are not available at this stage */
     aiModel: unknown;
     embedModel: unknown;
     dashboardSummaryModel: unknown;
+    scimOrganizationAccessTokenModel: unknown;
 };
 
 /**
@@ -103,6 +107,7 @@ type ModelProvider<T extends ModelManifest> = (providerArgs: {
     repository: ModelRepository;
     database: Knex;
     utils: UtilRepository;
+    lightdashConfig: LightdashConfig;
 }) => T[keyof T];
 
 /**
@@ -497,6 +502,17 @@ export class ModelRepository
         );
     }
 
+    public getFeatureFlagModel(): FeatureFlagModel {
+        return this.getModel(
+            'featureFlagModel',
+            () =>
+                new FeatureFlagModel({
+                    database: this.database,
+                    lightdashConfig: this.lightdashConfig,
+                }),
+        );
+    }
+
     public getAiModel<ModelImplT>(): ModelImplT {
         return this.getModel('aiModel');
     }
@@ -513,6 +529,21 @@ export class ModelRepository
         return this.getModel(
             'tagsModel',
             () => new TagsModel({ database: this.database }),
+        );
+    }
+
+    public getScimOrganizationAccessTokenModel<ModelImplT>(): ModelImplT {
+        return this.getModel('scimOrganizationAccessTokenModel');
+    }
+
+    public getSpotlightTableConfigModel(): SpotlightTableConfigModel {
+        return this.getModel(
+            'spotlightTableConfigModel',
+            () =>
+                new SpotlightTableConfigModel({
+                    database: this.database,
+                    lightdashConfig: this.lightdashConfig,
+                }),
         );
     }
 
@@ -535,6 +566,7 @@ export class ModelRepository
                     repository: this,
                     database: this.database,
                     utils: this.utils,
+                    lightdashConfig: this.lightdashConfig,
                 }) as T;
             } else if (factory != null) {
                 modelInstance = factory();

@@ -1,8 +1,8 @@
 import { ContentType, DashboardContent } from '@lightdash/common';
 import { Knex } from 'knex';
 import {
-    DashboardsTableName,
     DashboardVersionsTableName,
+    DashboardsTableName,
 } from '../../../database/entities/dashboards';
 import { OrganizationTableName } from '../../../database/entities/organizations';
 import { PinnedDashboardTableName } from '../../../database/entities/pinnedList';
@@ -128,6 +128,12 @@ export const dashboardContentConfiguration: ContentConfiguration<SummaryContentR
                                             order by dashboard_versions.created_at asc
                                             limit 1)`),
                     );
+                    if (filters.search) {
+                        void builder.whereRaw(
+                            `LOWER(${DashboardsTableName}.name) LIKE ?`,
+                            [`%${filters.search.toLowerCase()}%`],
+                        );
+                    }
                 }),
         shouldRowBeConverted: (value): value is SummaryContentRow =>
             value.content_type === ContentType.DASHBOARD,

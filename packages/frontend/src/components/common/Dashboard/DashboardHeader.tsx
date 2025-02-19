@@ -1,5 +1,9 @@
 import { subject } from '@casl/ability';
-import { type Dashboard, type SpaceSummary } from '@lightdash/common';
+import {
+    type Dashboard,
+    type FeatureFlags,
+    type SpaceSummary,
+} from '@lightdash/common';
 import {
     ActionIcon,
     Box,
@@ -25,6 +29,7 @@ import {
     IconFolderPlus,
     IconFolders,
     IconInfoCircle,
+    IconKey,
     IconPencil,
     IconPin,
     IconPinnedOff,
@@ -35,8 +40,9 @@ import {
 } from '@tabler/icons-react';
 import dayjs from 'dayjs';
 import { useCallback, useEffect, useState } from 'react';
-import { useLocation, useParams } from 'react-router-dom';
+import { useLocation, useParams } from 'react-router';
 import { useToggle } from 'react-use';
+import AIDashboardSummary from '../../../ee/features/aiDashboardSummary';
 import { PromotionConfirmDialog } from '../../../features/promotion/components/PromotionConfirmDialog';
 import {
     usePromoteDashboardDiffMutation,
@@ -44,23 +50,27 @@ import {
 } from '../../../features/promotion/hooks/usePromoteDashboard';
 import { DashboardSchedulersModal } from '../../../features/scheduler';
 import { getSchedulerUuidFromUrlParams } from '../../../features/scheduler/utils';
+import { useFeatureFlagEnabled } from '../../../hooks/useFeatureFlagEnabled';
 import { useProject } from '../../../hooks/useProject';
-import { useApp } from '../../../providers/AppProvider';
-import { useTracking } from '../../../providers/TrackingProvider';
+import { Can } from '../../../providers/Ability';
+import useApp from '../../../providers/App/useApp';
+import useTracking from '../../../providers/Tracking/useTracking';
 import { EventName } from '../../../types/Events';
 import AddTileButton from '../../DashboardTiles/AddTileButton';
-import { Can } from '../Authorization';
 import MantineIcon from '../MantineIcon';
-import DashboardUpdateModal from '../modal/DashboardUpdateModal';
 import PageHeader from '../Page/PageHeader';
 import {
+    InfoContainer,
     PageActionsContainer,
     PageTitleAndDetailsContainer,
 } from '../PageHeader';
 import SpaceAndDashboardInfo from '../PageHeader/SpaceAndDashboardInfo';
 import { UpdatedInfo } from '../PageHeader/UpdatedInfo';
 import ViewInfo from '../PageHeader/ViewInfo';
-import SpaceActionModal, { ActionType } from '../SpaceActionModal';
+import SpaceActionModal from '../SpaceActionModal';
+import { ActionType } from '../SpaceActionModal/types';
+import TextCopy from '../TextCopy';
+import DashboardUpdateModal from '../modal/DashboardUpdateModal';
 import { DashboardRefreshButton } from './DashboardRefreshButton';
 import ShareLinkButton from './ShareLinkButton';
 
@@ -72,6 +82,7 @@ type DashboardHeaderProps = {
     hasNewSemanticLayerChart: boolean;
     isEditMode: boolean;
     isSaving: boolean;
+    isFullScreenFeatureEnabled?: boolean;
     isFullscreen: boolean;
     isPinned: boolean;
     oldestCacheTime?: Date;
@@ -98,6 +109,7 @@ const DashboardHeader = ({
     hasNewSemanticLayerChart,
     isEditMode,
     isSaving,
+    isFullScreenFeatureEnabled,
     isFullscreen,
     isPinned,
     oldestCacheTime,
@@ -183,6 +195,9 @@ const DashboardHeader = ({
         }),
     );
 
+    const isDashboardSummariesEnabled = useFeatureFlagEnabled(
+        'ai-dashboard-summary' as FeatureFlags,
+    );
     const handleDashboardRefreshUpdateEvent = useCallback(
         (intervalMin?: number) => {
             track({
@@ -234,7 +249,12 @@ const DashboardHeader = ({
                         <Popover.Dropdown maw={500}>
                             <Stack spacing="xs">
                                 {dashboard.description && (
-                                    <Text fz="xs" color="gray.7" fw={500}>
+                                    <Text
+                                        fz="xs"
+                                        color="gray.7"
+                                        fw={500}
+                                        style={{ whiteSpace: 'pre-line' }}
+                                    >
                                         {dashboard.description}
                                     </Text>
                                 )}
@@ -248,6 +268,16 @@ const DashboardHeader = ({
                                     views={dashboard.views}
                                     firstViewedAt={dashboard.firstViewedAt}
                                 />
+
+                                <InfoContainer>
+                                    <MantineIcon icon={IconKey} />
+                                    Slug:
+                                    <TextCopy
+                                        variant="code"
+                                        text={dashboard.slug}
+                                        tooltipLabel="Copy slug"
+                                    />
+                                </InfoContainer>
 
                                 {dashboard.spaceName && (
                                     <SpaceAndDashboardInfo
@@ -271,7 +301,7 @@ const DashboardHeader = ({
                         </ActionIcon>
                     )}
 
-                    {isUpdating && (
+                    {isUpdating && dashboardUuid && (
                         <DashboardUpdateModal
                             uuid={dashboardUuid}
                             opened={isUpdating}
@@ -336,36 +366,50 @@ const DashboardHeader = ({
                 </PageActionsContainer>
             ) : (
                 <PageActionsContainer>
+                    {isDashboardSummariesEnabled &&
+                        projectUuid &&
+                        dashboardUuid && (
+                            <AIDashboardSummary
+                                projectUuid={projectUuid}
+                                dashboardUuid={dashboardUuid}
+                                dashboardVersionId={
+                                    dashboard.dashboardVersionId
+                                }
+                            />
+                        )}
+
                     {userCanExportData && (
                         <DashboardRefreshButton
                             onIntervalChange={handleDashboardRefreshUpdateEvent}
                         />
                     )}
 
-                    {!isEditMode && document.fullscreenEnabled && (
-                        <Tooltip
-                            label={
-                                isFullscreen
-                                    ? 'Exit Fullscreen Mode'
-                                    : 'Enter Fullscreen Mode'
-                            }
-                            withinPortal
-                            position="bottom"
-                        >
-                            <ActionIcon
-                                variant="default"
-                                onClick={onToggleFullscreen}
+                    {!isEditMode &&
+                        document.fullscreenEnabled &&
+                        isFullScreenFeatureEnabled && (
+                            <Tooltip
+                                label={
+                                    isFullscreen
+                                        ? 'Exit Fullscreen Mode'
+                                        : 'Enter Fullscreen Mode'
+                                }
+                                withinPortal
+                                position="bottom"
                             >
-                                <MantineIcon
-                                    icon={
-                                        isFullscreen
-                                            ? IconArrowsMinimize
-                                            : IconArrowsMaximize
-                                    }
-                                />
-                            </ActionIcon>
-                        </Tooltip>
-                    )}
+                                <ActionIcon
+                                    variant="default"
+                                    onClick={onToggleFullscreen}
+                                >
+                                    <MantineIcon
+                                        icon={
+                                            isFullscreen
+                                                ? IconArrowsMinimize
+                                                : IconArrowsMaximize
+                                        }
+                                    />
+                                </ActionIcon>
+                            </Tooltip>
+                        )}
 
                     {!!userCanManageDashboard && !isFullscreen && (
                         <Tooltip
@@ -420,7 +464,9 @@ const DashboardHeader = ({
                                                     icon={IconFolders}
                                                 />
                                             }
-                                            onClick={(e) => {
+                                            onClick={(
+                                                e: React.MouseEvent<HTMLButtonElement>,
+                                            ) => {
                                                 e.preventDefault();
                                                 e.stopPropagation();
                                             }}
@@ -486,7 +532,7 @@ const DashboardHeader = ({
                                                                             : ''
                                                                     }
                                                                     onClick={(
-                                                                        e,
+                                                                        e: React.MouseEvent<HTMLButtonElement>,
                                                                     ) => {
                                                                         e.preventDefault();
                                                                         e.stopPropagation();
@@ -528,7 +574,9 @@ const DashboardHeader = ({
                                                                     }
                                                                 />
                                                             }
-                                                            onClick={(e) => {
+                                                            onClick={(
+                                                                e: React.MouseEvent<HTMLButtonElement>,
+                                                            ) => {
                                                                 e.preventDefault();
                                                                 e.stopPropagation();
                                                                 setIsCreatingNewSpace(
@@ -582,7 +630,7 @@ const DashboardHeader = ({
                                         </Menu.Item>
                                     )}
 
-                                {userCanPromoteDashboard && (
+                                {userCanPromoteDashboard && dashboardUuid && (
                                     <Tooltip
                                         label="You must enable first an upstream project in settings > Data ops"
                                         disabled={
@@ -652,7 +700,7 @@ const DashboardHeader = ({
                         </Menu>
                     )}
 
-                    {isCreatingNewSpace && (
+                    {isCreatingNewSpace && projectUuid && (
                         <SpaceActionModal
                             projectUuid={projectUuid}
                             actionType={ActionType.CREATE}
@@ -675,19 +723,20 @@ const DashboardHeader = ({
                             }
                         />
                     )}
-                    {(promoteDashboardDiff || promoteDashboardDiffLoading) && (
-                        <PromotionConfirmDialog
-                            type="dashboard"
-                            resourceName={dashboard.name}
-                            promotionChanges={promoteDashboardDiff}
-                            onClose={() => {
-                                resetPromoteDashboardDiff();
-                            }}
-                            onConfirm={() => {
-                                promoteDashboard(dashboardUuid);
-                            }}
-                        ></PromotionConfirmDialog>
-                    )}
+                    {(promoteDashboardDiff || promoteDashboardDiffLoading) &&
+                        dashboardUuid && (
+                            <PromotionConfirmDialog
+                                type="dashboard"
+                                resourceName={dashboard.name}
+                                promotionChanges={promoteDashboardDiff}
+                                onClose={() => {
+                                    resetPromoteDashboardDiff();
+                                }}
+                                onConfirm={() => {
+                                    promoteDashboard(dashboardUuid);
+                                }}
+                            ></PromotionConfirmDialog>
+                        )}
                 </PageActionsContainer>
             )}
         </PageHeader>

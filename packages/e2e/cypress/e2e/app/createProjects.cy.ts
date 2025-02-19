@@ -235,7 +235,7 @@ const defaultRowValues = [
     '44',
 ];
 
-const percentileRowValues = ['2020-08-11', '1,298', '828', '1,298', '1,717'];
+const percentileRowValues = ['2020-08-11', '1,315', '836', '1,315', '1,808'];
 
 const testPercentile = (
     projectUuid: string,
@@ -667,10 +667,10 @@ describe('Create projects', () => {
             testTimeIntervalsResults(projectUuid, snowflakeRowValues);
             testPercentile(projectUuid, [
                 '2020-08-12',
-                '1,999',
-                '1,719.5',
-                '1,999',
-                '10,999,999',
+                '2,000',
+                '1,880',
+                '2,000',
+                '1,999,999',
             ]);
 
             // createCustomDimensionChart(projectUuid);

@@ -1,6 +1,6 @@
 import {
-    getEmailSchema,
     OrganizationMemberRole,
+    getEmailSchema,
     type CreateInviteLink,
 } from '@lightdash/common';
 import { Button, Group, Modal, Select, TextInput, Title } from '@mantine/core';
@@ -9,8 +9,9 @@ import { IconUser } from '@tabler/icons-react';
 import React, { type FC } from 'react';
 import { z } from 'zod';
 import { useCreateInviteLinkMutation } from '../../../hooks/useInviteLink';
-import { useApp } from '../../../providers/AppProvider';
-import { TrackPage, useTracking } from '../../../providers/TrackingProvider';
+import useApp from '../../../providers/App/useApp';
+import { TrackPage } from '../../../providers/Tracking/TrackingProvider';
+import useTracking from '../../../providers/Tracking/useTracking';
 import {
     CategoryName,
     EventName,

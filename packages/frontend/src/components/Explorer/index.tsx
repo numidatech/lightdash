@@ -1,17 +1,19 @@
 import { ProjectType } from '@lightdash/common';
 import { Stack } from '@mantine/core';
 import { memo, type FC } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams } from 'react-router';
 import { useExplore } from '../../hooks/useExplore';
 import { useProjects } from '../../hooks/useProjects';
-import { useExplorerContext } from '../../providers/ExplorerProvider';
+import useExplorerContext from '../../providers/Explorer/useExplorerContext';
 import { DrillDownModal } from '../MetricQueryData/DrillDownModal';
 import MetricQueryDataProvider from '../MetricQueryData/MetricQueryDataProvider';
 import UnderlyingDataModal from '../MetricQueryData/UnderlyingDataModal';
 import { CustomDimensionModal } from './CustomDimensionModal';
 import { CustomMetricModal } from './CustomMetricModal';
+import { CustomMetricWriteBackModal } from './CustomMetricWriteBackModal';
 import ExplorerHeader from './ExplorerHeader';
 import FiltersCard from './FiltersCard/FiltersCard';
+import { FormatModal } from './FormatModal';
 import ResultsCard from './ResultsCard/ResultsCard';
 import SqlCard from './SqlCard/SqlCard';
 import VisualizationCard from './VisualizationCard/VisualizationCard';
@@ -55,13 +57,15 @@ const Explorer: FC<{ hideHeader?: boolean }> = memo(
 
                     <ResultsCard />
 
-                    <SqlCard projectUuid={projectUuid} />
+                    {!!projectUuid && <SqlCard projectUuid={projectUuid} />}
                 </Stack>
 
                 <UnderlyingDataModal />
                 <DrillDownModal />
                 <CustomMetricModal />
                 <CustomDimensionModal />
+                <FormatModal />
+                <CustomMetricWriteBackModal />
             </MetricQueryDataProvider>
         );
     },

@@ -11,7 +11,7 @@ import {
     buildQuery,
     getCustomBinDimensionSql,
     getCustomSqlDimensionSql,
-    replaceUserAttributes,
+    replaceUserAttributesAsStrings,
     sortDayOfWeekName,
     sortMonthName,
 } from './queryBuilder';
@@ -338,54 +338,60 @@ describe('Query builder', () => {
 describe('replaceUserAttributes', () => {
     it('method with no user attribute should return same sqlFilter', async () => {
         expect(
-            replaceUserAttributes(
+            replaceUserAttributesAsStrings(
                 '${dimension} > 1',
                 INTRINSIC_USER_ATTRIBUTES,
                 {},
+                warehouseClientMock,
             ),
         ).toEqual('${dimension} > 1');
         expect(
-            replaceUserAttributes(
+            replaceUserAttributesAsStrings(
                 '${table.dimension} = 1',
                 INTRINSIC_USER_ATTRIBUTES,
                 {},
+                warehouseClientMock,
             ),
         ).toEqual('${table.dimension} = 1');
         expect(
-            replaceUserAttributes(
+            replaceUserAttributesAsStrings(
                 '${dimension} = ${TABLE}.dimension',
                 INTRINSIC_USER_ATTRIBUTES,
                 {},
+                warehouseClientMock,
             ),
         ).toEqual('${dimension} = ${TABLE}.dimension');
     });
 
     it('method with missing user attribute should throw error', async () => {
         expect(() =>
-            replaceUserAttributes(
+            replaceUserAttributesAsStrings(
                 '${lightdash.attribute.test} > 1',
                 INTRINSIC_USER_ATTRIBUTES,
                 {},
+                warehouseClientMock,
             ),
         ).toThrowError(ForbiddenError);
 
         expect(() =>
-            replaceUserAttributes(
+            replaceUserAttributesAsStrings(
                 '${ld.attr.test} > 1',
                 INTRINSIC_USER_ATTRIBUTES,
                 {},
+                warehouseClientMock,
             ),
         ).toThrowError(ForbiddenError);
     });
 
     it('method with no user attribute value should throw error', async () => {
         expect(() =>
-            replaceUserAttributes(
+            replaceUserAttributesAsStrings(
                 '${lightdash.attribute.test} > 1',
                 INTRINSIC_USER_ATTRIBUTES,
                 {
                     test: [],
                 },
+                warehouseClientMock,
             ),
         ).toThrowError(ForbiddenError);
     });
@@ -394,30 +400,33 @@ describe('replaceUserAttributes', () => {
         const userAttributes = { test: ['1'] };
         const expected = "('1' > 1)";
         expect(
-            replaceUserAttributes(
+            replaceUserAttributesAsStrings(
                 '${lightdash.attribute.test} > 1',
                 INTRINSIC_USER_ATTRIBUTES,
                 userAttributes,
+                warehouseClientMock,
             ),
         ).toEqual(expected);
 
         expect(
-            replaceUserAttributes(
+            replaceUserAttributesAsStrings(
                 '${ld.attr.test} > 1',
                 INTRINSIC_USER_ATTRIBUTES,
                 userAttributes,
+                warehouseClientMock,
             ),
         ).toEqual(expected);
     });
 
     it('method should replace sqlFilter with user attribute with multiple values', async () => {
         expect(
-            replaceUserAttributes(
+            replaceUserAttributesAsStrings(
                 "'1' IN (${lightdash.attribute.test})",
                 INTRINSIC_USER_ATTRIBUTES,
                 {
                     test: ['1', '2'],
                 },
+                warehouseClientMock,
             ),
         ).toEqual("('1' IN ('1', '2'))");
     });
@@ -428,10 +437,11 @@ describe('replaceUserAttributes', () => {
             '${dimension} IS NOT NULL OR (${lightdash.attribute.test} > 1 AND ${lightdash.attribute.another} = 2)';
         const expected = "(${dimension} IS NOT NULL OR ('1' > 1 AND '2' = 2))";
         expect(
-            replaceUserAttributes(
+            replaceUserAttributesAsStrings(
                 sqlFilter,
                 INTRINSIC_USER_ATTRIBUTES,
                 userAttributes,
+                warehouseClientMock,
             ),
         ).toEqual(expected);
     });
@@ -440,52 +450,58 @@ describe('replaceUserAttributes', () => {
         const userAttributes = { test: ['1'], another: ['2'] };
         const expected = "('1' > 1)";
         expect(
-            replaceUserAttributes(
+            replaceUserAttributesAsStrings(
                 '${ld.attribute.test} > 1',
                 INTRINSIC_USER_ATTRIBUTES,
                 userAttributes,
+                warehouseClientMock,
             ),
         ).toEqual(expected);
         expect(
-            replaceUserAttributes(
+            replaceUserAttributesAsStrings(
                 '${lightdash.attr.test} > 1',
                 INTRINSIC_USER_ATTRIBUTES,
                 userAttributes,
+                warehouseClientMock,
             ),
         ).toEqual(expected);
         expect(
-            replaceUserAttributes(
+            replaceUserAttributesAsStrings(
                 '${ld.attr.test} > 1',
                 INTRINSIC_USER_ATTRIBUTES,
                 userAttributes,
+                warehouseClientMock,
             ),
         ).toEqual(expected);
 
         expect(
-            replaceUserAttributes(
+            replaceUserAttributesAsStrings(
                 '${lightdash.attributes.test} > 1',
                 INTRINSIC_USER_ATTRIBUTES,
                 userAttributes,
+                warehouseClientMock,
             ),
         ).toEqual(expected);
     });
 
     it('method should not replace any invalid attribute', async () => {
         expect(
-            replaceUserAttributes(
+            replaceUserAttributesAsStrings(
                 '${lightdash.foo.test} > 1',
                 INTRINSIC_USER_ATTRIBUTES,
                 {},
+                warehouseClientMock,
             ),
         ).toEqual('${lightdash.foo.test} > 1');
     });
 
     it('should replace `email` intrinsic user attribute', async () => {
         expect(
-            replaceUserAttributes(
+            replaceUserAttributesAsStrings(
                 '${lightdash.user.email} = "mock@lightdash.com"',
                 INTRINSIC_USER_ATTRIBUTES,
                 {},
+                warehouseClientMock,
             ),
         ).toEqual('(\'mock@lightdash.com\' = "mock@lightdash.com")');
     });
@@ -554,6 +570,7 @@ describe('with custom dimensions', () => {
                 explore: EXPLORE,
                 customDimensions: undefined,
                 userAttributes: {},
+                intrinsicUserAttributes: {},
                 sorts: [],
             }),
         ).toStrictEqual(undefined);
@@ -582,6 +599,7 @@ describe('with custom dimensions', () => {
                         isCustomBinDimension,
                     ),
                 userAttributes: {},
+                intrinsicUserAttributes: {},
                 sorts: [],
             }),
         ).toStrictEqual({
@@ -627,6 +645,7 @@ ELSE CONCAT(age_range_cte.min_id + age_range_cte.bin_width * 2, ' - ', age_range
                     },
                 ],
                 userAttributes: {},
+                intrinsicUserAttributes: {},
                 sorts: [],
             }),
         ).toStrictEqual({
@@ -791,6 +810,7 @@ LIMIT 10`);
                         isCustomBinDimension,
                     ),
                 userAttributes: {},
+                intrinsicUserAttributes: {},
                 sorts: [{ fieldId: 'age_range', descending: true }],
             }),
         ).toStrictEqual({
@@ -1002,30 +1022,74 @@ describe('applyLimitToSqlQuery', () => {
         expect(result).toBe(sqlQuery);
     });
 
-    it('should return a query with a limit applied when limit is provided', () => {
-        const sqlQuery = 'SELECT * FROM users';
-        const limit = 10;
-
-        const expectedQuery = `WITH user_sql AS (\nSELECT * FROM users\n) select * from user_sql limit ${limit}`;
-        const result = applyLimitToSqlQuery({ sqlQuery, limit });
-
-        expect(result).toBe(expectedQuery);
-    });
-
-    it('should strip semicolon from the end of the query', () => {
+    it('should strip semicolons from the end of the query', () => {
         const sqlQuery = 'SELECT * FROM users;';
         const limit = 10;
-        const expectedQuery = `WITH user_sql AS (\nSELECT * FROM users\n) select * from user_sql limit ${limit}`;
+
         const result = applyLimitToSqlQuery({ sqlQuery, limit });
+
+        const expectedQuery = 'SELECT * FROM users LIMIT 10';
+
         expect(result).toBe(expectedQuery);
     });
 
-    it('should return a query with a limit of 0 applied correctly', () => {
-        const sqlQuery = 'SELECT * FROM users';
-        const limit = 0;
+    it('should not strip semicolons out from subqueries', () => {
+        const sqlQuery = `
+            WITH subquery AS (
+                SELECT * FROM orders LIMIT 10;
+            )
+            SELECT * FROM subquery LIMIT 25
+        `;
+        const limit = 15;
 
-        const expectedQuery = `WITH user_sql AS (\nSELECT * FROM users\n) select * from user_sql limit ${limit}`;
         const result = applyLimitToSqlQuery({ sqlQuery, limit });
+
+        const expectedQuery =
+            'WITH subquery AS ( SELECT * FROM orders LIMIT 10; ) SELECT * FROM subquery LIMIT 15';
+
+        expect(result).toBe(expectedQuery);
+    });
+
+    it('should decrease the limit if existing limit is greater than the provided limit', () => {
+        const sqlQuery = 'SELECT * FROM users LIMIT 10;';
+        const limit = 5;
+
+        const result = applyLimitToSqlQuery({ sqlQuery, limit });
+
+        const expectedQuery = 'SELECT * FROM users LIMIT 5';
+
+        expect(result).toBe(expectedQuery);
+    });
+
+    it('should keep the existing limit if it is equal to the provided limit', () => {
+        const sqlQuery = 'SELECT * FROM users LIMIT 10;';
+        const limit = 10;
+
+        const result = applyLimitToSqlQuery({ sqlQuery, limit });
+
+        const expectedQuery = 'SELECT * FROM users LIMIT 10';
+
+        expect(result).toBe(expectedQuery);
+    });
+
+    it('should keep the existing limit if it is less than the provided limit', () => {
+        const sqlQuery = 'SELECT * FROM users LIMIT 5;';
+        const limit = 10;
+
+        const result = applyLimitToSqlQuery({ sqlQuery, limit });
+
+        const expectedQuery = 'SELECT * FROM users LIMIT 5';
+
+        expect(result).toBe(expectedQuery);
+    });
+
+    it('should apply limit if there is no existing limit', () => {
+        const sqlQuery = 'SELECT * FROM users;';
+        const limit = 10;
+
+        const result = applyLimitToSqlQuery({ sqlQuery, limit });
+
+        const expectedQuery = 'SELECT * FROM users LIMIT 10';
 
         expect(result).toBe(expectedQuery);
     });
@@ -1038,8 +1102,224 @@ describe('applyLimitToSqlQuery', () => {
         `;
         const limit = 5;
 
-        const expectedQuery = `WITH user_sql AS (\n${sqlQuery}\n) select * from user_sql limit ${limit}`;
         const result = applyLimitToSqlQuery({ sqlQuery, limit });
+
+        const expectedQuery =
+            'SELECT name, age FROM users WHERE age > 18 ORDER BY age DESC LIMIT 5';
+
+        expect(result).toBe(expectedQuery);
+    });
+
+    it('should decrease the outer limit when existing limit is greater than the provided limit, even in subqueries', () => {
+        const sqlQuery = `
+            WITH subquery AS (
+                SELECT * FROM orders LIMIT 10
+            )
+            SELECT * FROM subquery LIMIT 25;
+        `;
+        const limit = 20;
+
+        const result = applyLimitToSqlQuery({ sqlQuery, limit });
+
+        const expectedQuery =
+            'WITH subquery AS ( SELECT * FROM orders LIMIT 10 ) SELECT * FROM subquery LIMIT 20';
+
+        expect(result).toBe(expectedQuery);
+    });
+
+    it('should keep the existing outer limit when it is less than the provided limit, even in subqueries', () => {
+        const sqlQuery = `
+            WITH subquery AS (
+                SELECT * FROM orders LIMIT 5
+            )
+            SELECT * FROM subquery LIMIT 10;
+        `;
+        const limit = 20;
+
+        const result = applyLimitToSqlQuery({ sqlQuery, limit });
+
+        const expectedQuery =
+            'WITH subquery AS ( SELECT * FROM orders LIMIT 5 ) SELECT * FROM subquery LIMIT 10';
+
+        expect(result).toBe(expectedQuery);
+    });
+
+    it('should not remove LIMIT in table or field names', () => {
+        const sqlQuery = `
+            SELECT limit_column FROM limit_table WHERE limit_table.id = 10;
+        `;
+        const limit = 10;
+
+        const result = applyLimitToSqlQuery({ sqlQuery, limit });
+
+        const expectedQuery =
+            'SELECT limit_column FROM limit_table WHERE limit_table.id = 10 LIMIT 10';
+
+        expect(result).toBe(expectedQuery);
+    });
+
+    it('should handle queries where LIMIT is inline and with a break line', () => {
+        const sqlQuery = `
+            SELECT * FROM users
+            LIMIT
+            10
+        `;
+        const limit = 5;
+
+        const result = applyLimitToSqlQuery({ sqlQuery, limit });
+
+        const expectedQuery = 'SELECT * FROM users LIMIT 5';
+
+        expect(result).toBe(expectedQuery);
+    });
+
+    it('should handle queries with LIMIT in strings', () => {
+        const sqlQuery = `
+            SELECT * FROM users WHERE name = 'LIMIT 10';
+        `;
+        const limit = 10;
+
+        const result = applyLimitToSqlQuery({ sqlQuery, limit });
+
+        const expectedQuery = `SELECT * FROM users WHERE name = 'LIMIT 10' LIMIT 10`;
+
+        expect(result).toBe(expectedQuery);
+    });
+
+    it('should handle queries with LIMIT in comments', () => {
+        const sqlQuery = `
+            -- This is a comment with LIMIT 10
+            SELECT * FROM users; /* Another comment LIMIT 20 */
+        `;
+        const limit = 15;
+
+        const result = applyLimitToSqlQuery({ sqlQuery, limit });
+
+        const expectedQuery = 'SELECT * FROM users LIMIT 15';
+
+        expect(result).toBe(expectedQuery);
+    });
+
+    it('should not remove semicolons inside strings', () => {
+        const sqlQuery = `SELECT * FROM users WHERE name = 'John;Doe';`;
+        const limit = 10;
+
+        const result = applyLimitToSqlQuery({ sqlQuery, limit });
+
+        const expectedQuery = `SELECT * FROM users WHERE name = 'John;Doe' LIMIT 10`;
+
+        expect(result).toBe(expectedQuery);
+    });
+
+    it('should handle queries with LIMIT and OFFSET', () => {
+        const sqlQuery = `
+            SELECT * FROM users LIMIT 20 OFFSET 5;
+        `;
+        const limit = 10;
+
+        const result = applyLimitToSqlQuery({ sqlQuery, limit });
+
+        const expectedQuery = 'SELECT * FROM users LIMIT 10 OFFSET 5';
+
+        expect(result).toBe(expectedQuery);
+    });
+
+    it('should handle queries with OFFSET without a LIMIT', () => {
+        const sqlQuery = `
+            SELECT * FROM users OFFSET 10;
+        `;
+        const limit = 10;
+
+        const result = applyLimitToSqlQuery({ sqlQuery, limit });
+
+        const expectedQuery = 'SELECT * FROM users OFFSET 10 LIMIT 10';
+
+        expect(result).toBe(expectedQuery);
+    });
+
+    it('should adjust the LIMIT but retain the original OFFSET', () => {
+        const sqlQuery = `
+            SELECT * FROM users LIMIT 15 OFFSET 5;
+        `;
+        const limit = 10;
+
+        const result = applyLimitToSqlQuery({ sqlQuery, limit });
+
+        const expectedQuery = 'SELECT * FROM users LIMIT 10 OFFSET 5';
+
+        expect(result).toBe(expectedQuery);
+    });
+
+    it('should retain OFFSET when no LIMIT is provided', () => {
+        const sqlQuery = `
+            SELECT * FROM users OFFSET 20;
+        `;
+        const limit = undefined;
+
+        const result = applyLimitToSqlQuery({ sqlQuery, limit });
+
+        const expectedQuery = 'SELECT * FROM users OFFSET 20';
+
+        expect(result).toBe(expectedQuery);
+    });
+
+    it('should handle queries with OFFSET in subqueries', () => {
+        const sqlQuery = `
+            WITH subquery AS (
+                SELECT * FROM orders OFFSET 5
+            )
+            SELECT * FROM subquery LIMIT 20 OFFSET 10;
+        `;
+        const limit = 15;
+
+        const result = applyLimitToSqlQuery({ sqlQuery, limit });
+
+        const expectedQuery =
+            'WITH subquery AS ( SELECT * FROM orders OFFSET 5 ) SELECT * FROM subquery LIMIT 15 OFFSET 10';
+
+        expect(result).toBe(expectedQuery);
+    });
+
+    it('should handle queries with both LIMIT and OFFSET in strings', () => {
+        const sqlQuery = `
+            SELECT * FROM users WHERE name = 'LIMIT 10 OFFSET 5';
+        `;
+        const limit = 10;
+
+        const result = applyLimitToSqlQuery({ sqlQuery, limit });
+
+        const expectedQuery = `SELECT * FROM users WHERE name = 'LIMIT 10 OFFSET 5' LIMIT 10`;
+
+        expect(result).toBe(expectedQuery);
+    });
+
+    it('should correctly handle OFFSET when LIMIT and OFFSET are in comments', () => {
+        const sqlQuery = `
+            -- This is a comment with LIMIT 10 OFFSET 5
+            SELECT * FROM users; /* Another comment LIMIT 20 OFFSET 10 */
+        `;
+        const limit = 15;
+
+        const result = applyLimitToSqlQuery({ sqlQuery, limit });
+
+        const expectedQuery = 'SELECT * FROM users LIMIT 15';
+
+        expect(result).toBe(expectedQuery);
+    });
+
+    it('should strip semicolons and correctly handle LIMIT and OFFSET in subqueries', () => {
+        const sqlQuery = `
+            WITH subquery AS (
+                SELECT * FROM orders LIMIT 10 OFFSET 5;
+            )
+            SELECT * FROM subquery LIMIT 25 OFFSET 10;
+        `;
+        const limit = 20;
+
+        const result = applyLimitToSqlQuery({ sqlQuery, limit });
+
+        const expectedQuery =
+            'WITH subquery AS ( SELECT * FROM orders LIMIT 10 OFFSET 5; ) SELECT * FROM subquery LIMIT 20 OFFSET 10';
 
         expect(result).toBe(expectedQuery);
     });
