@@ -87,7 +87,6 @@ jobs:
                   CYPRESS_TRINO_PASSWORD: ${{secrets.TRINO_PASSWORD}}
                   TZ: 'UTC'
                   CYPRESS_TZ: 'UTC'
-
     build-cypress-e2e-image:
         runs-on: ubuntu-latest
         name: Build cypress e2e image

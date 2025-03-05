@@ -206,6 +206,8 @@ RUN ln -s /usr/local/dbt1.4/bin/dbt /usr/local/bin/dbt \
     && ln -s /usr/local/dbt1.8/bin/dbt /usr/local/bin/dbt1.8 \
     && ln -s /usr/local/dbt1.9/bin/dbt /usr/local/bin/dbt1.9
 
+# Copy the docker-compose file
+COPY docker-compose.yml /usr/app/docker-compose.yml
 
 # Run backend
 COPY ./docker/prod-entrypoint.sh /usr/bin/prod-entrypoint.sh
