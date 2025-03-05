@@ -10,6 +10,8 @@ function useEmbed(): EmbedContext {
             embedToken: undefined,
             filters: undefined,
             projectUuid: undefined,
+            languageMap: undefined,
+            t: (_input: string) => undefined,
         };
     }
 

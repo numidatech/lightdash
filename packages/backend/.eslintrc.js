@@ -21,6 +21,18 @@ module.exports = {
         'no-template-curly-in-string': 'off',
         'no-restricted-syntax': 'off',
         eqeqeq: 'error',
+        // '@typescript-eslint/no-floating-promises': [
+        //     'error',
+        //     {
+        //         allowForKnownSafePromises: [
+        //             {
+        //                 from: 'package',
+        //                 name: 'QueryBuilder',
+        //                 package: 'knex',
+        //             }
+        //         ]
+        //     }
+        // ]
     },
     overrides: [
         
@@ -34,7 +46,7 @@ module.exports = {
         },
 
         {
-            // Only throw warning for existing files, new files should be error
+            // Do not check this rule for existing files, new files should be error
             files: [
                 'src/*.ts',
                 'src/analytics/**/*.ts', // TODO fix these folders
@@ -52,9 +64,9 @@ module.exports = {
                 'src/projectAdapters/**/*.ts',
             ], 
             rules: {
-                "@typescript-eslint/no-unsafe-member-access": "warn",
-                "@typescript-eslint/no-unsafe-assignment": "warn",
-                "@typescript-eslint/no-unsafe-call": "warn"
+                "@typescript-eslint/no-unsafe-member-access": "off",
+                "@typescript-eslint/no-unsafe-assignment": "off",
+                "@typescript-eslint/no-unsafe-call": "off"
             }
         },
         {
@@ -63,8 +75,6 @@ module.exports = {
                 '*.mock.ts',
                 '*.test.ts',
                 '*.spec.ts',
-
-
             ],
             rules: {
                 "@typescript-eslint/no-unsafe-member-access": "off",

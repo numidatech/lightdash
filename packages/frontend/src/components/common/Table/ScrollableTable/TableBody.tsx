@@ -2,14 +2,16 @@ import {
     getConditionalFormattingColor,
     getConditionalFormattingConfig,
     getConditionalFormattingDescription,
+    getItemId,
     isNumericItem,
+    type ConditionalFormattingRowFields,
     type ResultRow,
 } from '@lightdash/common';
 import { Button, Group } from '@mantine/core';
 import { IconChevronDown, IconChevronRight } from '@tabler/icons-react';
 import { flexRender, type Row } from '@tanstack/react-table';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import React, { type FC } from 'react';
+import React, { useMemo, type FC } from 'react';
 import { getColorFromRange, readableColor } from '../../../../utils/colorUtils';
 import { getConditionalRuleLabel } from '../../Filters/FilterInputs/utils';
 import MantineIcon from '../../MantineIcon';
@@ -56,6 +58,27 @@ const TableRow: FC<TableRowProps> = ({
     minMaxMap,
     minimal = false,
 }) => {
+    const rowFields = useMemo(
+        () =>
+            row
+                .getVisibleCells()
+                .reduce<ConditionalFormattingRowFields>((acc, cell) => {
+                    const meta = cell.column.columnDef.meta;
+                    if (meta?.item) {
+                        const cellValue = cell.getValue() as
+                            | ResultRow[0]
+                            | undefined;
+
+                        acc[getItemId(meta.item)] = {
+                            field: meta.item,
+                            value: cellValue?.value?.raw,
+                        };
+                    }
+                    return acc;
+                }, {}),
+        [row],
+    );
+
     return (
         <Tr $index={index}>
             {row.getVisibleCells().map((cell) => {
@@ -69,6 +92,7 @@ const TableRow: FC<TableRowProps> = ({
                         value: cellValue?.value?.raw,
                         minMaxMap,
                         conditionalFormattings,
+                        rowFields,
                     });
 
                 const conditionalFormattingColor =
@@ -91,6 +115,7 @@ const TableRow: FC<TableRowProps> = ({
                 const tooltipContent = getConditionalFormattingDescription(
                     field,
                     conditionalFormattingConfig,
+                    rowFields,
                     getConditionalRuleLabel,
                 );
 
@@ -187,7 +212,23 @@ const TableRow: FC<TableRowProps> = ({
         </Tr>
     );
 };
-
+/**
+ * Get the maximum height of a row, by calculating the max height of each cell
+ * This method will only take new lines (`\n`) into account, this will not work for long text that is broken down into multiple lines
+ * By calculating the max row height, we can fix the flickering issue when scrolling and some rows are big
+ * See issue: https://github.com/lightdash/lightdash/issues/13882
+ * @param row - The row to calculate the height for
+ * @returns The maximum height of the row
+ */
+const getMaxRowHeight = (row: Row<ResultRow>) => {
+    return row.getVisibleCells().reduce((acc, cell) => {
+        const lines = (
+            cell.getValue() as ResultRow[0] | undefined
+        )?.value?.formatted?.split('\n');
+        if (!lines) return acc;
+        return Math.max(acc, lines?.length * ROW_HEIGHT_PX);
+    }, ROW_HEIGHT_PX);
+};
 const VirtualizedTableBody: FC<{
     tableContainerRef: React.RefObject<HTMLDivElement | null>;
 }> = ({ tableContainerRef }) => {
@@ -198,7 +239,14 @@ const VirtualizedTableBody: FC<{
     const rowVirtualizer = useVirtualizer({
         getScrollElement: () => tableContainerRef.current,
         count: rows.length,
-        estimateSize: () => ROW_HEIGHT_PX,
+        estimateSize: (index) => {
+            try {
+                return getMaxRowHeight(rows[index]);
+            } catch (e) {
+                console.error('Error getting row height', e);
+                return ROW_HEIGHT_PX;
+            }
+        },
         overscan: 25,
     });
 

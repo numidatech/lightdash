@@ -41,6 +41,7 @@ import {
 } from './types/personalAccessToken';
 import { type ProjectMemberProfile } from './types/projectMemberProfile';
 import {
+    type ApiCalculateSubtotalsResponse,
     type ApiCalculateTotalResponse,
     type ChartHistory,
     type ChartVersion,
@@ -168,6 +169,7 @@ export * from './authorization/types';
 export * from './compiler/exploreCompiler';
 export * from './compiler/filtersCompiler';
 export * from './compiler/translator';
+export { default as DbtSchemaEditor } from './dbt/DbtSchemaEditor/DbtSchemaEditor';
 export * from './dbt/validation';
 export * from './ee/index';
 export * from './pivotTable/pivotQueryResults';
@@ -245,6 +247,7 @@ export * from './types/userAttributes';
 export * from './types/userWarehouseCredentials';
 export * from './types/validation';
 export * from './types/warehouse';
+export * from './types/yamlSchema';
 export * from './utils/accessors';
 export * from './utils/additionalMetrics';
 export * from './utils/api';
@@ -252,13 +255,16 @@ export { default as assertUnreachable } from './utils/assertUnreachable';
 export * from './utils/catalogMetricsTree';
 export * from './utils/charts';
 export * from './utils/conditionalFormatting';
-export * from './utils/convertToDbt';
+export * from './utils/convertCustomDimensionsToYaml';
+export * from './utils/convertCustomMetricsToYaml';
 export * from './utils/dashboard';
+export * from './utils/dbt';
 export * from './utils/email';
 export * from './utils/fields';
 export * from './utils/filters';
 export * from './utils/formatting';
 export * from './utils/github';
+export * from './utils/i18n';
 export * from './utils/item';
 export * from './utils/loadLightdashProjectConfig';
 export * from './utils/metricsExplorer';
@@ -267,6 +273,7 @@ export * from './utils/sanitizeHtml';
 export * from './utils/scheduler';
 export * from './utils/semanticLayer';
 export * from './utils/slugs';
+export * from './utils/subtotals';
 export * from './utils/time';
 export * from './utils/timeFrames';
 export * from './utils/virtualView';
@@ -739,7 +746,8 @@ type ApiResults =
     | ApiChartAsCodeUpsertResponse['results']
     | ApiGetMetricsTree['results']
     | ApiMetricsExplorerTotalResults['results']
-    | ApiGetSpotlightTableConfig['results'];
+    | ApiGetSpotlightTableConfig['results']
+    | ApiCalculateSubtotalsResponse['results'];
 
 export type ApiResponse<T extends ApiResults = ApiResults> = {
     status: 'ok';
@@ -815,8 +823,8 @@ export type HealthState = {
         version?: string;
     };
     rudder: {
-        writeKey: string;
-        dataPlaneUrl: string;
+        writeKey: string | undefined;
+        dataPlaneUrl: string | undefined;
     };
     sentry: Pick<
         SentryConfig,
@@ -1152,6 +1160,26 @@ function formatRawValue(
     }
 
     return value;
+}
+
+// ! We format raw values so we can't use the values directly from the warehouse to compare with subtotals of date dimensions
+export function formatRawRows(
+    rows: { [col: string]: AnyType }[],
+    itemsMap: ItemsMap,
+): Record<string, unknown>[] {
+    return rows.map((row) => {
+        const resultRow: ResultRow = {};
+        const columnNames = Object.keys(row || {});
+
+        for (const columnName of columnNames) {
+            const value = row[columnName];
+            const item = itemsMap[columnName];
+
+            resultRow[columnName] = formatRawValue(item, value);
+        }
+
+        return resultRow;
+    });
 }
 
 export function formatRows(

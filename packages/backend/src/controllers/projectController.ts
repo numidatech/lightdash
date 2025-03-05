@@ -27,10 +27,12 @@ import {
     UpdateProjectMember,
     UserWarehouseCredentials,
     isDuplicateDashboardParams,
+    type ApiCalculateSubtotalsResponse,
     type ApiCreateDashboardResponse,
     type ApiGetDashboardsResponse,
     type ApiGetTagsResponse,
     type ApiUpdateDashboardsResponse,
+    type CalculateSubtotalsFromQuery,
     type CreateDashboard,
     type DuplicateDashboardParams,
     type SemanticLayerConnectionUpdate,
@@ -370,6 +372,25 @@ export class ProjectController extends BaseController {
         return {
             status: 'ok',
             results: totalResult,
+        };
+    }
+
+    @Middlewares([allowApiKeyAuthentication, isAuthenticated])
+    @SuccessResponse('200', 'Success')
+    @Post('{projectUuid}/calculate-subtotals')
+    @OperationId('CalculateSubtotalsFromQuery')
+    async CalculateSubtotalsFromQuery(
+        @Path() projectUuid: string,
+        @Body() body: CalculateSubtotalsFromQuery,
+        @Request() req: express.Request,
+    ): Promise<ApiCalculateSubtotalsResponse> {
+        this.setStatus(200);
+        const subtotalsResult = await this.services
+            .getProjectService()
+            .calculateSubtotalsFromQuery(req.user!, projectUuid, body);
+        return {
+            status: 'ok',
+            results: subtotalsResult,
         };
     }
 
@@ -856,13 +877,14 @@ export class ProjectController extends BaseController {
         @Request() req: express.Request,
         @Query() ids?: string[],
         @Query() offset?: number,
+        @Query() languageMap?: boolean,
     ): Promise<ApiChartAsCodeListResponse> {
         this.setStatus(200);
         return {
             status: 'ok',
             results: await this.services
                 .getCoderService()
-                .getCharts(req.user!, projectUuid, ids, offset),
+                .getCharts(req.user!, projectUuid, ids, offset, languageMap),
         };
     }
 
@@ -875,13 +897,20 @@ export class ProjectController extends BaseController {
         @Request() req: express.Request,
         @Query() ids?: string[],
         @Query() offset?: number,
+        @Query() languageMap?: boolean,
     ): Promise<ApiDashboardAsCodeListResponse> {
         this.setStatus(200);
         return {
             status: 'ok',
             results: await this.services
                 .getCoderService()
-                .getDashboards(req.user!, projectUuid, ids, offset),
+                .getDashboards(
+                    req.user!,
+                    projectUuid,
+                    ids,
+                    offset,
+                    languageMap,
+                ),
         };
     }
 

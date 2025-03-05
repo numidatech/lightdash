@@ -98,6 +98,7 @@ import {
     deepEqual,
     findFieldByIdInExplore,
     findReplaceableCustomMetrics,
+    formatRawRows,
     formatRows,
     getAggregatedField,
     getDashboardFilterRulesForTables,
@@ -109,8 +110,10 @@ import {
     getIntrinsicUserAttributes,
     getItemId,
     getMetrics,
+    getSubtotalKey,
     getTimezoneLabel,
     hasIntersection,
+    isAndFilterGroup,
     isCustomSqlDimension,
     isDateItem,
     isDimension,
@@ -118,11 +121,13 @@ import {
     isFilterRule,
     isFilterableDimension,
     isNotNull,
+    isOrFilterGroup,
     isUserWithOrg,
     maybeReplaceFieldsInChartVersion,
     replaceDimensionInExplore,
     snakeCaseName,
     type ApiCreateProjectResults,
+    type CalculateSubtotalsFromQuery,
     type CreateDatabricksCredentials,
     type RunQueryTags,
     type SemanticLayerConnectionUpdate,
@@ -580,8 +585,7 @@ export class ProjectService extends BaseService {
         this.logger.info(
             `Saved ${cachedExploreUuids.length} explores to cache for project ${projectUuid}`,
         );
-
-        await this.schedulerClient.indexCatalog({
+        return this.schedulerClient.indexCatalog({
             projectUuid,
             userUuid,
             prevCatalogItemsWithTags,
@@ -1613,6 +1617,7 @@ export class ProjectService extends BaseService {
             ...addDashboardFiltersToMetricQuery(
                 savedChart.metricQuery,
                 appliedDashboardFilters,
+                explore,
             ),
             sorts:
                 dashboardSorts && dashboardSorts.length > 0
@@ -1793,6 +1798,11 @@ export class ProjectService extends BaseService {
                     });
                 span.setAttribute('rows', rows.length);
 
+                this.logger.info(
+                    `Query returned ${rows.length} rows and ${
+                        Object.keys(rows?.[0] || {}).length
+                    } columns with querytags ${JSON.stringify(queryTags)}`,
+                );
                 const { warehouseConnection } =
                     await this.projectModel.getWithSensitiveFields(projectUuid);
                 if (warehouseConnection) {
@@ -1808,6 +1818,7 @@ export class ProjectService extends BaseService {
                     },
                     async (formatRowsSpan) => {
                         const useWorker = rows.length > 500;
+                        this.logger.info(`Formatting ${rows.length} rows`);
                         return measureTime(
                             async () => {
                                 formatRowsSpan.setAttribute(
@@ -1838,6 +1849,11 @@ export class ProjectService extends BaseService {
                     },
                 );
 
+                this.logger.info(
+                    `Formatted rows returned ${formattedRows.length} rows and ${
+                        Object.keys(formattedRows?.[0] || {}).length
+                    } columns`,
+                );
                 return {
                     rows: formattedRows,
                     metricQuery,
@@ -2022,6 +2038,7 @@ export class ProjectService extends BaseService {
                                     ),
                                 'runWarehouseQuery',
                                 this.logger,
+                                context,
                             );
                         } catch (e) {
                             this.logger.warn(
@@ -3311,7 +3328,7 @@ export class ProjectService extends BaseService {
                 await this.jobModel.update(job.jobUuid, {
                     jobStatus: JobStatusType.RUNNING,
                 });
-                await this.jobModel.tryJobStep(
+                const indexCatalogJobUuid = await this.jobModel.tryJobStep(
                     job.jobUuid,
                     JobStepType.COMPILING,
                     async () => {
@@ -3344,7 +3361,7 @@ export class ProjectService extends BaseService {
                                 color: category.color ?? 'gray',
                             })),
                         );
-                        await this.saveExploresToCacheAndIndexCatalog(
+                        return this.saveExploresToCacheAndIndexCatalog(
                             user.userUuid,
                             projectUuid,
                             explores,
@@ -3354,6 +3371,9 @@ export class ProjectService extends BaseService {
 
                 await this.jobModel.update(job.jobUuid, {
                     jobStatus: JobStatusType.DONE,
+                    jobResults: {
+                        indexCatalogJobUuid,
+                    },
                 });
             } catch (e) {
                 await this.jobModel.update(job.jobUuid, {
@@ -4914,6 +4934,166 @@ export class ProjectService extends BaseService {
             organizationUuid,
         );
         return results.row;
+    }
+
+    async _calculateSubtotals(
+        user: SessionUser,
+        projectUuid: string,
+        data: CalculateSubtotalsFromQuery,
+        organizationUuid: string,
+    ) {
+        const {
+            explore: exploreName,
+            metricQuery,
+            columnOrder,
+            pivotDimensions,
+        } = data;
+
+        const explore = await this.getExplore(
+            user,
+            projectUuid,
+            exploreName,
+            organizationUuid,
+        );
+
+        // Order dimensions according to columnOrder
+        const orderedDimensions = metricQuery.dimensions.sort((a, b) => {
+            const aIndex = columnOrder.indexOf(a);
+            const bIndex = columnOrder.indexOf(b);
+            // Handle cases where dimension isn't in columnOrder
+            if (aIndex === -1) return 1;
+            if (bIndex === -1) return -1;
+            return aIndex - bIndex;
+        });
+
+        // Pivot dimensions always need to be in the query, therefore we need to remove them before calculating the subtotal groupings by order
+        const orderedDimensionsWithoutPivot = orderedDimensions.filter(
+            (dimension) => !pivotDimensions?.includes(dimension),
+        );
+
+        // Remove the last dimension since it will not be used for subtotals, would produce the most detailed row
+        const dimensionsToSubtotal = orderedDimensionsWithoutPivot.slice(0, -1);
+
+        // Create a list of all the dimension groups to subtotal, starting with the first dimension, then the first two dimensions, then the first three dimensions, etc.
+        const dimensionGroupsToSubtotal = dimensionsToSubtotal.map(
+            (dimension, index) => {
+                if (index === 0) {
+                    return [dimension];
+                }
+
+                return [...dimensionsToSubtotal.slice(0, index), dimension];
+            },
+        );
+
+        this.analytics.track({
+            userId: user.userUuid,
+            event: 'query.subtotal',
+            properties: {
+                context: QueryExecutionContext.CALCULATE_SUBTOTAL,
+                organizationId: organizationUuid,
+                projectId: projectUuid,
+                exploreName,
+                subtotalDimensionGroups: dimensionGroupsToSubtotal.map(
+                    (group) => group.join(','),
+                ),
+                subtotalQueryCount: dimensionGroupsToSubtotal.length,
+            },
+        });
+
+        const queryTags: RunQueryTags = {
+            organization_uuid: user.organizationUuid,
+            project_uuid: projectUuid,
+            user_uuid: user.userUuid,
+            explore_name: exploreName,
+            query_context: QueryExecutionContext.CALCULATE_SUBTOTAL,
+        };
+
+        // Run the query for each dimension group and format the raw rows, this is needed because we apply raw formatting to date dimensions, and we need to compare values in the same format in the frontend
+        const runQueryAndFormatRaw = async (
+            subtotalMetricQuery: MetricQuery,
+        ) => {
+            const { rows, fields } = await this.runMetricQuery({
+                user,
+                metricQuery: subtotalMetricQuery,
+                explore,
+                queryTags,
+                projectUuid,
+                exploreName,
+                context: QueryExecutionContext.CALCULATE_SUBTOTAL,
+                csvLimit: null,
+                chartUuid: undefined,
+            });
+
+            return formatRawRows(rows, fields);
+        };
+
+        const subtotalsPromises = dimensionGroupsToSubtotal.map(
+            async (subtotalDimensions) => {
+                let subtotals: Record<string, unknown>[] = [];
+
+                try {
+                    subtotals = await runQueryAndFormatRaw({
+                        ...metricQuery,
+                        dimensions: [
+                            ...subtotalDimensions,
+                            ...(pivotDimensions || []), // we always need to include the pivot dimensions in the subtotal query
+                        ],
+                    });
+                } catch (e) {
+                    this.logger.error(
+                        `Error running subtotal query for dimensions ${subtotalDimensions.join(
+                            ',',
+                        )}`,
+                    );
+                }
+
+                return [getSubtotalKey(subtotalDimensions), subtotals];
+            },
+        );
+
+        const subtotalsEntries = await Promise.all(subtotalsPromises);
+        return Object.fromEntries(subtotalsEntries);
+    }
+
+    async calculateSubtotalsFromQuery(
+        user: SessionUser,
+        projectUuid: string,
+        data: CalculateSubtotalsFromQuery,
+    ) {
+        if (!isUserWithOrg(user)) {
+            throw new ForbiddenError('User is not part of an organization');
+        }
+        const { organizationUuid } =
+            await this.projectModel.getWithSensitiveFields(projectUuid);
+
+        if (
+            user.ability.cannot(
+                'manage',
+                subject('Explore', { organizationUuid, projectUuid }),
+            )
+        ) {
+            throw new ForbiddenError();
+        }
+
+        if (
+            data.metricQuery.customDimensions?.some(isCustomSqlDimension) &&
+            user.ability.cannot(
+                'manage',
+                subject('CustomSql', { organizationUuid, projectUuid }),
+            )
+        ) {
+            throw new ForbiddenError(
+                'User cannot run queries with custom SQL dimensions',
+            );
+        }
+
+        // Reuse the _calculateTotal method by passing the explore, metricQuery, and organizationUuid
+        return this._calculateSubtotals(
+            user,
+            projectUuid,
+            data,
+            organizationUuid,
+        );
     }
 
     async getDbtExposures(

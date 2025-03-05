@@ -21,6 +21,7 @@ import {
     isCustomSqlDimension,
     isFormat,
     LightdashUser,
+    MetricFilterRule,
     MetricOverrides,
     NotFoundError,
     Organization,
@@ -42,6 +43,7 @@ import {
     DashboardTileChartTableName,
     DashboardVersionsTableName,
 } from '../database/entities/dashboards';
+import { OrganizationColorPaletteTableName } from '../database/entities/organizationColorPalettes';
 import { OrganizationTableName } from '../database/entities/organizations';
 import {
     PinnedChartTableName,
@@ -776,6 +778,11 @@ export class SavedChartModel {
                         `${OrganizationTableName}.organization_id`,
                         `${ProjectTableName}.organization_id`,
                     )
+                    .leftJoin(
+                        OrganizationColorPaletteTableName,
+                        `${OrganizationTableName}.color_palette_uuid`,
+                        `${OrganizationColorPaletteTableName}.color_palette_uuid`,
+                    )
                     .innerJoin(
                         'saved_queries_versions',
                         `${SavedChartsTableName}.saved_query_id`,
@@ -801,7 +808,7 @@ export class SavedChartModel {
                             space_uuid: string;
                             spaceName: string;
                             dashboardName: string | null;
-                            chart_colors: string[] | null;
+                            color_palette: string[] | null;
                             slug: string;
                         })[]
                     >([
@@ -824,7 +831,7 @@ export class SavedChartModel {
                         'saved_queries_versions.pivot_dimensions',
                         'saved_queries_versions.timezone',
                         `${OrganizationTableName}.organization_uuid`,
-                        `${OrganizationTableName}.chart_colors`,
+                        `${OrganizationColorPaletteTableName}.colors as color_palette`,
                         `${UserTableName}.user_uuid`,
                         `${UserTableName}.first_name`,
                         `${UserTableName}.last_name`,
@@ -1046,7 +1053,7 @@ export class SavedChartModel {
                     dashboardUuid: savedQuery.dashboard_uuid,
                     dashboardName: savedQuery.dashboardName,
                     colorPalette:
-                        savedQuery.chart_colors ?? ECHARTS_DEFAULT_COLORS,
+                        savedQuery.color_palette ?? ECHARTS_DEFAULT_COLORS,
                     slug: savedQuery.slug,
                 };
             },
@@ -1123,6 +1130,7 @@ export class SavedChartModel {
             customBinDimensions: string[];
             customSqlDimensions: string[];
             sorts: string[];
+            customMetricsFilters: MetricFilterRule[];
             dashboardUuid: string | undefined;
         }>
     > {
@@ -1191,6 +1199,9 @@ export class SavedChartModel {
                 customMetrics: this.database.raw(
                     "COALESCE(ARRAY_AGG(DISTINCT (sqvam.table || '_' || sqvam.name)) FILTER (WHERE sqvam.name IS NOT NULL), '{}')",
                 ),
+                customMetricsFilters: this.database.raw(
+                    "COALESCE(ARRAY_AGG(DISTINCT (sqvam.filters)) FILTER (WHERE sqvam.filters IS NOT NULL), '{}')",
+                ),
                 customMetricsBaseDimensions: this.database.raw(
                     "COALESCE(ARRAY_AGG(DISTINCT (sqvam.table || '_' || sqvam.base_dimension_name)) FILTER (WHERE sqvam.base_dimension_name IS NOT NULL), '{}')",
                 ),
@@ -1246,9 +1257,12 @@ export class SavedChartModel {
         const chartsNotInTilesUuids = await this.getChartsNotInTilesUuids(
             savedCharts,
         );
-        return savedCharts.filter(
-            (chart) => !chartsNotInTilesUuids.includes(chart.uuid),
-        );
+        return savedCharts
+            .map((chart) => ({
+                ...chart,
+                customMetricsFilters: chart.customMetricsFilters.flat(),
+            }))
+            .filter((chart) => !chartsNotInTilesUuids.includes(chart.uuid));
     }
 
     async getSlugsForUuids(uuids: string[]): Promise<string[]> {
