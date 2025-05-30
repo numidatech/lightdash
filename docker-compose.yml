@@ -2,6 +2,7 @@ version: '3.8'
 services:
     lightdash:
         platform: linux/amd64
+        restart: always
         image: numidatech/lightdash:latest
         depends_on:
             - db
