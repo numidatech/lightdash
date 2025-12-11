@@ -1,6 +1,12 @@
 import { type ItemsMap } from '@lightdash/common';
 import React, { type FC } from 'react';
 import {
+    selectParameterDefinitions,
+    selectParameters,
+    useExplorerSelector,
+} from '../../../features/explorer/store';
+import useDashboardContext from '../../../providers/Dashboard/useDashboardContext';
+import {
     useChartSchedulerCreateMutation,
     useChartSchedulers,
 } from '../hooks/useChartSchedulers';
@@ -25,6 +31,14 @@ export const DashboardSchedulersModal: FC<DashboardSchedulersProps> = ({
     const schedulersQuery = useDashboardSchedulers(dashboardUuid);
     const createMutation = useDashboardSchedulerCreateMutation();
 
+    // Extract parameter data from dashboard context
+    const currentParameterValues = useDashboardContext(
+        (c) => c.parameterValues,
+    );
+    const availableParameters = useDashboardContext(
+        (c) => c.parameterDefinitions,
+    );
+
     return (
         <SchedulerModal
             resourceUuid={dashboardUuid}
@@ -32,6 +46,8 @@ export const DashboardSchedulersModal: FC<DashboardSchedulersProps> = ({
             schedulersQuery={schedulersQuery}
             createMutation={createMutation}
             isChart={false}
+            currentParameterValues={currentParameterValues}
+            availableParameters={availableParameters}
             {...modalProps}
         />
     );
@@ -54,6 +70,10 @@ export const ChartSchedulersModal: FC<ChartSchedulersProps> = ({
     const chartSchedulersQuery = useChartSchedulers(chartUuid);
     const createMutation = useChartSchedulerCreateMutation();
 
+    // Extract parameter data from Redux
+    const currentParameterValues = useExplorerSelector(selectParameters);
+    const availableParameters = useExplorerSelector(selectParameterDefinitions);
+
     return (
         <SchedulerModal
             resourceUuid={chartUuid}
@@ -61,6 +81,8 @@ export const ChartSchedulersModal: FC<ChartSchedulersProps> = ({
             schedulersQuery={chartSchedulersQuery}
             createMutation={createMutation}
             isChart
+            currentParameterValues={currentParameterValues}
+            availableParameters={availableParameters}
             {...modalProps}
         />
     );

@@ -2,6 +2,7 @@ import { SEED_PROJECT } from '@lightdash/common';
 
 const apiUrl = '/api/v1';
 
+// todo: combine into 1 test
 describe('User attributes sql_filter', () => {
     beforeEach(() => {
         cy.login();
@@ -30,7 +31,7 @@ describe('User attributes sql_filter', () => {
         // run query
         cy.get('button').contains('Run query').click();
 
-        cy.contains('Error running query');
+        cy.contains('Error loading results');
 
         cy.contains(
             // eslint-disable-next-line no-template-curly-in-string
@@ -82,6 +83,7 @@ describe('User attributes sql_filter', () => {
     });
 });
 
+// todo: combine into 1 test
 describe('User attributes dimension required_attribute', () => {
     beforeEach(() => {
         cy.login();

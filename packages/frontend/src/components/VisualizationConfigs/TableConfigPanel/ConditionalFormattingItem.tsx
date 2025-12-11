@@ -18,8 +18,8 @@ import {
     type ConditionalFormattingColorRange,
     type ConditionalFormattingConfig,
     type ConditionalFormattingConfigWithColorRange,
-    type ConditionalFormattingWithConditionalOperator,
-    type ConditionalOperator,
+    type ConditionalFormattingWithFilterOperator,
+    type FilterOperator,
     type FilterableItem,
 } from '@lightdash/common';
 import {
@@ -103,7 +103,7 @@ export const ConditionalFormattingItem: FC<Props> = ({
                     // Reset the config if the field type changes
                     // TODO: move to a helper function
                     const shouldReset =
-                        (isNumericItem(currentField) &&
+                        ((!currentField || isNumericItem(currentField)) &&
                             isStringDimension(newField)) ||
                         (isStringDimension(currentField) &&
                             isNumericItem(newField));
@@ -210,7 +210,7 @@ export const ConditionalFormattingItem: FC<Props> = ({
     );
 
     const handleChangeRuleOperator = useCallback(
-        (index: number, newOperator: ConditionalOperator) => {
+        (index: number, newOperator: FilterOperator) => {
             if (isConditionalFormattingConfigWithSingleColor(config)) {
                 handleChange(
                     produce(config, (draft) => {
@@ -260,10 +260,7 @@ export const ConditionalFormattingItem: FC<Props> = ({
     );
 
     const handleChangeRule = useCallback(
-        (
-            index: number,
-            newRule: ConditionalFormattingWithConditionalOperator,
-        ) => {
+        (index: number, newRule: ConditionalFormattingWithFilterOperator) => {
             if (isConditionalFormattingConfigWithSingleColor(config)) {
                 handleChange(
                     produce(config, (draft) => {
@@ -380,7 +377,8 @@ export const ConditionalFormattingItem: FC<Props> = ({
                                             ConditionalFormattingConfigType
                                                 .Range
                                         ],
-                                        disabled: !isNumericItem(field),
+                                        disabled:
+                                            field && !isNumericItem(field),
                                     },
                                 ]}
                                 value={getConditionalFormattingConfigType(
@@ -410,8 +408,8 @@ export const ConditionalFormattingItem: FC<Props> = ({
                             <Box
                                 p="xs"
                                 sx={(theme) => ({
-                                    backgroundColor: theme.colors.gray[1],
-                                    border: `1px solid ${theme.colors.gray[4]}`,
+                                    backgroundColor: theme.colors.ldGray[1],
+                                    border: `1px solid ${theme.colors.ldGray[4]}`,
                                     borderRadius: theme.radius.sm,
                                 })}
                             >

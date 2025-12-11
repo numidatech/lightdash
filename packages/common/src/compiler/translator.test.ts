@@ -1,6 +1,14 @@
-import { SupportedDbtAdapter } from '../types/dbt';
+import { SupportedDbtAdapter, type DbtModelNode } from '../types/dbt';
+import { type Explore } from '../types/explore';
+import { DimensionType, FieldType } from '../types/field';
 import { DEFAULT_SPOTLIGHT_CONFIG } from '../types/lightdashProjectConfig';
-import { attachTypesToModels, convertTable } from './translator';
+import { TimeFrames } from '../types/timeFrames';
+import { warehouseClientMock } from './exploreCompiler.mock';
+import {
+    attachTypesToModels,
+    convertExplores,
+    convertTable,
+} from './translator';
 import {
     DBT_METRIC,
     DBT_METRIC_DERIVED,
@@ -11,31 +19,51 @@ import {
     LIGHTDASH_TABLE_SQL_WHERE,
     LIGHTDASH_TABLE_WITHOUT_AUTO_METRICS,
     LIGHTDASH_TABLE_WITH_ADDITIONAL_DIMENSIONS,
+    LIGHTDASH_TABLE_WITH_AI_HINT,
+    LIGHTDASH_TABLE_WITH_AI_HINT_ARRAY,
+    LIGHTDASH_TABLE_WITH_AI_HINT_FROM_CONFIG,
+    LIGHTDASH_TABLE_WITH_COMPOSITE_PRIMARY_KEY,
     LIGHTDASH_TABLE_WITH_CUSTOM_TIME_INTERVAL_DIMENSIONS,
     LIGHTDASH_TABLE_WITH_DBT_METRICS,
     LIGHTDASH_TABLE_WITH_DBT_V9_METRICS,
     LIGHTDASH_TABLE_WITH_DEFAULT_TIME_INTERVAL_DIMENSIONS_BIGQUERY,
     LIGHTDASH_TABLE_WITH_DEFAULT_TIME_INTERVAL_DIMENSIONS_SNOWFLAKE,
+    LIGHTDASH_TABLE_WITH_DIMENSION_AI_HINT,
+    LIGHTDASH_TABLE_WITH_DIMENSION_AI_HINT_ARRAY,
     LIGHTDASH_TABLE_WITH_GROUP_BLOCK,
     LIGHTDASH_TABLE_WITH_GROUP_LABEL,
     LIGHTDASH_TABLE_WITH_METRICS,
+    LIGHTDASH_TABLE_WITH_METRIC_AI_HINT,
+    LIGHTDASH_TABLE_WITH_METRIC_AI_HINT_ARRAY,
     LIGHTDASH_TABLE_WITH_METRIC_LEVEL_CATEGORIES,
     LIGHTDASH_TABLE_WITH_MODEL_LEVEL_CATEGORIES,
+    LIGHTDASH_TABLE_WITH_MODEL_METRIC_AI_HINT,
     LIGHTDASH_TABLE_WITH_NO_CATEGORIES,
     LIGHTDASH_TABLE_WITH_OFF_TIME_INTERVAL_DIMENSIONS,
+    LIGHTDASH_TABLE_WITH_SINGLE_PRIMARY_KEY,
     MODEL_WITH_ADDITIONAL_DIMENSIONS,
+    MODEL_WITH_AI_HINT,
+    MODEL_WITH_AI_HINT_ARRAY,
+    MODEL_WITH_AI_HINT_IN_CONFIG,
+    MODEL_WITH_COMPOSITE_PRIMARY_KEY,
     MODEL_WITH_CUSTOM_TIME_INTERVAL_DIMENSIONS,
     MODEL_WITH_DEFAULT_TIME_INTERVAL_DIMENSIONS,
+    MODEL_WITH_DIMENSION_AI_HINT,
+    MODEL_WITH_DIMENSION_AI_HINT_ARRAY,
     MODEL_WITH_GROUPS_BLOCK,
     MODEL_WITH_GROUP_LABEL,
     MODEL_WITH_METRIC,
+    MODEL_WITH_METRIC_AI_HINT,
+    MODEL_WITH_METRIC_AI_HINT_ARRAY,
     MODEL_WITH_METRIC_LEVEL_CATEGORIES,
     MODEL_WITH_MODEL_LEVEL_CATEGORIES,
+    MODEL_WITH_MODEL_METRIC_AI_HINT,
     MODEL_WITH_NO_CATEGORIES,
     MODEL_WITH_NO_METRICS,
     MODEL_WITH_NO_TIME_INTERVAL_DIMENSIONS,
     MODEL_WITH_OFF_BOOLEAN_TIME_INTERVAL_DIMENSIONS,
     MODEL_WITH_OFF_TIME_INTERVAL_DIMENSIONS,
+    MODEL_WITH_SINGLE_PRIMARY_KEY,
     MODEL_WITH_SQL_FILTER,
     MODEL_WITH_SQL_WHERE,
     MODEL_WITH_WRONG_METRIC,
@@ -318,6 +346,417 @@ describe('convert tables from dbt models', () => {
             ),
         ).toStrictEqual(LIGHTDASH_TABLE_WITH_GROUP_BLOCK);
     });
+
+    it('should convert dbt model with single column primary key', () => {
+        expect(
+            convertTable(
+                SupportedDbtAdapter.BIGQUERY,
+                MODEL_WITH_SINGLE_PRIMARY_KEY,
+                [],
+                DEFAULT_SPOTLIGHT_CONFIG,
+            ),
+        ).toStrictEqual(LIGHTDASH_TABLE_WITH_SINGLE_PRIMARY_KEY);
+    });
+
+    it('should convert dbt model with composite primary key', () => {
+        expect(
+            convertTable(
+                SupportedDbtAdapter.BIGQUERY,
+                MODEL_WITH_COMPOSITE_PRIMARY_KEY,
+                [],
+                DEFAULT_SPOTLIGHT_CONFIG,
+            ),
+        ).toStrictEqual(LIGHTDASH_TABLE_WITH_COMPOSITE_PRIMARY_KEY);
+    });
+
+    it('should convert dbt model with dimension ai.hint', () => {
+        expect(
+            convertTable(
+                SupportedDbtAdapter.BIGQUERY,
+                MODEL_WITH_DIMENSION_AI_HINT,
+                [],
+                DEFAULT_SPOTLIGHT_CONFIG,
+            ),
+        ).toStrictEqual(LIGHTDASH_TABLE_WITH_DIMENSION_AI_HINT);
+    });
+
+    it('should convert dbt model with metric ai.hint', () => {
+        expect(
+            convertTable(
+                SupportedDbtAdapter.BIGQUERY,
+                MODEL_WITH_METRIC_AI_HINT,
+                [],
+                DEFAULT_SPOTLIGHT_CONFIG,
+            ),
+        ).toStrictEqual(LIGHTDASH_TABLE_WITH_METRIC_AI_HINT);
+    });
+
+    it('should convert dbt model with model-level metric ai.hint', () => {
+        expect(
+            convertTable(
+                SupportedDbtAdapter.BIGQUERY,
+                MODEL_WITH_MODEL_METRIC_AI_HINT,
+                [],
+                DEFAULT_SPOTLIGHT_CONFIG,
+            ),
+        ).toStrictEqual(LIGHTDASH_TABLE_WITH_MODEL_METRIC_AI_HINT);
+    });
+
+    it('should convert dbt model with table ai.hint in meta', () => {
+        expect(
+            convertTable(
+                SupportedDbtAdapter.BIGQUERY,
+                MODEL_WITH_AI_HINT,
+                [],
+                DEFAULT_SPOTLIGHT_CONFIG,
+            ),
+        ).toStrictEqual(LIGHTDASH_TABLE_WITH_AI_HINT);
+    });
+
+    it('should convert dbt model with table ai.hint in config.meta', () => {
+        expect(
+            convertTable(
+                SupportedDbtAdapter.BIGQUERY,
+                MODEL_WITH_AI_HINT_IN_CONFIG,
+                [],
+                DEFAULT_SPOTLIGHT_CONFIG,
+            ),
+        ).toStrictEqual(LIGHTDASH_TABLE_WITH_AI_HINT_FROM_CONFIG);
+    });
+
+    it('should convert dbt model with table ai.hint as array', () => {
+        expect(
+            convertTable(
+                SupportedDbtAdapter.BIGQUERY,
+                MODEL_WITH_AI_HINT_ARRAY,
+                [],
+                DEFAULT_SPOTLIGHT_CONFIG,
+            ),
+        ).toStrictEqual(LIGHTDASH_TABLE_WITH_AI_HINT_ARRAY);
+    });
+
+    it('should convert dbt model with dimension ai.hint as array', () => {
+        expect(
+            convertTable(
+                SupportedDbtAdapter.BIGQUERY,
+                MODEL_WITH_DIMENSION_AI_HINT_ARRAY,
+                [],
+                DEFAULT_SPOTLIGHT_CONFIG,
+            ),
+        ).toStrictEqual(LIGHTDASH_TABLE_WITH_DIMENSION_AI_HINT_ARRAY);
+    });
+
+    it('should convert dbt model with metric ai.hint as array', () => {
+        expect(
+            convertTable(
+                SupportedDbtAdapter.BIGQUERY,
+                MODEL_WITH_METRIC_AI_HINT_ARRAY,
+                [],
+                DEFAULT_SPOTLIGHT_CONFIG,
+            ),
+        ).toStrictEqual(LIGHTDASH_TABLE_WITH_METRIC_AI_HINT_ARRAY);
+    });
+
+    describe('with set fields', () => {
+        it('returns table with valid set fields', () => {
+            expect(
+                convertTable(
+                    SupportedDbtAdapter.BIGQUERY,
+                    {
+                        ...MODEL_WITH_NO_METRICS,
+                        meta: {
+                            sets: {
+                                my_set: {
+                                    fields: ['user_id'],
+                                },
+                            },
+                        },
+                    },
+                    [],
+                    DEFAULT_SPOTLIGHT_CONFIG,
+                ),
+            ).toBeTruthy();
+        });
+
+        it('throws when set name conflicts with dimension name', () => {
+            expect(() =>
+                convertTable(
+                    SupportedDbtAdapter.BIGQUERY,
+                    {
+                        ...MODEL_WITH_NO_METRICS,
+                        meta: {
+                            sets: {
+                                user_id: {
+                                    fields: ['user_id'],
+                                },
+                            },
+                        },
+                    },
+                    [],
+                    DEFAULT_SPOTLIGHT_CONFIG,
+                ),
+            ).toThrowError(
+                `Set name "user_id" in model "myTable" conflicts with an existing field name. Set names must be unique from dimension and metric names.`,
+            );
+        });
+
+        it('throws when set name conflicts with metric name', () => {
+            expect(() =>
+                convertTable(
+                    SupportedDbtAdapter.BIGQUERY,
+                    {
+                        ...MODEL_WITH_METRIC,
+                        meta: {
+                            ...MODEL_WITH_METRIC.meta,
+                            sets: {
+                                user_count: {
+                                    fields: ['user_id'],
+                                },
+                            },
+                        },
+                    },
+                    [],
+                    DEFAULT_SPOTLIGHT_CONFIG,
+                ),
+            ).toThrowError(
+                `Set name "user_count" in model "myTable" conflicts with an existing field name. Set names must be unique from dimension and metric names.`,
+            );
+        });
+
+        it('throws when set definition is missing fields array', () => {
+            expect(() =>
+                convertTable(
+                    SupportedDbtAdapter.BIGQUERY,
+                    {
+                        ...MODEL_WITH_NO_METRICS,
+                        meta: {
+                            sets: {
+                                // @ts-expect-error - intentionally testing invalid type
+                                my_set: {},
+                            },
+                        },
+                    },
+                    [],
+                    DEFAULT_SPOTLIGHT_CONFIG,
+                ),
+            ).toThrowError(
+                `Set "my_set" in model "myTable" must have a "fields" array`,
+            );
+        });
+
+        it('throws when set fields array is empty', () => {
+            expect(() =>
+                convertTable(
+                    SupportedDbtAdapter.BIGQUERY,
+                    {
+                        ...MODEL_WITH_NO_METRICS,
+                        meta: {
+                            sets: {
+                                my_set: {
+                                    fields: [],
+                                },
+                            },
+                        },
+                    },
+                    [],
+                    DEFAULT_SPOTLIGHT_CONFIG,
+                ),
+            ).toThrowError(`Set "my_set" in model "myTable" cannot be empty`);
+        });
+
+        it('throws when set contains non-string field', () => {
+            expect(() =>
+                convertTable(
+                    SupportedDbtAdapter.BIGQUERY,
+                    {
+                        ...MODEL_WITH_NO_METRICS,
+                        meta: {
+                            sets: {
+                                my_set: {
+                                    // @ts-expect-error - intentionally testing invalid type
+                                    fields: [123],
+                                },
+                            },
+                        },
+                    },
+                    [],
+                    DEFAULT_SPOTLIGHT_CONFIG,
+                ),
+            ).toThrowError(
+                `Set "my_set" in model "myTable" contains non-string field: 123`,
+            );
+        });
+
+        it('throws when set has nested set references beyond one level', () => {
+            expect(() =>
+                convertTable(
+                    SupportedDbtAdapter.BIGQUERY,
+                    {
+                        ...MODEL_WITH_NO_METRICS,
+                        meta: {
+                            sets: {
+                                base_set: {
+                                    fields: ['user_id'],
+                                },
+                                middle_set: {
+                                    fields: ['base_set*'],
+                                },
+                                top_set: {
+                                    fields: ['middle_set*'],
+                                },
+                            },
+                        },
+                    },
+                    [],
+                    DEFAULT_SPOTLIGHT_CONFIG,
+                ),
+            ).toThrowError(
+                `Set "top_set" in model "myTable" references set "middle_set", which itself contains set references. Only one level of set nesting is allowed.`,
+            );
+        });
+
+        it('allows valid set references with wildcard', () => {
+            expect(
+                convertTable(
+                    SupportedDbtAdapter.BIGQUERY,
+                    {
+                        ...MODEL_WITH_NO_METRICS,
+                        meta: {
+                            sets: {
+                                base_set: {
+                                    fields: ['user_id'],
+                                },
+                                extended_set: {
+                                    fields: ['base_set*'],
+                                },
+                            },
+                        },
+                    },
+                    [],
+                    DEFAULT_SPOTLIGHT_CONFIG,
+                ),
+            ).toBeTruthy();
+        });
+
+        it('allows valid field exclusions with minus prefix', () => {
+            expect(
+                convertTable(
+                    SupportedDbtAdapter.BIGQUERY,
+                    {
+                        ...MODEL_WITH_NO_METRICS,
+                        meta: {
+                            joins: [
+                                {
+                                    join: 'a_table',
+                                    sql_on: '${myTable.id} = ${a_table.id}',
+                                },
+                                {
+                                    join: 'a_table',
+                                    alias: 'another_table',
+                                    sql_on: '${myTable.id} = ${another_table.id}',
+                                },
+                            ],
+                            sets: {
+                                my_set: {
+                                    fields: [
+                                        'user_id',
+                                        '-user_id',
+                                        'a_table.user_name',
+                                        'another_table.user_id',
+                                    ],
+                                },
+                            },
+                        },
+                    },
+                    [],
+                    DEFAULT_SPOTLIGHT_CONFIG,
+                ),
+            ).toBeTruthy();
+        });
+
+        it('allows valid field names with joins', () => {
+            expect(
+                convertTable(
+                    SupportedDbtAdapter.BIGQUERY,
+                    {
+                        ...MODEL_WITH_NO_METRICS,
+                        meta: {
+                            joins: [
+                                {
+                                    join: 'a_table',
+                                    alias: 'user',
+                                    sql_on: '${myTable.id} = ${a_table.id}',
+                                },
+                            ],
+                            sets: {
+                                my_set: {
+                                    fields: ['user.id'],
+                                },
+                            },
+                        },
+                    },
+                    [],
+                    DEFAULT_SPOTLIGHT_CONFIG,
+                ),
+            ).toBeTruthy();
+        });
+
+        it('throws when set references non-existent field', () => {
+            expect(() =>
+                convertTable(
+                    SupportedDbtAdapter.BIGQUERY,
+                    {
+                        ...MODEL_WITH_METRIC,
+                        meta: {
+                            joins: [
+                                {
+                                    join: 'a_table',
+                                    sql_on: '${myTable.id} = ${a_table.id}',
+                                },
+                            ],
+                            sets: {
+                                my_bad_set: {
+                                    fields: ['bogus_field'],
+                                },
+                            },
+                        },
+                    },
+                    [],
+                    DEFAULT_SPOTLIGHT_CONFIG,
+                ),
+            ).toThrowError(
+                `Set "my_bad_set" in model "myTable" references non-existent model field "bogus_field". Fields must correspond to actual dimensions or metrics in the model.`,
+            );
+        });
+
+        it('throws when set references non-existent join model', () => {
+            expect(() =>
+                convertTable(
+                    SupportedDbtAdapter.BIGQUERY,
+                    {
+                        ...MODEL_WITH_METRIC,
+                        meta: {
+                            joins: [
+                                {
+                                    join: 'a_table',
+                                    sql_on: '${myTable.id} = ${a_table.id}',
+                                },
+                            ],
+                            sets: {
+                                my_bad_set: {
+                                    fields: ['wat.bogus_field'],
+                                },
+                            },
+                        },
+                    },
+                    [],
+                    DEFAULT_SPOTLIGHT_CONFIG,
+                ),
+            ).toThrowError(
+                `Set "my_bad_set" in model "myTable" references non-existent join model "wat".`,
+            );
+        });
+    });
 });
 
 describe('spotlight config', () => {
@@ -365,5 +804,203 @@ describe('spotlight config', () => {
         ).toThrowError(
             `Invalid spotlight categories found in metric 'user_count': category_1, category_2. Categories must be defined in project config.`,
         );
+    });
+});
+
+describe('explore-scoped additional dimensions', () => {
+    const MODEL_WITH_EXPLORE_SCOPED_DIMENSIONS: DbtModelNode & {
+        relation_name: string;
+    } = {
+        unique_id: 'model.test.test_model',
+        resource_type: 'model',
+        name: 'test_model',
+        database: 'testDatabase',
+        schema: 'testSchema',
+        alias: 'test_model',
+        description: 'Test model with explore-scoped dimensions',
+        relation_name: 'testDatabase.testSchema.test_model',
+        columns: {
+            order_id: {
+                name: 'order_id',
+                data_type: DimensionType.STRING,
+                meta: {},
+            },
+            amount: {
+                name: 'amount',
+                data_type: DimensionType.NUMBER,
+                meta: {},
+            },
+        },
+        meta: {
+            explores: {
+                orders_with_custom_dims: {
+                    label: 'Orders with Custom Dimensions',
+                    additional_dimensions: {
+                        amount_doubled: {
+                            type: DimensionType.NUMBER,
+                            sql: '${amount} * 2',
+                            label: 'Amount Doubled',
+                            description: 'The order amount multiplied by 2',
+                        },
+                        amount_category: {
+                            type: DimensionType.STRING,
+                            sql: "CASE WHEN ${amount} > 100 THEN 'high' ELSE 'low' END",
+                            label: 'Amount Category',
+                        },
+                    },
+                },
+            },
+        },
+        config: {
+            materialized: 'table',
+        },
+        tags: [],
+        path: 'models/test_model.sql',
+        patch_path: 'test://models/test_model.yml',
+        depends_on: { nodes: [], macros: [] },
+        refs: [],
+        sources: [],
+        compiled: true,
+        compiled_code: 'SELECT * FROM orders',
+        fqn: ['test', 'test_model'],
+        raw_code: 'SELECT * FROM orders',
+        language: 'sql',
+        package_name: 'test',
+        original_file_path: 'models/test_model.sql',
+        checksum: { name: 'sha256', checksum: '' },
+    };
+
+    it('should create explore with explore-scoped additional dimensions', async () => {
+        const explores = await convertExplores(
+            [MODEL_WITH_EXPLORE_SCOPED_DIMENSIONS],
+            false,
+            SupportedDbtAdapter.POSTGRES,
+            [],
+            warehouseClientMock,
+            {
+                spotlight: DEFAULT_SPOTLIGHT_CONFIG,
+            },
+        );
+
+        // Should create 2 explores: base explore + additional explore with custom dimensions
+        expect(explores).toHaveLength(2);
+
+        // Find the explore with custom dimensions
+        const exploreWithDims = explores.find(
+            (e) => 'name' in e && e.name === 'orders_with_custom_dims',
+        ) as Explore;
+
+        expect(exploreWithDims).toBeDefined();
+        expect(exploreWithDims.label).toBe('Orders with Custom Dimensions');
+
+        // Check that explore-scoped dimensions are present
+        const baseTable = exploreWithDims.tables.test_model;
+        expect(baseTable.dimensions).toHaveProperty('amount_doubled');
+        expect(baseTable.dimensions).toHaveProperty('amount_category');
+
+        // Verify dimension properties
+        const amountDoubled = baseTable.dimensions.amount_doubled;
+        expect(amountDoubled.type).toBe(DimensionType.NUMBER);
+        expect(amountDoubled.label).toBe('Amount Doubled');
+        expect(amountDoubled.description).toBe(
+            'The order amount multiplied by 2',
+        );
+        expect(amountDoubled.isAdditionalDimension).toBe(true);
+        expect(amountDoubled.table).toBe('test_model');
+        expect(amountDoubled.fieldType).toBe(FieldType.DIMENSION);
+
+        const amountCategory = baseTable.dimensions.amount_category;
+        expect(amountCategory.type).toBe(DimensionType.STRING);
+        expect(amountCategory.label).toBe('Amount Category');
+        expect(amountCategory.isAdditionalDimension).toBe(true);
+    });
+
+    it('should NOT include explore-scoped dimensions in base explore', async () => {
+        const explores = await convertExplores(
+            [MODEL_WITH_EXPLORE_SCOPED_DIMENSIONS],
+            false,
+            SupportedDbtAdapter.POSTGRES,
+            [],
+            warehouseClientMock,
+            {
+                spotlight: DEFAULT_SPOTLIGHT_CONFIG,
+            },
+        );
+
+        // Find the base explore
+        const baseExplore = explores.find(
+            (e) => 'name' in e && e.name === 'test_model',
+        ) as Explore;
+
+        expect(baseExplore).toBeDefined();
+
+        // Base explore should NOT have the explore-scoped dimensions
+        const baseTable = baseExplore.tables.test_model;
+        expect(baseTable.dimensions).not.toHaveProperty('amount_doubled');
+        expect(baseTable.dimensions).not.toHaveProperty('amount_category');
+
+        // But should have the regular dimensions
+        expect(baseTable.dimensions).toHaveProperty('order_id');
+        expect(baseTable.dimensions).toHaveProperty('amount');
+    });
+
+    const MODEL_WITH_DATE_EXPLORE_DIMENSION: DbtModelNode = {
+        ...MODEL_WITH_EXPLORE_SCOPED_DIMENSIONS,
+        meta: {
+            explores: {
+                orders_with_date_dims: {
+                    label: 'Orders with Date Dimensions',
+                    additional_dimensions: {
+                        custom_date: {
+                            type: DimensionType.DATE,
+                            sql: 'DATE(${amount})',
+                            label: 'Custom Date',
+                            time_intervals: [
+                                TimeFrames.DAY,
+                                TimeFrames.WEEK,
+                                TimeFrames.MONTH,
+                            ],
+                        },
+                    },
+                },
+            },
+        },
+    };
+
+    it('should create time interval dimensions for date type explore-scoped dimensions', async () => {
+        const explores = await convertExplores(
+            [MODEL_WITH_DATE_EXPLORE_DIMENSION],
+            false,
+            SupportedDbtAdapter.POSTGRES,
+            [],
+            warehouseClientMock,
+            {
+                spotlight: DEFAULT_SPOTLIGHT_CONFIG,
+            },
+        );
+
+        const exploreWithDims = explores.find(
+            (e) => 'name' in e && e.name === 'orders_with_date_dims',
+        ) as Explore;
+
+        expect(exploreWithDims).toBeDefined();
+
+        const baseTable = exploreWithDims.tables.test_model;
+
+        // Should have the base date dimension
+        expect(baseTable.dimensions).toHaveProperty('custom_date');
+        expect(baseTable.dimensions.custom_date.type).toBe(DimensionType.DATE);
+        expect(baseTable.dimensions.custom_date.isIntervalBase).toBe(true);
+
+        // Should have time interval dimensions
+        expect(baseTable.dimensions).toHaveProperty('custom_date_day');
+        expect(baseTable.dimensions).toHaveProperty('custom_date_week');
+        expect(baseTable.dimensions).toHaveProperty('custom_date_month');
+
+        // Verify time interval dimension properties
+        expect(baseTable.dimensions.custom_date_day.timeInterval).toBe('DAY');
+        expect(
+            baseTable.dimensions.custom_date_day.timeIntervalBaseDimensionName,
+        ).toBe('custom_date');
     });
 });

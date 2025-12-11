@@ -1,24 +1,24 @@
 import {
-    DimensionType,
     convertAdditionalMetric,
+    DimensionType,
     getItemId,
     getResultValueArray,
     getVisibleFields,
     isCustomSqlDimension,
     isFilterableField,
     type AdditionalMetric,
-    type ApiQueryResults,
     type CustomDimension,
     type Explore,
     type FilterableField,
     type Metric,
+    type ResultRow,
     type TableCalculation,
 } from '@lightdash/common';
 import { useEffect, useState } from 'react';
 
 interface FieldsWithSuggestionsHookParams {
     exploreData: Explore | undefined;
-    queryResults: ApiQueryResults | undefined;
+    rows: ResultRow[] | undefined;
     customDimensions: CustomDimension[] | undefined;
     additionalMetrics: AdditionalMetric[] | undefined;
     tableCalculations: TableCalculation[] | undefined;
@@ -32,7 +32,7 @@ export type FieldsWithSuggestions = Record<string, FieldWithSuggestions>;
 
 export const useFieldsWithSuggestions = ({
     exploreData,
-    queryResults,
+    rows,
     customDimensions,
     additionalMetrics,
     tableCalculations,
@@ -53,7 +53,7 @@ export const useFieldsWithSuggestions = ({
                             additionalMetric,
                             table,
                         });
-                        return [...acc, metric];
+                        acc.push(metric);
                     }
                     return acc;
                 }, []);
@@ -73,14 +73,16 @@ export const useFieldsWithSuggestions = ({
                             const currentSuggestions =
                                 prev[getItemId(field)]?.suggestions || [];
                             const newSuggestions: string[] =
-                                (queryResults &&
+                                (rows &&
                                     getResultValueArray(
-                                        queryResults.rows,
+                                        rows,
+                                        true,
+                                        false,
                                         true,
                                     ).results.reduce<string[]>((acc, row) => {
                                         const value = row[getItemId(field)];
                                         if (typeof value === 'string') {
-                                            return [...acc, value];
+                                            acc.push(value);
                                         }
                                         return acc;
                                     }, [])) ||
@@ -92,21 +94,18 @@ export const useFieldsWithSuggestions = ({
                                 ]),
                             ).sort((a, b) => a.localeCompare(b));
                         }
-                        return {
-                            ...sum,
-                            [getItemId(field)]: {
-                                ...field,
-                                suggestions,
-                            },
+                        sum[getItemId(field)] = {
+                            ...field,
+                            suggestions,
                         };
                     }
                     return sum;
-                }, {});
+                }, {} as FieldsWithSuggestions);
             });
         }
     }, [
         exploreData,
-        queryResults,
+        rows,
         additionalMetrics,
         tableCalculations,
         customDimensions,

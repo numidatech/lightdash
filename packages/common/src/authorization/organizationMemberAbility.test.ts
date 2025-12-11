@@ -426,6 +426,111 @@ describe('Organization member permissions', () => {
                     ),
                 ).toEqual(true);
             });
+
+            describe('JobStatus', () => {
+                it('can view his own job status', () => {
+                    expect(
+                        ability.can(
+                            'view',
+                            subject('JobStatus', {
+                                createdByUserUuid: ORGANIZATION_ADMIN.userUuid,
+                            }),
+                        ),
+                    ).toEqual(true);
+                });
+
+                it('cannot view job status from the organization', () => {
+                    expect(
+                        ability.can(
+                            'view',
+                            subject('JobStatus', {
+                                organizationUuid:
+                                    ORGANIZATION_ADMIN.organizationUuid,
+                                createdByUserUuid: undefined,
+                            }),
+                        ),
+                    ).toEqual(true);
+                });
+                it('cannot view job status from another organization', () => {
+                    expect(
+                        ability.can(
+                            'view',
+                            subject('JobStatus', { organizationUuid: '54678' }),
+                        ),
+                    ).toEqual(false);
+                });
+            });
+
+            describe('AiAgent', () => {
+                it('can manage AiAgent', () => {
+                    expect(
+                        ability.can(
+                            'manage',
+                            subject('AiAgent', {
+                                organizationUuid:
+                                    ORGANIZATION_ADMIN.organizationUuid,
+                            }),
+                        ),
+                    ).toEqual(true);
+                });
+
+                it('cannot manage AiAgent from another organization', () => {
+                    expect(
+                        ability.can(
+                            'manage',
+                            subject('AiAgent', { organizationUuid: '5678' }),
+                        ),
+                    ).toEqual(false);
+                });
+            });
+
+            describe('AiAgentThread', () => {
+                it('can view all AiAgentThreads in the organization', () => {
+                    expect(
+                        ability.can(
+                            'view',
+                            subject('AiAgentThread', {
+                                organizationUuid:
+                                    ORGANIZATION_ADMIN.organizationUuid,
+                            }),
+                        ),
+                    ).toEqual(true);
+                });
+
+                it('can manage all AiAgentThreads in the organization', () => {
+                    expect(
+                        ability.can(
+                            'manage',
+                            subject('AiAgentThread', {
+                                organizationUuid:
+                                    ORGANIZATION_ADMIN.organizationUuid,
+                            }),
+                        ),
+                    ).toEqual(true);
+                });
+
+                it('cannot view AiAgentThread from another organization', () => {
+                    expect(
+                        ability.can(
+                            'view',
+                            subject('AiAgentThread', {
+                                organizationUuid: '5678',
+                            }),
+                        ),
+                    ).toEqual(false);
+                });
+
+                it('cannot manage AiAgentThread from another organization', () => {
+                    expect(
+                        ability.can(
+                            'manage',
+                            subject('AiAgentThread', {
+                                organizationUuid: '5678',
+                            }),
+                        ),
+                    ).toEqual(false);
+                });
+            });
         });
 
         describe('when user is an editor', () => {
@@ -836,6 +941,40 @@ describe('Organization member permissions', () => {
             it('can use the SemanticViewer', () => {
                 expect(ability.can('manage', 'SemanticViewer')).toEqual(true);
             });
+
+            describe('JobStatus', () => {
+                it('can view his own job status', () => {
+                    expect(
+                        ability.can(
+                            'view',
+                            subject('JobStatus', {
+                                createdByUserUuid: ORGANIZATION_EDITOR.userUuid,
+                            }),
+                        ),
+                    ).toEqual(true);
+                });
+
+                it('cannot view job status from the organization', () => {
+                    expect(
+                        ability.can(
+                            'view',
+                            subject('JobStatus', {
+                                organizationUuid:
+                                    ORGANIZATION_EDITOR.organizationUuid,
+                                createdByUserUuid: undefined,
+                            }),
+                        ),
+                    ).toEqual(false);
+                });
+                it('cannot view job status from another organization', () => {
+                    expect(
+                        ability.can(
+                            'view',
+                            subject('JobStatus', { organizationUuid: '54678' }),
+                        ),
+                    ).toEqual(false);
+                });
+            });
         });
 
         describe('when user is an developer', () => {
@@ -851,6 +990,103 @@ describe('Organization member permissions', () => {
 
             it('can use the SemanticViewer', () => {
                 expect(ability.can('manage', 'SemanticViewer')).toEqual(true);
+            });
+
+            describe('JobStatus', () => {
+                it('can view his own job status', () => {
+                    expect(
+                        ability.can(
+                            'view',
+                            subject('JobStatus', {
+                                createdByUserUuid:
+                                    ORGANIZATION_DEVELOPER.userUuid,
+                            }),
+                        ),
+                    ).toEqual(true);
+                });
+
+                it('cannot view job status from the organization', () => {
+                    expect(
+                        ability.can(
+                            'view',
+                            subject('JobStatus', {
+                                organizationUuid:
+                                    ORGANIZATION_DEVELOPER.organizationUuid,
+                                createdByUserUuid: undefined,
+                            }),
+                        ),
+                    ).toEqual(true);
+                });
+                it('cannot view job status from another organization', () => {
+                    expect(
+                        ability.can(
+                            'view',
+                            subject('JobStatus', { organizationUuid: '54678' }),
+                        ),
+                    ).toEqual(false);
+                });
+            });
+
+            describe('AiAgent', () => {
+                it('can manage AiAgent', () => {
+                    expect(
+                        ability.can(
+                            'manage',
+                            subject('AiAgent', {
+                                organizationUuid:
+                                    ORGANIZATION_DEVELOPER.organizationUuid,
+                            }),
+                        ),
+                    ).toEqual(true);
+                });
+
+                it('cannot manage AiAgent from another organization', () => {
+                    expect(
+                        ability.can(
+                            'manage',
+                            subject('AiAgent', { organizationUuid: '5678' }),
+                        ),
+                    ).toEqual(false);
+                });
+            });
+
+            describe('AiAgentThread', () => {
+                it('can manage only his own AiAgentThread', () => {
+                    expect(
+                        ability.can(
+                            'manage',
+                            subject('AiAgentThread', {
+                                organizationUuid:
+                                    ORGANIZATION_DEVELOPER.organizationUuid,
+                                userUuid: ORGANIZATION_DEVELOPER.userUuid,
+                            }),
+                        ),
+                    ).toEqual(true);
+                });
+
+                it('cannot manage other users AiAgentThread', () => {
+                    expect(
+                        ability.can(
+                            'manage',
+                            subject('AiAgentThread', {
+                                organizationUuid:
+                                    ORGANIZATION_DEVELOPER.organizationUuid,
+                                userUuid: 'another-user-uuid',
+                            }),
+                        ),
+                    ).toEqual(false);
+                });
+
+                it('cannot manage AiAgentThread from another organization', () => {
+                    expect(
+                        ability.can(
+                            'manage',
+                            subject('AiAgentThread', {
+                                organizationUuid: '5678',
+                            }),
+                        ),
+                    ).toEqual(false);
+                });
             });
         });
 
@@ -876,6 +1112,41 @@ describe('Organization member permissions', () => {
 
             it('cannot view charts', () => {
                 expect(ability.can('view', 'SavedChart')).toEqual(false);
+            });
+
+            describe('JobStatus', () => {
+                it('can view his own job status', () => {
+                    expect(
+                        ability.can(
+                            'view',
+                            subject('JobStatus', {
+                                createdByUserUuid:
+                                    ORGANIZATION_DEVELOPER.userUuid,
+                            }),
+                        ),
+                    ).toEqual(true);
+                });
+
+                it('cannot view job status from the organization', () => {
+                    expect(
+                        ability.can(
+                            'view',
+                            subject('JobStatus', {
+                                organizationUuid:
+                                    ORGANIZATION_DEVELOPER.organizationUuid,
+                                createdByUserUuid: undefined,
+                            }),
+                        ),
+                    ).toEqual(false);
+                });
+                it('cannot view job status from another organization', () => {
+                    expect(
+                        ability.can(
+                            'view',
+                            subject('JobStatus', { organizationUuid: '54678' }),
+                        ),
+                    ).toEqual(false);
+                });
             });
         });
 
@@ -1494,6 +1765,96 @@ describe('Organization member permissions', () => {
             it('cannot view the SemanticViewer', () => {
                 expect(ability.can('view', 'SemanticViewer')).toEqual(false);
             });
+
+            describe('AiAgent', () => {
+                it('cannot view AiAgent', () => {
+                    expect(
+                        ability.can(
+                            'view',
+                            subject('AiAgent', {
+                                organizationUuid:
+                                    ORGANIZATION_VIEWER.organizationUuid,
+                            }),
+                        ),
+                    ).toEqual(false);
+                });
+
+                it('cannot manage AiAgent', () => {
+                    expect(
+                        ability.can(
+                            'manage',
+                            subject('AiAgent', {
+                                organizationUuid:
+                                    ORGANIZATION_VIEWER.organizationUuid,
+                            }),
+                        ),
+                    ).toEqual(false);
+                });
+            });
+
+            describe('AiAgentThread', () => {
+                it('can view only his own AiAgentThread', () => {
+                    expect(
+                        ability.can(
+                            'view',
+                            subject('AiAgentThread', {
+                                organizationUuid:
+                                    ORGANIZATION_VIEWER.organizationUuid,
+                                userUuid: ORGANIZATION_VIEWER.userUuid,
+                            }),
+                        ),
+                    ).toEqual(true);
+                });
+
+                it('cannot view other users AiAgentThread', () => {
+                    expect(
+                        ability.can(
+                            'view',
+                            subject('AiAgentThread', {
+                                organizationUuid:
+                                    ORGANIZATION_VIEWER.organizationUuid,
+                                userUuid: 'another-user-uuid',
+                            }),
+                        ),
+                    ).toEqual(false);
+                });
+
+                it('cannot manage his own AiAgentThread', () => {
+                    expect(
+                        ability.can(
+                            'manage',
+                            subject('AiAgentThread', {
+                                organizationUuid:
+                                    ORGANIZATION_VIEWER.organizationUuid,
+                                userUuid: ORGANIZATION_VIEWER.userUuid,
+                            }),
+                        ),
+                    ).toEqual(false);
+                });
+
+                it('cannot create AiAgentThread', () => {
+                    expect(
+                        ability.can(
+                            'create',
+                            subject('AiAgentThread', {
+                                organizationUuid:
+                                    ORGANIZATION_VIEWER.organizationUuid,
+                            }),
+                        ),
+                    ).toEqual(false);
+                });
+
+                it('cannot view AiAgentThread from another organization', () => {
+                    expect(
+                        ability.can(
+                            'view',
+                            subject('AiAgentThread', {
+                                organizationUuid: '5678',
+                            }),
+                        ),
+                    ).toEqual(false);
+                });
+            });
         });
 
         describe('when user is an interactive viewer', () => {
@@ -1791,6 +2152,107 @@ describe('Organization member permissions', () => {
                         subject('Job', { userUuid: 'another-user-uuid' }),
                     ),
                 ).toEqual(false);
+            });
+
+            describe('AiAgent', () => {
+                it('can view AiAgent', () => {
+                    expect(
+                        ability.can(
+                            'view',
+                            subject('AiAgent', {
+                                organizationUuid:
+                                    ORGANIZATION_INTERACTIVE_VIEWER.organizationUuid,
+                            }),
+                        ),
+                    ).toEqual(true);
+                });
+
+                it('cannot manage AiAgent', () => {
+                    expect(
+                        ability.can(
+                            'manage',
+                            subject('AiAgent', {
+                                organizationUuid:
+                                    ORGANIZATION_INTERACTIVE_VIEWER.organizationUuid,
+                            }),
+                        ),
+                    ).toEqual(false);
+                });
+
+                it('cannot view AiAgent from another organization', () => {
+                    expect(
+                        ability.can(
+                            'view',
+                            subject('AiAgent', { organizationUuid: '5678' }),
+                        ),
+                    ).toEqual(false);
+                });
+            });
+
+            describe('AiAgentThread', () => {
+                it('can create AiAgentThread', () => {
+                    expect(
+                        ability.can(
+                            'create',
+                            subject('AiAgentThread', {
+                                organizationUuid:
+                                    ORGANIZATION_INTERACTIVE_VIEWER.organizationUuid,
+                            }),
+                        ),
+                    ).toEqual(true);
+                });
+
+                it('can view only his own AiAgentThread', () => {
+                    expect(
+                        ability.can(
+                            'view',
+                            subject('AiAgentThread', {
+                                organizationUuid:
+                                    ORGANIZATION_INTERACTIVE_VIEWER.organizationUuid,
+                                userUuid:
+                                    ORGANIZATION_INTERACTIVE_VIEWER.userUuid,
+                            }),
+                        ),
+                    ).toEqual(true);
+                });
+
+                it('cannot view other users AiAgentThread', () => {
+                    expect(
+                        ability.can(
+                            'view',
+                            subject('AiAgentThread', {
+                                organizationUuid:
+                                    ORGANIZATION_INTERACTIVE_VIEWER.organizationUuid,
+                                userUuid: 'another-user-uuid',
+                            }),
+                        ),
+                    ).toEqual(false);
+                });
+
+                it('cannot manage his own AiAgentThread', () => {
+                    expect(
+                        ability.can(
+                            'manage',
+                            subject('AiAgentThread', {
+                                organizationUuid:
+                                    ORGANIZATION_INTERACTIVE_VIEWER.organizationUuid,
+                                userUuid:
+                                    ORGANIZATION_INTERACTIVE_VIEWER.userUuid,
+                            }),
+                        ),
+                    ).toEqual(false);
+                });
+
+                it('cannot create AiAgentThread in another organization', () => {
+                    expect(
+                        ability.can(
+                            'create',
+                            subject('AiAgentThread', {
+                                organizationUuid: '5678',
+                            }),
+                        ),
+                    ).toEqual(false);
+                });
             });
         });
     });

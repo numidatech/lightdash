@@ -9,7 +9,9 @@ import {
     UnstyledButton,
     useMantineTheme,
 } from '@mantine/core';
-import { differenceBy, filter, includes } from 'lodash';
+import differenceBy from 'lodash/differenceBy';
+import filter from 'lodash/filter';
+import includes from 'lodash/includes';
 import {
     memo,
     useCallback,
@@ -251,9 +253,10 @@ export const MetricsCatalogCategoryForm: FC<Props> = memo(
                         onClose?.();
                     }
                 }}
-                position="bottom"
+                position="top"
                 width={300}
                 withArrow
+                withinPortal
                 trapFocus={!hasOpenSubPopover}
                 closeOnClickOutside={!hasOpenSubPopover} // Prevent closing when sub-popover is open
             >
@@ -290,7 +293,7 @@ export const MetricsCatalogCategoryForm: FC<Props> = memo(
                                 },
                                 tagInput: {
                                     fontWeight: 500,
-                                    color: theme.colors.dark[9],
+                                    color: theme.colors.ldDark[9],
                                 },
                                 tagInputContainer: {
                                     padding: `${theme.spacing.xxs}px ${theme.spacing.xs}px`,

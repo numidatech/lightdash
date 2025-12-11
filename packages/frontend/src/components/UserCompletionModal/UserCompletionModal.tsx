@@ -1,4 +1,5 @@
 import {
+    CompleteUserSchema,
     LightdashMode,
     getEmailDomain,
     validateOrganizationEmailDomains,
@@ -17,6 +18,7 @@ import {
 } from '@mantine/core';
 import { useForm } from '@mantine/form';
 import shuffle from 'lodash/shuffle';
+import { zodResolver } from 'mantine-form-zod-resolver';
 import { useEffect, useMemo, type FC } from 'react';
 import { useUserCompleteMutation } from '../../hooks/user/useUserCompleteMutation';
 import useApp from '../../providers/App/useApp';
@@ -42,6 +44,16 @@ const jobTitles = [
 const UserCompletionModal: FC = () => {
     const { health, user } = useApp();
 
+    const canEnterOrganizationName = user.data?.organizationName === '';
+
+    const validate = zodResolver(
+        canEnterOrganizationName
+            ? CompleteUserSchema
+            : // User is not creating org, just accepting invite
+              // They cannot input org name so don't validate it for backwards compat reasons
+              CompleteUserSchema.omit({ organizationName: true }),
+    );
+
     const form = useForm<CompleteUserArgs>({
         initialValues: {
             organizationName: '',
@@ -50,6 +62,7 @@ const UserCompletionModal: FC = () => {
             isMarketingOptedIn: true,
             isTrackingAnonymized: false,
         },
+        validate,
     });
 
     const { isLoading, mutate, isSuccess } = useUserCompleteMutation();
@@ -73,8 +86,6 @@ const UserCompletionModal: FC = () => {
         ]);
     }, [user.data?.email]);
 
-    const canEnterOrganizationName = user.data?.organizationName === '';
-
     const canEnableEmailDomainAccess =
         canEnterOrganizationName && isValidOrganizationDomain;
 
@@ -88,7 +99,11 @@ const UserCompletionModal: FC = () => {
         setFieldValue('enableEmailDomainAccess', true);
     }, [canEnableEmailDomainAccess, setFieldValue]);
 
-    if (!user.data || user.data.isSetupComplete) {
+    if (
+        !user.data ||
+        user.data.isSetupComplete ||
+        health.data?.rudder.writeKey === undefined
+    ) {
         return null;
     }
 
@@ -103,7 +118,7 @@ const UserCompletionModal: FC = () => {
                 title={
                     <Box ta="center">
                         <Title order={4}>Nearly there...</Title>
-                        <Text ta="center" c="gray.6">
+                        <Text ta="center" c="ldGray.6">
                             Tell us a bit more about yourself
                         </Text>
                     </Box>
@@ -196,4 +211,14 @@ const UserCompletionModal: FC = () => {
     );
 };
 
-export default UserCompletionModal;
+const UserCompletionModalWithUser = () => {
+    const { user } = useApp();
+
+    if (!user.isSuccess) {
+        return null;
+    }
+
+    return <UserCompletionModal />;
+};
+
+export default UserCompletionModalWithUser;

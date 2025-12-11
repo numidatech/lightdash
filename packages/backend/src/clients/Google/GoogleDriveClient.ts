@@ -13,6 +13,7 @@ import {
     ItemsMap,
     Metric,
     MissingConfigError,
+    NotFoundError,
     TableCalculation,
     UnexpectedGoogleSheetsError,
 } from '@lightdash/common';
@@ -54,32 +55,33 @@ export class GoogleDriveClient {
         }
     }
 
-    private static async changeTabTitle(
-        sheets: sheets_v4.Sheets,
-        fileId: string,
-        title: string,
-    ) {
-        const spreadsheet = await sheets.spreadsheets.get({
-            spreadsheetId: fileId,
-        });
-        await sheets.spreadsheets.batchUpdate({
-            spreadsheetId: fileId,
-            requestBody: {
-                requests: [
-                    {
-                        updateSheetProperties: {
-                            properties: {
-                                sheetId:
-                                    spreadsheet.data.sheets?.[0].properties
-                                        ?.sheetId,
-                                title,
-                            },
-                            fields: 'title',
-                        },
-                    },
-                ],
-            },
-        });
+    private static async catchApiError<T>(promise: Promise<T>) {
+        try {
+            return await promise;
+        } catch (err: AnyType) {
+            if (err?.response?.status === 404) {
+                throw new NotFoundError(
+                    `Google Sheet not found: ${err.response?.data?.error?.message}`,
+                );
+            }
+
+            if (err?.response?.status === 401) {
+                throw new ForbiddenError(
+                    `Failed to authorize: ${err.response.data?.error}: ${err.response.data?.error_description}`,
+                );
+            }
+
+            if (
+                err?.response?.status === 400 &&
+                err?.response?.data?.error === 'invalid_grant'
+            ) {
+                throw new ForbiddenError(
+                    `Failed to refresh token: ${err.response.data.error}: ${err.response.data.error_description}`,
+                );
+            }
+
+            throw err;
+        }
     }
 
     async createNewTab(refreshToken: string, fileId: string, tabName: string) {
@@ -91,8 +93,8 @@ export class GoogleDriveClient {
 
         // Creates a new tab in the sheet
         const tabTitle = tabName.replaceAll(':', '.'); // we can't use ranges with colons in their tab ids
-        await sheets.spreadsheets
-            .batchUpdate({
+        await GoogleDriveClient.catchApiError(
+            sheets.spreadsheets.batchUpdate({
                 spreadsheetId: fileId,
                 requestBody: {
                     requests: [
@@ -105,20 +107,20 @@ export class GoogleDriveClient {
                         },
                     ],
                 },
-            })
-            .catch((error) => {
-                if (
-                    error.code === 400 &&
-                    error.errors[0]?.message.includes(tabName)
-                ) {
-                    Logger.debug(
-                        `Google sheet tab already exists, we will overwrite it: ${error.errors[0]?.message}`,
-                    );
-                } else if (error.code === 500) {
-                    // This is a transient error, we will retry the request later
-                    throw new GoogleSheetsTransientError(error);
-                }
-            });
+            }),
+        ).catch((error) => {
+            if (
+                error.code === 400 &&
+                error?.errors[0]?.message.includes(tabName)
+            ) {
+                Logger.debug(
+                    `Google sheet tab already exists, we will overwrite it: ${error.errors[0]?.message}`,
+                );
+            } else if (error.code === 500) {
+                // This is a transient error, we will retry the request later
+                throw new GoogleSheetsTransientError(error);
+            }
+        });
 
         return tabTitle;
     }
@@ -130,13 +132,15 @@ export class GoogleDriveClient {
         const auth = await this.getCredentials(refreshToken);
         const sheets = google.sheets({ version: 'v4', auth });
 
-        const response = await sheets.spreadsheets.create({
-            requestBody: {
-                properties: {
-                    title,
+        const response = await GoogleDriveClient.catchApiError(
+            sheets.spreadsheets.create({
+                requestBody: {
+                    properties: {
+                        title,
+                    },
                 },
-            },
-        });
+            }),
+        );
         return response.data;
     }
 
@@ -171,14 +175,16 @@ export class GoogleDriveClient {
             ...tabsUpdated,
         ];
 
-        await sheets.spreadsheets.values.update({
-            spreadsheetId: fileId,
-            range: `${metadataTabName}!A1`,
-            valueInputOption: 'USER_ENTERED',
-            requestBody: {
-                values: metadata,
-            },
-        });
+        await GoogleDriveClient.catchApiError(
+            sheets.spreadsheets.values.update({
+                spreadsheetId: fileId,
+                range: `${metadataTabName}!A1`,
+                valueInputOption: 'USER_ENTERED',
+                requestBody: {
+                    values: metadata,
+                },
+            }),
+        );
     }
 
     private static async clearTabName(
@@ -190,9 +196,11 @@ export class GoogleDriveClient {
         // So instead we select all the cells in the first tab by its name
         try {
             if (tabName === undefined) {
-                const spreadsheet = await sheets.spreadsheets.get({
-                    spreadsheetId: fileId,
-                });
+                const spreadsheet = await GoogleDriveClient.catchApiError(
+                    sheets.spreadsheets.get({
+                        spreadsheetId: fileId,
+                    }),
+                );
                 const firstSheetName =
                     spreadsheet.data.sheets?.[0].properties?.title;
                 if (!firstSheetName) {
@@ -201,17 +209,21 @@ export class GoogleDriveClient {
                     );
                 }
                 Logger.debug(`Clearing first sheet name ${firstSheetName}`);
-                await sheets.spreadsheets.values.clear({
-                    spreadsheetId: fileId,
-                    range: firstSheetName,
-                });
+                await GoogleDriveClient.catchApiError(
+                    sheets.spreadsheets.values.clear({
+                        spreadsheetId: fileId,
+                        range: firstSheetName,
+                    }),
+                );
             } else {
                 Logger.debug(`Clearing sheet name ${tabName}`);
 
-                await sheets.spreadsheets.values.clear({
-                    spreadsheetId: fileId,
-                    range: tabName,
-                });
+                await GoogleDriveClient.catchApiError(
+                    sheets.spreadsheets.values.clear({
+                        spreadsheetId: fileId,
+                        range: tabName,
+                    }),
+                );
             }
         } catch (error) {
             Logger.error('Unable to clear the sheet', error);
@@ -233,6 +245,19 @@ export class GoogleDriveClient {
         }
         if (value instanceof Set) {
             return [...value].join(',');
+        }
+
+        // Handle BigInt values by converting to regular numbers when safe
+        if (typeof value === 'bigint') {
+            // Check if the BigInt value is within JavaScript's safe integer range
+            if (
+                value >= Number.MIN_SAFE_INTEGER &&
+                value <= Number.MAX_SAFE_INTEGER
+            ) {
+                return Number(value);
+            }
+            // For very large BigInt values, convert to string to preserve precision
+            return value.toString();
         }
 
         if (isField(item) && item.type === DimensionType.DATE) {
@@ -345,13 +370,15 @@ export class GoogleDriveClient {
             `Writing ${results.length} rows and ${results[0].length} columns to Google sheets`,
         );
 
-        await sheets.spreadsheets.values.update({
-            spreadsheetId: fileId,
-            range: sanitizedTabName ? `${sanitizedTabName}!A1` : 'A1',
-            valueInputOption: 'RAW',
-            requestBody: {
-                values: results,
-            },
-        });
+        await GoogleDriveClient.catchApiError(
+            sheets.spreadsheets.values.update({
+                spreadsheetId: fileId,
+                range: sanitizedTabName ? `${sanitizedTabName}!A1` : 'A1',
+                valueInputOption: 'RAW',
+                requestBody: {
+                    values: results,
+                },
+            }),
+        );
     }
 }

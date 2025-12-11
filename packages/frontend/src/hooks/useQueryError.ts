@@ -1,4 +1,4 @@
-import { InvalidUser, type ApiError } from '@lightdash/common';
+import { InvalidUser, PaginationError, type ApiError } from '@lightdash/common';
 import { captureException } from '@sentry/react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState, type Dispatch, type SetStateAction } from 'react';
@@ -7,11 +7,13 @@ import useToaster from './toaster/useToaster';
 type opts = {
     forbiddenToastTitle?: string;
     forceToastOnForbidden?: boolean;
+    chartName?: string;
 };
 
 const useQueryError = ({
     forbiddenToastTitle,
     forceToastOnForbidden,
+    chartName,
 }: opts = {}): Dispatch<SetStateAction<ApiError | undefined>> => {
     const queryClient = useQueryClient();
     const [errorResponse, setErrorResponse] = useState<ApiError | undefined>();
@@ -36,7 +38,10 @@ const useQueryError = ({
                     }
                 } else if (statusCode === 401) {
                     await queryClient.invalidateQueries(['health']);
-                } else if (statusCode === 422) {
+                } else if (
+                    statusCode === 422 &&
+                    error.name !== PaginationError.name
+                ) {
                     // validation errors
                     // Send sentry error
                     captureException(error, {
@@ -69,6 +74,9 @@ const useQueryError = ({
                     }
                 } else {
                     addToastError({
+                        title: chartName
+                            ? `Chart '${chartName}': Error`
+                            : undefined,
                         apiError: error,
                     });
                 }
@@ -78,6 +86,7 @@ const useQueryError = ({
         errorResponse,
         forbiddenToastTitle,
         forceToastOnForbidden,
+        chartName,
         queryClient,
         showToastError,
         addToastError,

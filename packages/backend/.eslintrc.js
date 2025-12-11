@@ -11,6 +11,13 @@ module.exports = {
         'airbnb-typescript/base',
         'prettier',
     ],
+    settings: {
+        'import/resolver': {
+            node: {
+                extensions: ['.js', '.jsx', '.ts', '.tsx']
+            }
+        }
+    },
     rules: {
         'import/prefer-default-export': 'off',
         '@typescript-eslint/no-unused-vars': 'off',
@@ -21,18 +28,7 @@ module.exports = {
         'no-template-curly-in-string': 'off',
         'no-restricted-syntax': 'off',
         eqeqeq: 'error',
-        // '@typescript-eslint/no-floating-promises': [
-        //     'error',
-        //     {
-        //         allowForKnownSafePromises: [
-        //             {
-        //                 from: 'package',
-        //                 name: 'QueryBuilder',
-        //                 package: 'knex',
-        //             }
-        //         ]
-        //     }
-        // ]
+        '@typescript-eslint/no-floating-promises': 'error'
     },
     overrides: [
         

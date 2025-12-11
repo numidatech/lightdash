@@ -1,5 +1,10 @@
 import { subject } from '@casl/ability';
-import { getItemMap, hasCustomDimension } from '@lightdash/common';
+import {
+    getItemMap,
+    hasCustomBinDimension,
+    type ApiExploreResults,
+    type EChartsSeries,
+} from '@lightdash/common';
 import { Menu, Portal } from '@mantine/core';
 import { useClipboard } from '@mantine/hooks';
 import { IconCopy, IconStack } from '@tabler/icons-react';
@@ -12,35 +17,29 @@ import {
     type FC,
 } from 'react';
 import { useParams } from 'react-router';
-import { type EChartSeries } from '../../../hooks/echarts/useEchartsCartesianConfig';
 import useToaster from '../../../hooks/toaster/useToaster';
-import { useExplore } from '../../../hooks/useExplore';
 import { Can } from '../../../providers/Ability';
 import useApp from '../../../providers/App/useApp';
-import useExplorerContext from '../../../providers/Explorer/useExplorerContext';
 import useTracking from '../../../providers/Tracking/useTracking';
 import { EventName } from '../../../types/Events';
 import { useVisualizationContext } from '../../LightdashVisualization/useVisualizationContext';
 import DrillDownMenuItem from '../../MetricQueryData/DrillDownMenuItem';
 import { useMetricQueryDataContext } from '../../MetricQueryData/useMetricQueryDataContext';
 import { getDataFromChartClick } from '../../MetricQueryData/utils';
-import { type EchartSeriesClickEvent } from '../../SimpleChart';
+import { type EchartsSeriesClickEvent } from '../../SimpleChart';
 import MantineIcon from '../../common/MantineIcon';
 
 export const SeriesContextMenu: FC<{
-    echartSeriesClickEvent: EchartSeriesClickEvent | undefined;
+    echartsSeriesClickEvent: EchartsSeriesClickEvent | undefined;
     dimensions: string[] | undefined;
-    series: EChartSeries[] | undefined;
-}> = memo(({ echartSeriesClickEvent, dimensions, series }) => {
+    series: EChartsSeries[] | undefined;
+    explore: ApiExploreResults | undefined;
+}> = memo(({ echartsSeriesClickEvent, dimensions, series, explore }) => {
     const { showToastSuccess } = useToaster();
     const clipboard = useClipboard({ timeout: 200 });
     const { track } = useTracking();
     const { user } = useApp();
 
-    const tableName = useExplorerContext(
-        (context) => context.state.unsavedChartVersion.tableName,
-    );
-    const { data: explore } = useExplore(tableName);
     const context = useVisualizationContext();
     const { resultsData: { metricQuery } = {} } = context;
 
@@ -55,8 +54,8 @@ export const SeriesContextMenu: FC<{
     const { projectUuid } = useParams<{ projectUuid: string }>();
 
     useEffect(() => {
-        if (echartSeriesClickEvent !== undefined) {
-            const e: EchartSeriesClickEvent = echartSeriesClickEvent;
+        if (echartsSeriesClickEvent !== undefined) {
+            const e: EchartsSeriesClickEvent = echartsSeriesClickEvent;
 
             setContextMenuIsOpen(true);
             setContextMenuTargetOffset({
@@ -64,10 +63,10 @@ export const SeriesContextMenu: FC<{
                 top: e.event.event.pageY,
             });
         }
-    }, [echartSeriesClickEvent]);
+    }, [echartsSeriesClickEvent]);
 
     const underlyingData = useMemo(() => {
-        if (explore !== undefined && echartSeriesClickEvent !== undefined) {
+        if (explore !== undefined && echartsSeriesClickEvent !== undefined) {
             const allItemsMap = getItemMap(
                 explore,
                 metricQuery?.additionalMetrics,
@@ -75,12 +74,12 @@ export const SeriesContextMenu: FC<{
             );
 
             return getDataFromChartClick(
-                echartSeriesClickEvent,
+                echartsSeriesClickEvent,
                 allItemsMap,
                 series || [],
             );
         }
-    }, [echartSeriesClickEvent, explore, metricQuery, series]);
+    }, [echartsSeriesClickEvent, explore, metricQuery, series]);
 
     const handleCopyToClipboard = useCallback(() => {
         if (underlyingData === undefined) return;
@@ -167,7 +166,7 @@ export const SeriesContextMenu: FC<{
                         projectUuid: projectUuid,
                     })}
                 >
-                    {!hasCustomDimension(metricQuery) && (
+                    {!hasCustomBinDimension(metricQuery) && (
                         <Menu.Item
                             icon={<MantineIcon icon={IconStack} />}
                             onClick={handleViewUnderlyingData}

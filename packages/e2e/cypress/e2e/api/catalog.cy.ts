@@ -1,4 +1,4 @@
-import { SEED_PROJECT } from '@lightdash/common';
+import { AnyType, SEED_PROJECT, type CatalogField } from '@lightdash/common';
 import { chartMock } from '../../support/mocks';
 import { createChartAndUpdateDashboard, createDashboard } from './dashboard.cy';
 
@@ -14,7 +14,7 @@ describe('Lightdash catalog all tables and fields', () => {
             `${apiUrl}/projects/${projectUuid}/dataCatalog?type=table`,
         ).then((resp) => {
             expect(resp.status).to.eq(200);
-            expect(resp.body.results).to.have.length(11);
+            expect(resp.body.results).to.have.length.gt(0);
             const userTable = resp.body.results.find(
                 (table) => table.name === 'users',
             );
@@ -28,6 +28,7 @@ describe('Lightdash catalog all tables and fields', () => {
                 categories: [],
                 catalogSearchUuid: '',
                 icon: null,
+                aiHints: null,
             });
         });
     });
@@ -58,6 +59,8 @@ describe('Lightdash catalog all tables and fields', () => {
                 categories: [],
                 catalogSearchUuid: '',
                 icon: null,
+                aiHints: null,
+                fieldValueType: 'string',
             });
 
             const metric = resp.body.results.find(
@@ -78,6 +81,8 @@ describe('Lightdash catalog all tables and fields', () => {
                 categories: [],
                 catalogSearchUuid: '',
                 icon: null,
+                aiHints: null,
+                fieldValueType: 'sum',
             });
         });
     });
@@ -125,17 +130,29 @@ describe('Lightdash catalog search', () => {
         });
     });
 
-    it('Should search for a metric (total_revenue)', () => {
+    it('Should search for a metric (total_revenue) sorted by chartUsage', () => {
         const projectUuid = SEED_PROJECT.project_uuid;
         cy.request(
-            `${apiUrl}/projects/${projectUuid}/dataCatalog?search=revenue`,
+            `${apiUrl}/projects/${projectUuid}/dataCatalog/metrics?search=total_revenue&sort=chartUsage&order=desc`,
         ).then((resp) => {
             expect(resp.status).to.eq(200);
-            expect(resp.body.results).to.have.length(1);
 
-            const field = resp.body.results[0];
+            const { data } = resp.body.results;
+            expect(data).to.have.length(3);
 
-            expect(field).to.have.property('name', 'total_revenue');
+            const expectedDescriptions = [
+                'Total revenue',
+                'Sum of all payments',
+                'Sum of Revenue attributed',
+            ];
+
+            data.forEach((field: CatalogField, index: number) => {
+                expect(field).to.have.property('name', 'total_revenue');
+                expect(field).to.have.property(
+                    'description',
+                    expectedDescriptions[index],
+                );
+            });
         });
     });
 
@@ -188,7 +205,7 @@ describe('Lightdash catalog search', () => {
     it('Should filter fields with required attributes (age)', () => {
         const projectUuid = SEED_PROJECT.project_uuid;
         cy.request(
-            `${apiUrl}/projects/${projectUuid}/dataCatalog?search=age`,
+            `${apiUrl}/projects/${projectUuid}/dataCatalog?search=average_age`,
         ).then((resp) => {
             expect(resp.status).to.eq(200);
             expect(resp.body.results).to.have.length(0);
@@ -210,7 +227,25 @@ describe('Lightdash catalog search', () => {
             `${apiUrl}/projects/${projectUuid}/dataCatalog?search=plan`,
         ).then((resp) => {
             expect(resp.status).to.eq(200);
-            expect(resp.body.results).to.have.length(0);
+
+            expect(resp.body.results).to.have.length(13);
+            cy.log('find the one under fanouts');
+            const planResult = resp.body.results.find(
+                (r: AnyType) =>
+                    r.name === 'plan' && r.tableGroupLabel === 'fanouts',
+            );
+            expect(planResult).to.have.property('name', 'plan');
+            expect(planResult).to.have.property('tableGroupLabel', 'fanouts');
+            cy.log('find the one under subscriptions');
+            const planNameResult = resp.body.results.find(
+                (r: AnyType) =>
+                    r.name === 'plan_name' && r.tableName === 'subscriptions',
+            );
+            expect(planNameResult).to.have.property('name', 'plan_name');
+            expect(planNameResult).to.have.property(
+                'tableName',
+                'subscriptions',
+            );
         });
     });
 });

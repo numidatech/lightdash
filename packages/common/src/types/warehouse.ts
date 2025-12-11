@@ -4,6 +4,7 @@ import { type AnyType } from './any';
 import { type SupportedDbtAdapter } from './dbt';
 import { type DimensionType, type Metric } from './field';
 import { type CreateWarehouseCredentials } from './projects';
+import type { WarehouseQueryMetadata } from './queryHistory';
 
 export type RunQueryTags = {
     project_uuid?: string;
@@ -47,7 +48,55 @@ export type WarehouseResults = {
     rows: Record<string, AnyType>[];
 };
 
-export interface WarehouseClient {
+export type WarehousePaginationArgs = {
+    page: number;
+    pageSize: number;
+};
+
+export type WarehouseExecuteAsyncQueryArgs = {
+    tags: Record<string, string>;
+    timezone?: string;
+    values?: AnyType[]; // same as queryParams but in array form
+    queryParams?: Record<string, AnyType>; // same as values but in object form
+    sql: string;
+};
+
+export type WarehouseExecuteAsyncQuery = {
+    queryId: string | null;
+    queryMetadata: WarehouseQueryMetadata | null;
+    totalRows: number;
+    durationMs: number;
+};
+
+export type WarehouseGetAsyncQueryResultsArgs = WarehousePaginationArgs & {
+    sql: string;
+    queryId: string | null;
+    queryMetadata: WarehouseQueryMetadata | null;
+};
+
+export type WarehouseGetAsyncQueryResults<
+    TFormattedRow extends Record<string, unknown>,
+> = {
+    queryId: string | null;
+    fields: Record<string, { type: DimensionType }>;
+    pageCount: number;
+    totalRows: number;
+    rows: TFormattedRow[];
+};
+
+export interface WarehouseSqlBuilder {
+    getStartOfWeek: () => WeekDay | null | undefined;
+    getAdapterType: () => SupportedDbtAdapter;
+    getStringQuoteChar: () => string;
+    getEscapeStringQuoteChar: () => string;
+    getFieldQuoteChar: () => string;
+    getFloatingType: () => string;
+    getMetricSql: (sql: string, metric: Metric) => string;
+    concatString: (...args: string[]) => string;
+    escapeString: (value: string) => string;
+}
+
+export interface WarehouseClient extends WarehouseSqlBuilder {
     credentials: CreateWarehouseCredentials;
     getCatalog: (
         config: {
@@ -56,6 +105,11 @@ export interface WarehouseClient {
             table: string;
         }[],
     ) => Promise<WarehouseCatalog>;
+
+    getAsyncQueryResults<TFormattedRow extends Record<string, unknown>>(
+        args: WarehouseGetAsyncQueryResultsArgs,
+        rowFormatter?: (row: Record<string, unknown>) => TFormattedRow,
+    ): Promise<WarehouseGetAsyncQueryResults<TFormattedRow>>;
 
     streamQuery(
         query: string,
@@ -66,6 +120,14 @@ export interface WarehouseClient {
             timezone?: string;
         },
     ): Promise<void>;
+
+    executeAsyncQuery(
+        args: WarehouseExecuteAsyncQueryArgs,
+        resultsStreamCallback?: (
+            rows: WarehouseResults['rows'],
+            fields: WarehouseResults['fields'],
+        ) => void,
+    ): Promise<WarehouseExecuteAsyncQuery>;
 
     /**
      * Runs a query and returns all the results
@@ -83,18 +145,6 @@ export interface WarehouseClient {
     ): Promise<WarehouseResults>;
 
     test(): Promise<void>;
-
-    getStartOfWeek(): WeekDay | null | undefined;
-
-    getAdapterType(): SupportedDbtAdapter;
-
-    getStringQuoteChar(): string;
-
-    getEscapeStringQuoteChar(): string;
-
-    getMetricSql(sql: string, metric: Metric): string;
-
-    concatString(...args: string[]): string;
 
     getAllTables(
         schema?: string,
@@ -114,6 +164,8 @@ export interface WarehouseClient {
     ): WarehouseCatalog;
 
     parseError(error: Error): Error;
+
+    escapeString(value: string): string;
 }
 
 export type ApiWarehouseCatalog = {

@@ -4,25 +4,26 @@ import {
     Badge,
     Box,
     Button,
+    Group,
     Popover,
     Text,
     Tooltip,
     type ButtonProps,
-} from '@mantine/core';
+} from '@mantine-8/core';
 import { IconRefresh } from '@tabler/icons-react';
 import { useEffect, useState, type FC } from 'react';
 import { useParams } from 'react-router';
 import { useProject } from '../../hooks/useProject';
 import { useRefreshServer } from '../../hooks/useRefreshServer';
+import { useAbilityContext } from '../../providers/Ability/useAbilityContext';
 import useActiveJob from '../../providers/ActiveJob/useActiveJob';
-import useApp from '../../providers/App/useApp';
 import useTracking from '../../providers/Tracking/useTracking';
 import { EventName } from '../../types/Events';
 import MantineIcon from '../common/MantineIcon';
 
 const RefreshDbtButton: FC<{
     onClick?: () => void;
-    buttonStyles?: ButtonProps['sx'];
+    buttonStyles?: ButtonProps['style'];
     leftIcon?: React.ReactNode;
     defaultTextOverride?: React.ReactNode;
     refreshingTextOverride?: React.ReactNode;
@@ -38,9 +39,9 @@ const RefreshDbtButton: FC<{
     const { activeJob } = useActiveJob();
     const { mutate: refreshDbtServer } = useRefreshServer();
     const [isLoading, setIsLoading] = useState(false);
+    const ability = useAbilityContext();
 
     const { track } = useTracking();
-    const { user } = useApp();
 
     useEffect(() => {
         if (activeJob) {
@@ -63,12 +64,15 @@ const RefreshDbtButton: FC<{
     }, [activeJob, activeJob?.jobStatus]);
 
     if (
-        user.data?.ability?.cannot('manage', 'Job') ||
-        user.data?.ability?.cannot('manage', 'CompileProject')
+        ability?.cannot('manage', 'Job') ||
+        ability?.cannot('manage', 'CompileProject')
     )
         return null;
 
-    if (data?.dbtConnection?.type === DbtProjectType.NONE) {
+    if (
+        data?.dbtConnection?.type === DbtProjectType.NONE ||
+        data?.dbtConnection?.type === DbtProjectType.MANIFEST
+    ) {
         if (data?.dbtConnection.hideRefreshButton) {
             return null;
         }
@@ -76,14 +80,14 @@ const RefreshDbtButton: FC<{
             <Popover withinPortal withArrow width={300}>
                 <Popover.Target>
                     <Box
-                        sx={{
+                        style={{
                             cursor: 'pointer',
                         }}
                     >
                         <Button
                             size="xs"
                             variant="outline"
-                            leftIcon={<MantineIcon icon={IconRefresh} />}
+                            leftSection={<MantineIcon icon={IconRefresh} />}
                             disabled
                         >
                             Refresh dbt
@@ -144,40 +148,39 @@ const RefreshDbtButton: FC<{
         });
     };
 
-    if (data?.type === ProjectType.PREVIEW) {
-        return (
+    return (
+        <Group gap="xs">
             <Tooltip
                 withinPortal
-                label={`Developer previews are temporary Lightdash projects`}
+                multiline
+                w={320}
+                position="bottom"
+                label="If you've updated your YAML files, you can sync your changes to Lightdash by clicking this button."
             >
-                <Badge color="yellow" size="lg" radius="sm">
-                    Developer preview
-                </Badge>
+                <Button
+                    size="xs"
+                    variant="default"
+                    leftSection={leftIcon ?? <MantineIcon icon={IconRefresh} />}
+                    loading={isLoading}
+                    onClick={handleRefresh}
+                    style={buttonStyles}
+                >
+                    {!isLoading
+                        ? defaultTextOverride ?? 'Refresh dbt'
+                        : refreshingTextOverride ?? 'Refreshing dbt'}
+                </Button>
             </Tooltip>
-        );
-    }
-
-    return (
-        <Tooltip
-            withinPortal
-            multiline
-            w={320}
-            position="bottom"
-            label="If you've updated your YAML files, you can sync your changes to Lightdash by clicking this button."
-        >
-            <Button
-                size="xs"
-                variant="default"
-                leftIcon={leftIcon ?? <MantineIcon icon={IconRefresh} />}
-                loading={isLoading}
-                onClick={handleRefresh}
-                sx={buttonStyles}
-            >
-                {!isLoading
-                    ? defaultTextOverride ?? 'Refresh dbt'
-                    : refreshingTextOverride ?? 'Refreshing dbt'}
-            </Button>
-        </Tooltip>
+            {data?.type === ProjectType.PREVIEW && (
+                <Tooltip
+                    withinPortal
+                    label={`Developer previews are temporary Lightdash projects`}
+                >
+                    <Badge color="yellow" size="lg" radius="sm">
+                        Developer preview
+                    </Badge>
+                </Tooltip>
+            )}
+        </Group>
     );
 };
 

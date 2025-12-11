@@ -1,10 +1,19 @@
-import { FeatureFlag, FeatureFlags, LightdashUser } from '@lightdash/common';
+import {
+    FeatureFlag,
+    FeatureFlags,
+    isFeatureFlags,
+    LightdashUser,
+    NotFoundError,
+} from '@lightdash/common';
 import { Knex } from 'knex';
 import { LightdashConfig } from '../../config/parseConfig';
 import { isFeatureFlagEnabled } from '../../postHog';
 
 export type FeatureFlagLogicArgs = {
-    user?: Pick<LightdashUser, 'userUuid' | 'organizationUuid'>;
+    user?: Pick<
+        LightdashUser,
+        'userUuid' | 'organizationUuid' | 'organizationName'
+    >;
     featureFlagId: string;
 };
 
@@ -25,18 +34,43 @@ export class FeatureFlagModel {
         this.featureFlagHandlers = {
             [FeatureFlags.UserGroupsEnabled]:
                 this.getUserGroupsEnabled.bind(this),
+            [FeatureFlags.UseSqlPivotResults]:
+                this.getUseSqlPivotResults.bind(this),
+            [FeatureFlags.DashboardComments]:
+                this.getDashboardComments.bind(this),
         };
     }
 
     public async get(args: FeatureFlagLogicArgs): Promise<FeatureFlag> {
         const handler = this.featureFlagHandlers[args.featureFlagId];
-        if (!handler) {
-            throw new Error(
-                `No logic defined for feature flag ID: ${args.featureFlagId}`,
+        if (handler) {
+            return handler(args);
+        }
+        // Default to check Posthog feature flag
+        if (args.user && isFeatureFlags(args.featureFlagId)) {
+            return FeatureFlagModel.getPosthogFeatureFlag(
+                args.user,
+                args.featureFlagId,
             );
         }
+        throw new NotFoundError(`Feature flag ${args.featureFlagId} not found`);
+    }
 
-        return handler(args);
+    static async getPosthogFeatureFlag(
+        user: Pick<
+            LightdashUser,
+            'userUuid' | 'organizationUuid' | 'organizationName'
+        >,
+        featureFlagId: FeatureFlags,
+    ): Promise<FeatureFlag> {
+        const enabled = await isFeatureFlagEnabled(featureFlagId, {
+            userUuid: user.userUuid,
+            organizationUuid: user.organizationUuid,
+        });
+        return {
+            id: featureFlagId,
+            enabled,
+        };
     }
 
     private async getUserGroupsEnabled({
@@ -60,6 +94,63 @@ export class FeatureFlagModel {
                       },
                   )
                 : false);
+        return {
+            id: featureFlagId,
+            enabled,
+        };
+    }
+
+    private async getUseSqlPivotResults({
+        user,
+        featureFlagId,
+    }: FeatureFlagLogicArgs) {
+        const enabled =
+            this.lightdashConfig.query.useSqlPivotResults ||
+            (user
+                ? await isFeatureFlagEnabled(
+                      FeatureFlags.UseSqlPivotResults,
+                      {
+                          userUuid: user.userUuid,
+                          organizationUuid: user.organizationUuid,
+                      },
+                      {
+                          throwOnTimeout: false,
+                          timeoutMilliseconds: 500,
+                      },
+                  )
+                : false);
+        return {
+            id: featureFlagId,
+            enabled,
+        };
+    }
+
+    private async getDashboardComments({
+        user,
+        featureFlagId,
+    }: FeatureFlagLogicArgs) {
+        if (!this.lightdashConfig.dashboardComments.enabled) {
+            return {
+                id: featureFlagId,
+                enabled: false,
+            };
+        }
+
+        const enabled = user
+            ? await isFeatureFlagEnabled(
+                  FeatureFlags.DashboardComments,
+                  {
+                      userUuid: user.userUuid,
+                      organizationUuid: user.organizationUuid,
+                  },
+                  {
+                      throwOnTimeout: false,
+                      timeoutMilliseconds: 500,
+                  },
+                  true,
+              )
+            : true;
+
         return {
             id: featureFlagId,
             enabled,

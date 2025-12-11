@@ -39,6 +39,7 @@ const useDashboardStorage = () => {
         return {
             name: sessionStorage.getItem('fromDashboard'),
             dashboardUuid: sessionStorage.getItem('dashboardUuid'),
+            activeTabUuid: sessionStorage.getItem('activeTabUuid'),
         };
     }, []);
 
@@ -71,6 +72,7 @@ const useDashboardStorage = () => {
         sessionStorage.removeItem('unsavedDashboardTiles');
         sessionStorage.removeItem('unsavedDashboardFilters');
         sessionStorage.removeItem('hasDashboardChanges');
+        sessionStorage.removeItem('activeTabUuid');
         // Trigger storage event to update NavBar
         window.dispatchEvent(new Event('storage'));
     }, []);

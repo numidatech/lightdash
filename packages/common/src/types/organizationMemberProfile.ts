@@ -10,6 +10,18 @@ export enum OrganizationMemberRole {
     ADMIN = 'admin',
 }
 
+export const OrganizationMemberRoleLabels: Record<
+    OrganizationMemberRole,
+    string
+> = {
+    [OrganizationMemberRole.MEMBER]: 'Member',
+    [OrganizationMemberRole.VIEWER]: 'Viewer',
+    [OrganizationMemberRole.INTERACTIVE_VIEWER]: 'Interactive Viewer',
+    [OrganizationMemberRole.EDITOR]: 'Editor',
+    [OrganizationMemberRole.DEVELOPER]: 'Developer',
+    [OrganizationMemberRole.ADMIN]: 'Admin',
+};
+
 export const isOrganizationMemberRole = (
     x: string,
 ): x is OrganizationMemberRole =>
@@ -37,6 +49,7 @@ export type OrganizationMemberProfile = {
      * The role of the user in the organization
      */
     role: OrganizationMemberRole;
+    roleUuid: string | undefined;
     /**
      * Whether the user can login
      */

@@ -54,6 +54,7 @@ export class SearchService extends BaseService {
         user: SessionUser,
         projectUuid: string,
         query: string,
+        source: 'omnibar' | 'ai_search_box' = 'omnibar',
         filters?: SearchFilters,
     ): Promise<SearchResults> {
         const { organizationUuid } = await this.projectModel.getSummary(
@@ -87,9 +88,6 @@ export class SearchService extends BaseService {
                 ...results.sqlCharts.map((sqlChart) => sqlChart.spaceUuid),
                 ...results.savedCharts.map(
                     (savedChart) => savedChart.spaceUuid,
-                ),
-                ...results.semanticViewerCharts.map(
-                    (semanticViewerChart) => semanticViewerChart.spaceUuid,
                 ),
                 ...results.spaces.map((space) => space.uuid),
             ]),
@@ -200,10 +198,6 @@ export class SearchService extends BaseService {
             results.sqlCharts.map(filterItem),
         );
 
-        const hasSemanticViewerChartAccess = await Promise.all(
-            results.semanticViewerCharts.map(filterItem),
-        );
-
         const hasSpaceAccess = await Promise.all(
             results.spaces.map(filterItem),
         );
@@ -223,9 +217,6 @@ export class SearchService extends BaseService {
             ),
             sqlCharts: results.sqlCharts.filter(
                 (_, index) => hasSqlChartAccess[index],
-            ),
-            semanticViewerCharts: results.semanticViewerCharts.filter(
-                (_, index) => hasSemanticViewerChartAccess[index],
             ),
             spaces: results.spaces.filter((_, index) => hasSpaceAccess[index]),
             pages: user.ability.can(
@@ -247,11 +238,10 @@ export class SearchService extends BaseService {
                 dashboardsResultsCount: filteredResults.dashboards.length,
                 savedChartsResultsCount: filteredResults.savedCharts.length,
                 sqlChartsResultsCount: filteredResults.sqlCharts.length,
-                semanticViewerChartsResultsCount:
-                    filteredResults.semanticViewerCharts.length,
                 tablesResultsCount: filteredResults.tables.length,
                 fieldsResultsCount: filteredResults.fields.length,
                 dashboardTabsResultsCount: filteredResults.dashboardTabs.length,
+                source,
             },
         });
 

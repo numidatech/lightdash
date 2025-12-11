@@ -30,7 +30,7 @@ const ConditionalFormattingList = ({}) => {
     }, [visualizationConfig]);
 
     const activeFields = useMemo(() => {
-        if (!resultsData) return new Set<string>();
+        if (!resultsData?.metricQuery) return new Set<string>();
         return new Set([
             ...resultsData.metricQuery.dimensions,
             ...resultsData.metricQuery.metrics,
@@ -136,7 +136,7 @@ const ConditionalFormattingList = ({}) => {
                 >
                     {activeConfigs.map((conditionalFormatting, index) => (
                         <ConditionalFormattingItem
-                            key={index}
+                            key={JSON.stringify(conditionalFormatting)}
                             isOpen={openItems.includes(`${index}`)}
                             addNewItem={addNewItem}
                             removeItem={removeItem}

@@ -14,12 +14,16 @@ export const BaseResponse: HealthState = {
     localDbtEnabled: true,
     siteUrl: 'https://test.lightdash.cloud',
     staticIp: '',
-    customVisualizationsEnabled: false,
     hasEmailClient: false,
     hasExtendedUsageAnalytics: false,
+    hasMicrosoftTeams: false,
     hasGithub: false,
+    hasGitlab: false,
     hasHeadlessBrowser: false,
     hasSlack: false,
+    slack: {
+        multiAgentChannelEnabled: false,
+    },
     auth: {
         disablePasswordAuthentication: false,
         google: {
@@ -27,6 +31,7 @@ export const BaseResponse: HealthState = {
             loginPath: '',
             oauth2ClientId: undefined,
             googleDriveApiKey: undefined,
+            enableGCloudADC: false,
         },
         okta: {
             enabled: false,
@@ -47,6 +52,12 @@ export const BaseResponse: HealthState = {
         pat: {
             maxExpirationTimeInDays: undefined,
         },
+        snowflake: {
+            enabled: false,
+        },
+        databricks: {
+            enabled: false,
+        },
     },
     intercom: {
         apiBase: '',
@@ -65,6 +76,7 @@ export const BaseResponse: HealthState = {
     query: {
         csvCellsLimit: 100000,
         maxLimit: 5000,
+        maxPageSize: 2500,
         defaultLimit: 500,
     },
     rudder: {
@@ -81,6 +93,21 @@ export const BaseResponse: HealthState = {
         profilesSampleRate: 0,
     },
     hasCacheAutocompleResults: false,
+    appearance: {
+        overrideColorPalette: undefined,
+        overrideColorPaletteName: undefined,
+    },
+    isServiceAccountEnabled: false,
+    isOrganizationWarehouseCredentialsEnabled: false,
+    isCustomRolesEnabled: false,
+    embedding: { enabled: false, events: undefined },
+    ai: {
+        analyticsProjectUuid: undefined,
+        analyticsDashboardUuid: undefined,
+    },
+    echarts6: {
+        enabled: false,
+    },
 };
 
 export const userMock = {

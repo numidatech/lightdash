@@ -24,7 +24,7 @@ import {
     Tooltip,
 } from '@mantine/core';
 import { IconAlertCircle, IconPlus, IconX } from '@tabler/icons-react';
-import { useCallback, useMemo, type FC } from 'react';
+import { memo, useCallback, useMemo, type FC } from 'react';
 import { useToggle } from 'react-use';
 import { v4 as uuidv4 } from 'uuid';
 import {
@@ -33,13 +33,14 @@ import {
 } from '../../Explorer/FiltersCard/useFieldsWithSuggestions';
 import FieldSelect from '../FieldSelect';
 import MantineIcon from '../MantineIcon';
+import { FILTER_SELECT_LIMIT } from './constants';
 import FilterGroupForm from './FilterGroupForm';
 import SimplifiedFilterGroupForm from './SimplifiedFilterGroupForm';
 import useFiltersContext from './useFiltersContext';
 
 type Props = {
     filters: Filters;
-    setFilters: (value: Filters, shouldFetchResults: boolean) => void;
+    setFilters: (value: Filters) => void;
     isEditMode: boolean;
 };
 
@@ -59,7 +60,8 @@ const getInvalidFilterRules = (
         return accumulator;
     }, []);
 
-const FiltersForm: FC<Props> = ({ filters, setFilters, isEditMode }) => {
+const FiltersForm: FC<Props> = memo(({ filters, setFilters, isEditMode }) => {
+    // const theme = useMantineTheme();
     const { itemsMap, baseTable } = useFiltersContext<FieldsWithSuggestions>();
     const [isOpen, toggleFieldInput] = useToggle(false);
     const fields = useMemo<FieldWithSuggestions[]>(() => {
@@ -68,7 +70,7 @@ const FiltersForm: FC<Props> = ({ filters, setFilters, isEditMode }) => {
 
     const totalFilterRules = getTotalFilterRules(filters);
     const clearAllFilters = useCallback(() => {
-        setFilters({}, false);
+        setFilters({});
     }, [setFilters]);
     const invalidFilterRules = getInvalidFilterRules(fields, totalFilterRules);
     const hasInvalidFilterRules = invalidFilterRules.length > 0;
@@ -79,7 +81,7 @@ const FiltersForm: FC<Props> = ({ filters, setFilters, isEditMode }) => {
     const addFieldRule = useCallback(
         (field: FieldWithSuggestions) => {
             if (isFilterableField(field)) {
-                setFilters(addFilterRule({ filters, field }), false);
+                setFilters(addFilterRule({ filters, field }));
                 toggleFieldInput(false);
             }
         },
@@ -88,7 +90,7 @@ const FiltersForm: FC<Props> = ({ filters, setFilters, isEditMode }) => {
 
     const updateFiltersFromGroup = useCallback(
         (filterGroup: FilterGroup) => {
-            setFilters(getFiltersFromGroup(filterGroup, fields), false);
+            setFilters(getFiltersFromGroup(filterGroup, fields));
         },
         [fields, setFilters],
     );
@@ -198,7 +200,7 @@ const FiltersForm: FC<Props> = ({ filters, setFilters, isEditMode }) => {
                                 fields={fields}
                                 isEditMode={isEditMode}
                                 onChange={updateFiltersFromGroup}
-                                onDelete={() => setFilters({}, true)}
+                                onDelete={() => setFilters({})}
                             />
                         )}
                     </>
@@ -217,14 +219,14 @@ const FiltersForm: FC<Props> = ({ filters, setFilters, isEditMode }) => {
                             spacing="xs"
                             pl="xs"
                             sx={(theme) => ({
-                                border: `1px solid ${theme.colors.gray[2]}`,
+                                border: `1px solid ${theme.colors.ldGray[2]}`,
                                 borderRadius: theme.radius.sm,
                             })}
                         >
                             <MantineIcon icon={IconAlertCircle} />
                             <Text color="dimmed" fz="xs">
                                 Tried to reference field with unknown id:{' '}
-                                <Text span fw={500} c="gray.7">
+                                <Text span fw={500} c="ldGray.7">
                                     {rule.target.fieldId}
                                 </Text>
                             </Text>
@@ -245,7 +247,16 @@ const FiltersForm: FC<Props> = ({ filters, setFilters, isEditMode }) => {
                 ))}
 
             {isEditMode && (
-                <Box bg="white" pos="relative" style={{ zIndex: 2 }}>
+                <Box
+                    pos="relative"
+                    sx={(theme) => ({
+                        zIndex: 2,
+                        backgroundColor:
+                            theme.colorScheme === 'dark'
+                                ? theme.colors.dark[6]
+                                : 'white',
+                    })}
+                >
                     {!isOpen ? (
                         <Group align="center" position="apart" sx={{ flex: 1 }}>
                             <Button
@@ -254,6 +265,7 @@ const FiltersForm: FC<Props> = ({ filters, setFilters, isEditMode }) => {
                                 leftIcon={<MantineIcon icon={IconPlus} />}
                                 disabled={fields.length <= 0}
                                 onClick={toggleFieldInput}
+                                data-testid="FiltersForm/add-filter-button"
                             >
                                 Add filter
                             </Button>
@@ -276,6 +288,7 @@ const FiltersForm: FC<Props> = ({ filters, setFilters, isEditMode }) => {
                         </Group>
                     ) : (
                         <FieldSelect
+                            limit={FILTER_SELECT_LIMIT}
                             size="xs"
                             withinPortal
                             maw={300}
@@ -299,6 +312,8 @@ const FiltersForm: FC<Props> = ({ filters, setFilters, isEditMode }) => {
             )}
         </Stack>
     );
-};
+});
+
+FiltersForm.displayName = 'FiltersForm';
 
 export default FiltersForm;

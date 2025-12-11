@@ -33,7 +33,7 @@ import {
     IconTableAlias,
     IconTrash,
 } from '@tabler/icons-react';
-import { groupBy } from 'lodash';
+import groupBy from 'lodash/groupBy';
 import { memo, useEffect, useMemo, useState, type FC } from 'react';
 import { useNavigate } from 'react-router';
 import MantineIcon from '../../../components/common/MantineIcon';
@@ -191,10 +191,10 @@ const ChangesReviewModal: FC<
                 <Stack
                     spacing={0}
                     sx={(theme) => ({
-                        border: `1px solid ${theme.colors.gray[3]}`,
+                        border: `1px solid ${theme.colors.ldGray[3]}`,
                         borderRadius: theme.radius.md,
                         padding: theme.spacing.xs,
-                        backgroundColor: theme.colors.gray[0],
+                        backgroundColor: theme.colors.ldGray[0],
                     })}
                 >
                     <List>
@@ -250,10 +250,10 @@ const ChangesReviewModal: FC<
                         <Stack
                             spacing={0}
                             sx={(theme) => ({
-                                border: `1px solid ${theme.colors.gray[3]}`,
+                                border: `1px solid ${theme.colors.ldGray[3]}`,
                                 borderRadius: theme.radius.md,
                                 padding: theme.spacing.xs,
-                                backgroundColor: theme.colors.gray[0],
+                                backgroundColor: theme.colors.ldGray[0],
                             })}
                         >
                             <List>
@@ -431,6 +431,7 @@ export const HeaderVirtualView: FC<{
         await getValidation({
             explores: [virtualExplore],
             validationTargets: [ValidationTarget.CHARTS],
+            onlyValidateExploresInArgs: true,
             onComplete: async (response: ValidationResponse[]) => {
                 if (response.length === 0) {
                     // No errors , we don't need to show warning
@@ -481,7 +482,7 @@ export const HeaderVirtualView: FC<{
             py="xs"
             position="apart"
             sx={(theme) => ({
-                borderBottom: `1px solid ${theme.colors.gray[3]}`,
+                borderBottom: `1px solid ${theme.colors.ldGray[3]}`,
             })}
         >
             <LoadingOverlay

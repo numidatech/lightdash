@@ -13,17 +13,23 @@ export const IGNORE_ERRORS = [
     'ForbiddenError',
     'TokenError',
     'AuthorizationError',
+    'SshTunnelError',
+    'ReadFileError',
 ];
 
 Sentry.init({
     release: VERSION,
+    enabled: process.env.NODE_ENV !== 'test',
     dsn: lightdashConfig.sentry.backend.dsn,
     environment:
         process.env.NODE_ENV === 'development'
             ? 'development'
             : lightdashConfig.mode,
     integrations: [
-        // NOTE: Http, express, and postgres integrations are enabled by default
+        /**
+         * Some integrations are enabled by default
+         * @ref https://docs.sentry.io/platforms/javascript/guides/node/configuration/integrations/
+         */
         nodeProfilingIntegration(),
         ...(lightdashConfig.sentry.anr.enabled
             ? [
@@ -35,19 +41,37 @@ Sentry.init({
                   }),
               ]
             : []),
+        ...(lightdashConfig.ai.copilot.enabled &&
+        lightdashConfig.ai.copilot.telemetryEnabled
+            ? [
+                  Sentry.vercelAIIntegration({
+                      recordInputs: true,
+                      recordOutputs: true,
+                  }),
+              ]
+            : []),
     ],
     ignoreErrors: IGNORE_ERRORS,
     tracesSampler: (context) => {
         if (
-            context.request?.url?.endsWith('/status') ||
-            context.request?.url?.endsWith('/health') ||
-            context.request?.url?.endsWith('/favicon.ico') ||
-            context.request?.url?.endsWith('/robots.txt') ||
-            context.request?.url?.endsWith('livez') ||
-            context.request?.headers?.['user-agent']?.includes('GoogleHC')
+            process.env.NODE_ENV === 'development' &&
+            process.env.SENTRY_SPOTLIGHT
+        ) {
+            return 1.0;
+        }
+
+        const request = context.normalizedRequest;
+        if (
+            request?.url?.endsWith('/status') ||
+            request?.url?.endsWith('/health') ||
+            request?.url?.endsWith('/favicon.ico') ||
+            request?.url?.endsWith('/robots.txt') ||
+            request?.url?.endsWith('livez') ||
+            request?.headers?.['user-agent']?.includes('GoogleHC')
         ) {
             return 0.0;
         }
+
         if (context.parentSampled) {
             return context.parentSampled;
         }

@@ -1,5 +1,5 @@
 import { type UserWarehouseCredentials } from '@lightdash/common';
-import { Button, Group, Stack, Text, Title } from '@mantine/core';
+import { Anchor, Button, Group, Stack, Text, Title } from '@mantine/core';
 import { IconDatabaseCog, IconPlus } from '@tabler/icons-react';
 import { useState } from 'react';
 import { useUserWarehouseCredentials } from '../../../hooks/userWarehouseCredentials/useUserWarehouseCredentials';
@@ -20,6 +20,22 @@ export const MyWarehouseConnectionsPanel = () => {
         setWarehouseCredentialsToBeDeleted,
     ] = useState<UserWarehouseCredentials | undefined>(undefined);
 
+    const personalConnectionsCallout = (
+        <Text c="dimmed">
+            These credentials are only used for projects that require user
+            credentials -{' '}
+            <Anchor
+                role="button"
+                href="https://docs.lightdash.com/references/personal-warehouse-connections"
+                target="_blank"
+                rel="noreferrer"
+            >
+                learn more
+            </Anchor>
+            .
+        </Text>
+    );
+
     return (
         <>
             <Stack mb="lg">
@@ -30,7 +46,7 @@ export const MyWarehouseConnectionsPanel = () => {
                                 <Title order={5}>
                                     My Warehouse connections
                                 </Title>
-                                <Text c="gray.6" fz="xs">
+                                <Text c="ldGray.6" fz="xs">
                                     Add credentials to connect to your
                                     warehouse.
                                 </Text>
@@ -43,6 +59,7 @@ export const MyWarehouseConnectionsPanel = () => {
                                 Add new credentials
                             </Button>
                         </Group>
+                        {personalConnectionsCallout}
                         <CredentialsTable
                             credentials={credentials}
                             setWarehouseCredentialsToBeDeleted={
@@ -58,13 +75,22 @@ export const MyWarehouseConnectionsPanel = () => {
                         icon={
                             <MantineIcon
                                 icon={IconDatabaseCog}
-                                color="gray.6"
+                                color="ldGray.6"
                                 stroke={1}
                                 size="5xl"
                             />
                         }
                         title="No credentials"
-                        description="You haven't created any personal warehouse connections yet!"
+                        description={
+                            <>
+                                <Text>
+                                    You haven't created any personal warehouse
+                                    connections yet!
+                                </Text>
+                                <br />
+                                {personalConnectionsCallout}
+                            </>
+                        }
                     >
                         <Button onClick={() => setIsCreatingCredentials(true)}>
                             Add new credentials

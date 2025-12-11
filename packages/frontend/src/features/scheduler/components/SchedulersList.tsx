@@ -5,7 +5,7 @@ import {
 } from '@lightdash/common';
 import { Loader, Stack, Text, Title } from '@mantine/core';
 import { type UseQueryResult } from '@tanstack/react-query';
-import React, { useState, type FC } from 'react';
+import { useState, type FC } from 'react';
 import ErrorState from '../../../components/common/ErrorState';
 import { SchedulerDeleteModal } from './SchedulerDeleteModal';
 import SchedulersListItem from './SchedulersListItem';
@@ -55,13 +55,13 @@ const SchedulersList: FC<Props> = ({
         (isThresholdAlertList && alertSchedulers.length <= 0)
     ) {
         return (
-            <Stack color="gray" align="center" mt="xxl">
-                <Title order={4} color="gray.6">
+            <Stack align="center" mt="xxl">
+                <Title order={4} color="ldGray.6">
                     {`There are no existing ${
                         isThresholdAlertList ? 'alerts' : 'scheduled deliveries'
                     }`}
                 </Title>
-                <Text color="gray.6">
+                <Text color="ldGray.6">
                     Add one by clicking on "Create new" below
                 </Text>
             </Stack>

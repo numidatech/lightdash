@@ -9,6 +9,7 @@ import {
     isMetric,
     type CustomDimension,
     type Field,
+    type SortField,
     type TableCalculation,
 } from '@lightdash/common';
 import {
@@ -37,6 +38,23 @@ export const getSortDirectionOrder = (
             return [SortDirection.ASC, SortDirection.DESC];
     }
 };
+
+export enum SortNullsFirst {
+    DEFAULT = 'DEFAULT',
+    FIRST = 'FIRST',
+    LAST = 'LAST',
+}
+
+export const getSortNullsFirstValue = (sort: SortField) => {
+    if (sort.nullsFirst === undefined) return SortNullsFirst.DEFAULT;
+    return sort.nullsFirst ? SortNullsFirst.FIRST : SortNullsFirst.LAST;
+};
+
+export const sortNullsFirstLabels = {
+    [SortNullsFirst.DEFAULT]: 'Default',
+    [SortNullsFirst.FIRST]: 'First',
+    [SortNullsFirst.LAST]: 'Last',
+} as const;
 
 enum NumericSortLabels {
     ASC = '1-9',
@@ -74,6 +92,9 @@ export const getSortLabel = (
         case MetricType.MIN:
         case MetricType.MAX:
         case MetricType.NUMBER:
+        case MetricType.PERCENT_OF_PREVIOUS:
+        case MetricType.PERCENT_OF_TOTAL:
+        case MetricType.RUNNING_TOTAL:
         case TableCalculationType.NUMBER:
             return direction === SortDirection.ASC
                 ? NumericSortLabels.ASC

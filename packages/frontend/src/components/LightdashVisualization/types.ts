@@ -1,11 +1,14 @@
 import {
     ChartType,
-    type ApiQueryResults,
     type CustomDimension,
     type DashboardFilters,
     type Dimension,
     type ItemsMap,
+    type MapChart,
     type Metric,
+    type MetricQuery,
+    type ParametersValuesMap,
+    type StackType,
     type TableCalculation,
     type TableCalculationMetadata,
 } from '@lightdash/common';
@@ -16,16 +19,25 @@ import type useTableConfig from '../../hooks/tableVisualization/useTableConfig';
 import type useBigNumberConfig from '../../hooks/useBigNumberConfig';
 import type useCustomVisualizationConfig from '../../hooks/useCustomVisualizationConfig';
 import type useFunnelChartConfig from '../../hooks/useFunnelChartConfig';
+import type useGaugeChartConfig from '../../hooks/useGaugeChartConfig';
 import type usePieChartConfig from '../../hooks/usePieChartConfig';
+import type { InfiniteQueryResults } from '../../hooks/useQueryResults';
+import type useTreemapChartConfig from '../../hooks/useTreemapChartConfig';
 
 export type VisualizationConfigCommon<T extends VisualizationConfig> = {
-    resultsData: ApiQueryResults | undefined;
+    resultsData:
+        | (InfiniteQueryResults & {
+              metricQuery?: MetricQuery;
+              fields?: ItemsMap;
+          })
+        | undefined;
     initialChartConfig: T['chartConfig']['validConfig'] | undefined;
     onChartConfigChange?: (chartConfig: {
         type: T['chartType'];
         config: T['chartConfig']['validConfig'];
     }) => void;
     children: (props: { visualizationConfig: T }) => JSX.Element;
+    parameters?: ParametersValuesMap;
 };
 
 // Big Number
@@ -63,7 +75,7 @@ export const isCartesianVisualizationConfig = (
 export type VisualizationCartesianConfigProps =
     VisualizationConfigCommon<VisualizationConfigCartesian> & {
         itemsMap: ItemsMap | undefined;
-        stacking: boolean | undefined;
+        stacking: boolean | StackType | undefined;
         cartesianType: CartesianTypeOptions | undefined;
         columnOrder: string[];
         validPivotDimensions: string[] | undefined;
@@ -141,6 +153,29 @@ export type VisualizationTableConfigProps =
         savedChartUuid: string | undefined;
         dashboardFilters: DashboardFilters | undefined;
         invalidateCache: boolean | undefined;
+        parameters?: ParametersValuesMap;
+    };
+
+// Treemap
+
+export type VisualizationConfigTreemap = {
+    chartType: ChartType.TREEMAP;
+    chartConfig: ReturnType<typeof useTreemapChartConfig>;
+    dimensions: Record<string, CustomDimension | Dimension>;
+    numericMetrics: Record<string, Metric | TableCalculation>;
+};
+
+export const isTreemapVisualizationConfig = (
+    visualizationConfig: VisualizationConfig | undefined,
+): visualizationConfig is VisualizationConfigTreemap => {
+    return visualizationConfig?.chartType === ChartType.TREEMAP;
+};
+
+export type VisualizationConfigTreemapProps =
+    VisualizationConfigCommon<VisualizationConfigTreemap> & {
+        itemsMap: ItemsMap | undefined;
+        tableCalculationsMetadata?: TableCalculationMetadata[];
+        parameters?: ParametersValuesMap;
     };
 
 // Custom
@@ -162,6 +197,50 @@ export type VisualizationCustomConfigProps =
         itemsMap?: ItemsMap | undefined;
     };
 
+// Gauge
+
+export type VisualizationConfigGauge = {
+    chartType: ChartType.GAUGE;
+    chartConfig: ReturnType<typeof useGaugeChartConfig>;
+    numericMetrics: ItemsMap;
+};
+
+export const isGaugeVisualizationConfig = (
+    visualizationConfig: VisualizationConfig | undefined,
+): visualizationConfig is VisualizationConfigGauge => {
+    return visualizationConfig?.chartType === ChartType.GAUGE;
+};
+
+export type VisualizationConfigGaugeProps =
+    VisualizationConfigCommon<VisualizationConfigGauge> & {
+        itemsMap: ItemsMap | undefined;
+    };
+
+// Map
+
+import type useMapChartConfig from '../../hooks/useMapChartConfig';
+
+export type VisualizationConfigMap = {
+    chartType: ChartType.MAP;
+    chartConfig: ReturnType<typeof useMapChartConfig>;
+};
+
+export const isMapVisualizationConfig = (
+    visualizationConfig: VisualizationConfig | undefined,
+): visualizationConfig is VisualizationConfigMap => {
+    return visualizationConfig?.chartType === ChartType.MAP;
+};
+
+export type VisualizationConfigMapProps = Omit<
+    VisualizationConfigCommon<VisualizationConfigMap>,
+    'initialChartConfig'
+> & {
+    // Override initialChartConfig to accept MapChart without saveMapExtent
+    // since saveMapExtent is a UI-only property not persisted to backend
+    initialChartConfig: MapChart | undefined;
+    itemsMap: ItemsMap | undefined;
+};
+
 // Union of all visualization configs
 
 export type VisualizationConfig =
@@ -170,4 +249,7 @@ export type VisualizationConfig =
     | VisualizationConfigPie
     | VisualizationConfigFunnelType
     | VisualizationConfigTable
+    | VisualizationConfigTreemap
+    | VisualizationConfigGauge
+    | VisualizationConfigMap
     | VisualizationCustomConfigType;

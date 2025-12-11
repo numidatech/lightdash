@@ -26,7 +26,7 @@ const InvalidFilter: FC<Props> = ({ isEditMode, filterRule, onRemove }) => {
             arrowOffset={16}
             label={
                 <Text span>
-                    <Text span color="gray.6">
+                    <Text span color="ldGray.6">
                         Tried to reference field with unknown id:
                     </Text>
                     <Text span> {filterRule.target.fieldId}</Text>
@@ -36,6 +36,7 @@ const InvalidFilter: FC<Props> = ({ isEditMode, filterRule, onRemove }) => {
             <Button
                 size="xs"
                 variant="default"
+                radius="md"
                 data-disabled
                 leftIcon={
                     <MantineIcon

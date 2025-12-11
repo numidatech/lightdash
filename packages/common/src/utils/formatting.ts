@@ -7,10 +7,13 @@ import {
     isTextFormat,
     isValidFormat,
 } from 'numfmt';
+import { LightdashParameters } from '../compiler/parameters';
 import {
+    CompactConfigMap,
     CustomFormatType,
     DimensionType,
     Format,
+    IECByteCompacts,
     MetricType,
     NumberSeparator,
     TableCalculationType,
@@ -29,10 +32,15 @@ import {
     type Item,
     type TableCalculation,
 } from '../types/field';
-import { hasFormatOptions, type AdditionalMetric } from '../types/metricQuery';
+import {
+    hasFormatOptions,
+    isAdditionalMetric,
+    type AdditionalMetric,
+} from '../types/metricQuery';
 import { TimeFrames } from '../types/timeFrames';
 import assertUnreachable from './assertUnreachable';
-import { getItemType } from './item';
+import { evaluateConditionalFormatExpression } from './conditionalFormatExpressions';
+import { getItemType, isNumericItem } from './item';
 
 dayjs.extend(timezone);
 
@@ -129,6 +137,11 @@ export function formatDate(
     convertToUTC: boolean = false,
 ): string {
     const momentDate = convertToUTC ? moment(date).utc() : moment(date);
+
+    if (!momentDate.isValid()) {
+        return 'NaT';
+    }
+
     return momentDate.format(getDateFormat(timeInterval));
 }
 
@@ -138,6 +151,11 @@ export function formatTimestamp(
     convertToUTC: boolean = false,
 ): string {
     const momentDate = convertToUTC ? moment(value).utc() : moment(value);
+
+    if (!momentDate.isValid()) {
+        return 'NaT';
+    }
+
     return momentDate.format(getTimeFormat(timeInterval));
 }
 
@@ -234,7 +252,7 @@ export function formatNumberValue(
     }
 }
 
-function applyDefaultFormat(value: unknown) {
+export function applyDefaultFormat(value: unknown) {
     if (value === null) return '∅';
     if (value === undefined) return '-';
     if (!isNumber(value)) {
@@ -335,12 +353,18 @@ export function getCustomFormat(
         return item.format;
     }
 
-    // This converts legacy format type (which is Format), to CustomFormat
-    return getCustomFormatFromLegacy({
+    const legacyFormat = {
         ...('format' in item && { format: item.format }),
         ...('compact' in item && { compact: item.compact }),
         ...('round' in item && { round: item.round }),
-    });
+    };
+
+    // Only get custom format from legacy if there are any legacy format options or if the item is numeric
+    if (Object.keys(legacyFormat).length > 0 || isNumericItem(item)) {
+        return getCustomFormatFromLegacy(legacyFormat);
+    }
+
+    return undefined;
 }
 
 function applyCompact(
@@ -382,6 +406,36 @@ export function formatValueWithExpression(expression: string, value: unknown) {
             }
         }
 
+        // Check if this is a binary (IEC) byte unit format expression using KiB, MiB, etc.
+        const binaryByteUnits = IECByteCompacts.map(
+            (compact) => CompactConfigMap[compact].suffix,
+        );
+        const binarySuffixMatch = binaryByteUnits.find((unit) =>
+            expression.includes(`"${unit}"`),
+        );
+        if (binarySuffixMatch && !valueIsNaN(Number(sanitizedValue))) {
+            const compactConfig = Object.values(CompactConfigMap).find(
+                (config) =>
+                    config.suffix === binarySuffixMatch &&
+                    IECByteCompacts.includes(config.compact),
+            );
+
+            if (compactConfig) {
+                const convertedValue = compactConfig.convertFn(
+                    Number(sanitizedValue),
+                );
+                const baseExpression = expression.replace(
+                    `"${binarySuffixMatch}"`,
+                    '',
+                );
+                const formattedNumber = formatWithExpression(
+                    baseExpression,
+                    convertedValue,
+                );
+                return `${formattedNumber}${binarySuffixMatch}`;
+            }
+        }
+
         // format date
         if (isDateFormat(expression)) {
             if (!isMomentInput(sanitizedValue)) {
@@ -399,8 +453,11 @@ export function formatValueWithExpression(expression: string, value: unknown) {
         }
 
         // format number
-        return formatWithExpression(expression, Number(sanitizedValue));
+        return valueIsNaN(Number(sanitizedValue))
+            ? `${value}` // Return the raw value as a string if it's not a number
+            : formatWithExpression(expression, Number(sanitizedValue));
     } catch (e) {
+        // eslint-disable-next-line no-console
         console.error('Error formatting value with expression', e);
         return `${value}`;
     }
@@ -460,6 +517,17 @@ export function applyCustomFormat(
             const numberFormatted = formatNumberValue(compactNumber, format);
 
             return `${prefix}${numberFormatted}${compactNumberSuffix}${suffix}`;
+        case CustomFormatType.BYTES_SI:
+        case CustomFormatType.BYTES_IEC: {
+            const {
+                compactValue: bytesCompactValue,
+                compactSuffix: bytesCompactSuffix,
+            } = applyCompact(value, format);
+            return `${formatNumberValue(
+                bytesCompactValue,
+                format,
+            )}${bytesCompactSuffix}`;
+        }
         case CustomFormatType.CUSTOM:
             return formatValueWithExpression(format.custom || '', value);
         default:
@@ -468,6 +536,26 @@ export function applyCustomFormat(
                 `Table calculation format type ${format.type} is not valid`,
             );
     }
+}
+
+/**
+ * Validates a format string that may contain parameter placeholders.
+ * Strips ${...} placeholders before validation since numfmt doesn't understand them.
+ */
+function isValidFormatWithParameters(formatString: string): boolean {
+    // Check if format contains parameter placeholders
+    const hasPlaceholders = formatString.includes('${');
+
+    if (!hasPlaceholders) {
+        return isValidFormat(formatString);
+    }
+
+    // Strip out ${...} placeholders and validate what remains
+    // This handles formats like: '${ld.parameters.currency=="usd"?"$":""}0,0.00'
+    // After stripping: '0,0.00' which is valid
+    const withoutPlaceholders = formatString.replace(/\$\{[^}]+\}/g, '');
+
+    return isValidFormat(withoutPlaceholders);
 }
 
 export function hasValidFormatExpression<
@@ -479,11 +567,15 @@ export function hasValidFormatExpression<
         | Dimension,
 >(item: T | undefined): item is T & { format: string } {
     // filter out legacy format that might be valid expressions. eg: usd
+    if (!item || !('format' in item) || !item.format) {
+        return false;
+    }
+
     return (
-        isField(item) &&
-        !!item.format &&
+        (isField(item) || isAdditionalMetric(item)) &&
+        typeof item.format === 'string' &&
         !isFormat(item.format) &&
-        isValidFormat(item.format)
+        isValidFormatWithParameters(item.format)
     );
 }
 
@@ -524,7 +616,7 @@ const customFormatConversionFnMap: Record<
         return formatExpression;
     },
     round: (formatExpression, format) => {
-        let round = 2;
+        let round: number | null = 2;
         if (format.round !== undefined) {
             round = format.round;
         } else if (
@@ -540,8 +632,14 @@ const customFormatConversionFnMap: Record<
                 ? mockCurrencyValue.split('.')[1].length
                 : 0;
         } else if (format.type === CustomFormatType.NUMBER) {
-            round = 3; // Note: I believe this was a bug in the old implementation, but we'll keep it for now
+            round = null;
         }
+
+        if (round === null) {
+            // Formatting with null round means we want to show up to 3 decimal places
+            return `${formatExpression}.###`;
+        }
+
         if (round > 0) {
             return `${formatExpression}.${'0'.repeat(round)}`;
         }
@@ -551,6 +649,14 @@ const customFormatConversionFnMap: Record<
         if (format.compact) {
             const compactConfig = findCompactConfig(format.compact);
             if (compactConfig) {
+                // Check if this is a binary (IEC) byte unit, like KiB, MiB, etc.
+                const isBinaryByteUnit = IECByteCompacts.includes(
+                    compactConfig.compact,
+                );
+
+                if (isBinaryByteUnit) {
+                    return `${formatExpression}"${compactConfig.suffix}"`;
+                }
                 return `${formatExpression}${','.repeat(
                     compactConfig.orderOfMagnitude / 3,
                 )}"${compactConfig.suffix}"`;
@@ -595,6 +701,18 @@ export function convertCustomFormatToFormatExpression(
         case CustomFormatType.NUMBER: {
             defaultFormatExpression = `0`;
             conversions = ['separator', 'prefix', 'round', 'compact', 'suffix'];
+            break;
+        }
+        case CustomFormatType.BYTES_SI: {
+            defaultFormatExpression = '0';
+            conversions = ['separator', 'round', 'compact'];
+            break;
+        }
+        case CustomFormatType.BYTES_IEC: {
+            // ECMA-376 format expressions cannot accurately represent binary (1024-based) scaling
+            // Use a special format that includes the suffix but no comma scaling
+            defaultFormatExpression = '0';
+            conversions = ['separator', 'round', 'compact'];
             break;
         }
         case CustomFormatType.ID:
@@ -643,12 +761,50 @@ export function formatItemValue(
         | undefined,
     value: unknown,
     convertToUTC?: boolean,
+    parameters?: Record<string, unknown>,
 ): string {
     if (value === null) return '∅';
     if (value === undefined) return '-';
     if (item) {
         if (hasValidFormatExpression(item)) {
-            return formatValueWithExpression(item.format, value);
+            // Check if format uses parameter placeholders
+            const hasParameterPlaceholders =
+                item.format.includes(
+                    `\${${LightdashParameters.PREFIX_SHORT}`,
+                ) || item.format.includes(`\${${LightdashParameters.PREFIX}`);
+
+            // NEW: Handle parameter-based formats separately
+            if (hasParameterPlaceholders) {
+                // If parameters are provided, evaluate and apply the format
+                if (parameters) {
+                    const formatExpression =
+                        evaluateConditionalFormatExpression(
+                            item.format,
+                            parameters,
+                        );
+                    try {
+                        const result = formatValueWithExpression(
+                            formatExpression,
+                            value,
+                        );
+                        return result;
+                    } catch (error) {
+                        // If evaluation fails, fall back to default formatting
+                        return applyDefaultFormat(value);
+                    }
+                } else {
+                    // No parameters provided but format needs them - use default formatting
+                    return applyDefaultFormat(value);
+                }
+            }
+
+            // EXISTING: Handle non-parameter formats (unchanged behavior)
+            try {
+                const result = formatValueWithExpression(item.format, value);
+                return result;
+            } catch (error) {
+                // Fall through to custom format handling below
+            }
         }
 
         const customFormat = getCustomFormat(item);

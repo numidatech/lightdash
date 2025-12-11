@@ -1,4 +1,5 @@
 import type {
+    ColumnProperties,
     ConditionalFormattingConfig,
     ConditionalFormattingMinMaxMap,
     CustomDimension,
@@ -45,6 +46,7 @@ export type TableColumn = ColumnDef<ResultRow, ResultRow[0]> & {
         style?: CSSProperties;
         frozen?: boolean;
         isVisible?: boolean;
+        isReadOnly?: boolean; // For computed/derived columns like period-over-period
     };
 };
 
@@ -52,6 +54,9 @@ export const columnHelper = createColumnHelper<ResultRow>();
 
 export type ProviderProps = {
     data: ResultRow[];
+    totalRowsCount: number;
+    isFetchingRows: boolean;
+    fetchMoreRows: () => void;
     columns: Array<TableColumn | TableHeader>;
     headerContextMenu?: FC<React.PropsWithChildren<HeaderProps>>;
     cellContextMenu?: FC<React.PropsWithChildren<CellContextMenuProps>>;
@@ -65,6 +70,7 @@ export type ProviderProps = {
     showColumnCalculation?: boolean;
     conditionalFormattings?: ConditionalFormattingConfig[];
     minMaxMap?: ConditionalFormattingMinMaxMap;
+    columnProperties?: Record<string, ColumnProperties>;
     footer?: {
         show?: boolean;
     };
@@ -74,4 +80,6 @@ export type ProviderProps = {
 
 export type TableContext = ProviderProps & {
     table: Table<ResultRow>;
+    isInfiniteScrollEnabled: boolean;
+    setIsInfiniteScrollEnabled: (value: boolean) => void;
 };

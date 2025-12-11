@@ -6,7 +6,7 @@ import {
     friendlyName,
     getDefaultMetricTreeNodeDateRange,
     MetricTotalComparisonType,
-    type TimeFrames,
+    TimeFrames,
 } from '@lightdash/common';
 import {
     Badge,
@@ -86,6 +86,7 @@ const ExpandedNode: React.FC<NodeProps<ExpandedNodeData>> = ({
         exploreName: data.tableName,
         metricName: data.metricName,
         timeFrame: data.timeFrame,
+        granularity: TimeFrames.DAY, // TODO: this should be dynamic
         comparisonType: MetricTotalComparisonType.PREVIOUS_PERIOD,
         dateRange,
         options: {
@@ -133,10 +134,10 @@ const ExpandedNode: React.FC<NodeProps<ExpandedNodeData>> = ({
             fz={14}
             sx={(theme) => ({
                 '&[data-with-border]': {
-                    backgroundColor: 'white',
+                    backgroundColor: theme.colors.background[0],
                     borderRadius: theme.radius.md,
                     border: `1px solid ${
-                        selected ? theme.colors.blue[5] : theme.colors.gray[3]
+                        selected ? theme.colors.blue[5] : theme.colors.ldGray[3]
                     }`,
                 },
             })}
@@ -148,7 +149,7 @@ const ExpandedNode: React.FC<NodeProps<ExpandedNodeData>> = ({
             />
             <Stack key={data.label} spacing="xs">
                 <Group>
-                    <Title fz={14} fw={500} c="gray.7">
+                    <Title fz={14} fw={500} c="ldGray.7">
                         {title}
                     </Title>
                     <Tooltip
@@ -166,17 +167,17 @@ const ExpandedNode: React.FC<NodeProps<ExpandedNodeData>> = ({
                         <MantineIcon
                             icon={IconInfoCircle}
                             size={12}
-                            color="gray.7"
+                            color="ldGray.7"
                         />
                     </Tooltip>
                 </Group>
 
                 {totalQuery.isFetching ? (
-                    <Loader size="xs" color="gray.5" />
+                    <Loader size="xs" color="ldGray.5" />
                 ) : (
                     <Stack spacing="two">
                         <Group position="apart">
-                            <Text fz={24} fw={500} c="gray.8">
+                            <Text fz={24} fw={500} c="ldGray.8">
                                 {formattedValue}
                             </Text>
                             {change && (

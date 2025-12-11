@@ -1,6 +1,7 @@
 import {
     ApiEmailStatusResponse,
     ApiErrorPayload,
+    ApiGetAccountResponse,
     ApiGetAuthenticatedUserResponse,
     ApiGetLoginOptionsResponse,
     ApiRegisterUserResponse,
@@ -9,6 +10,7 @@ import {
     CreatePersonalAccessToken,
     getRequestMethod,
     LightdashRequestMethodHeader,
+    NotFoundError,
     ParameterError,
     PersonalAccessToken,
     PersonalAccessTokenWithToken,
@@ -38,6 +40,7 @@ import express from 'express';
 import { UserModel } from '../models/UserModel';
 import {
     allowApiKeyAuthentication,
+    allowOauthAuthentication,
     isAuthenticated,
     unauthorisedInDemo,
 } from './authentication';
@@ -235,7 +238,7 @@ export class UserController extends BaseController {
     /**
      * Get user warehouse credentials
      */
-    @Middlewares([isAuthenticated])
+    @Middlewares([allowApiKeyAuthentication, isAuthenticated])
     @Get('/warehouseCredentials')
     @OperationId('getWarehouseCredentials')
     async getWarehouseCredentials(@Request() req: express.Request): Promise<{
@@ -254,7 +257,7 @@ export class UserController extends BaseController {
     /**
      * Create user warehouse credentials
      */
-    @Middlewares([isAuthenticated])
+    @Middlewares([allowApiKeyAuthentication, isAuthenticated])
     @Post('/warehouseCredentials')
     @OperationId('createWarehouseCredentials')
     async createWarehouseCredentials(
@@ -276,7 +279,7 @@ export class UserController extends BaseController {
     /**
      * Update user warehouse credentials
      */
-    @Middlewares([isAuthenticated])
+    @Middlewares([allowApiKeyAuthentication, isAuthenticated])
     @Patch('/warehouseCredentials/{uuid}')
     @OperationId('updateWarehouseCredentials')
     async updateWarehouseCredentials(
@@ -299,7 +302,7 @@ export class UserController extends BaseController {
     /**
      * Delete user warehouse credentials
      */
-    @Middlewares([isAuthenticated])
+    @Middlewares([allowApiKeyAuthentication, isAuthenticated])
     @Delete('/warehouseCredentials/{uuid}')
     @OperationId('deleteWarehouseCredentials')
     async deleteWarehouseCredentials(
@@ -363,7 +366,8 @@ export class UserController extends BaseController {
      * Create personal access token
      */
     @Middlewares([
-        isAuthenticated, // NOTE: We do NOT allow personal access tokens to be created with PAT authentication
+        // NOTE: We do NOT allow personal access tokens to be created with PAT authentication
+        allowOauthAuthentication, // Allow creating PAT from oauth app tokens
         unauthorisedInDemo,
     ])
     @SuccessResponse('200', 'Success')
@@ -442,6 +446,32 @@ export class UserController extends BaseController {
                     personalAccessTokenUuid,
                     body,
                 ),
+        };
+    }
+
+    /**
+     * Get account information
+     */
+    @Middlewares([allowApiKeyAuthentication, isAuthenticated])
+    @SuccessResponse('200', 'Success')
+    @Get('/account')
+    @OperationId('GetAccount')
+    async getAccount(
+        @Request() req: express.Request,
+    ): Promise<ApiGetAccountResponse> {
+        if (!req.account) {
+            throw new NotFoundError('Account not found');
+        }
+
+        const { ability, ...userWithoutAbility } = req.account.user;
+
+        this.setStatus(200);
+        return {
+            status: 'ok',
+            results: {
+                ...req.account,
+                user: userWithoutAbility,
+            },
         };
     }
 }

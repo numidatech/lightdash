@@ -1,6 +1,8 @@
 import Lightdash from '@lightdash/sdk';
-import { useEffect, useState } from 'react';
+import '@lightdash/sdk/sdk.css';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { FilterOperator, SavedChart } from '../../common/src';
 
 // NOTE: add an embed url here for persistence
 const EMBED_URL = '';
@@ -58,6 +60,51 @@ const EmbedUrlInput: React.FC<EmbedUrlInputProps> = ({
     );
 };
 
+const containerStyle = {
+    fontFamily: 'Arial, Helvetica, sans-serif',
+    background: 'linear-gradient(135deg, #f0f2f5 0%, #e9eff5 100%)',
+    minHeight: '100vh',
+    display: 'flex',
+    justifyContent: 'center',
+    padding: '20px',
+};
+
+const contentStyle = {
+    backgroundColor: '#ffffff',
+    padding: '40px',
+    borderRadius: '8px',
+    boxShadow: '0 4px 8px rgba(0, 0, 0, 0.1)',
+    maxWidth: '1400px',
+    width: '100%',
+};
+
+// Dashboard Chart container style
+const chartContainerStyle = {
+    width: '100%',
+    height: '500px',
+    border: '2px dashed #ccc',
+    display: 'flex',
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'aliceblue',
+};
+
+const singleChartContainerStyle = {
+    width: '50%',
+    height: '500px',
+    border: '2px dashed #ccc',
+};
+
+// Info box style with bluish text and a light blue background
+const infoBoxStyle = {
+    backgroundColor: '#e7f3fe', // light blue background
+    borderLeft: '4px solid #2196F3', // blue accent border
+    padding: '15px',
+    margin: '20px auto',
+    color: '#0b75c9', // bluish text
+    borderRadius: '4px',
+};
+
 function App() {
     const { t, i18n } = useTranslation();
 
@@ -72,44 +119,15 @@ function App() {
 
     const [inputsOpen, setInputsOpen] = useState(false);
 
-    const containerStyle = {
-        fontFamily: 'Arial, Helvetica, sans-serif',
-        background: 'linear-gradient(135deg, #f0f2f5 0%, #e9eff5 100%)',
-        minHeight: '100vh',
-        display: 'flex',
-        justifyContent: 'center',
-        padding: '20px',
+    const [savedChart, setSavedChart] = useState<SavedChart | null>();
+    const handleExploreClick = (options: { chart: SavedChart }) => {
+        setSavedChart(options.chart);
     };
 
-    const contentStyle = {
-        backgroundColor: '#ffffff',
-        padding: '40px',
-        borderRadius: '8px',
-        boxShadow: '0 4px 8px rgba(0, 0, 0, 0.1)',
-        maxWidth: '1400px',
-        width: '100%',
-    };
-
-    // Chart container style
-    const chartContainerStyle = {
-        width: '100%',
-        height: '500px',
-        border: '2px dashed #ccc',
-        display: 'flex',
-        justifyContent: 'center',
-        alignItems: 'center',
-        backgroundColor: 'aliceblue',
-    };
-
-    // Info box style with bluish text and a light blue background
-    const infoBoxStyle = {
-        backgroundColor: '#e7f3fe', // light blue background
-        borderLeft: '4px solid #2196F3', // blue accent border
-        padding: '15px',
-        margin: '20px auto',
-        color: '#0b75c9', // bluish text
-        borderRadius: '4px',
-    };
+    const chartIdRef = useRef<HTMLInputElement>(null);
+    const [chartUuidOrSlug, setChartUuidOrSlug] = useState<string>(
+        localStorage.getItem('chartUuidOrSlug') || '',
+    );
 
     useEffect(() => {
         const [lightdashUrl, rest] = embedUrl.split('embed');
@@ -205,26 +223,127 @@ function App() {
                             )}
                         </p>
 
+                        {savedChart && (
+                            <button
+                                style={{ marginBottom: 10 }}
+                                onClick={() => setSavedChart(null)}
+                            >
+                                Go back to dashboard
+                            </button>
+                        )}
+
                         <div style={chartContainerStyle}>
-                            <Lightdash.Dashboard
-                                key={i18n.language}
-                                instanceUrl={lightdashUrl}
-                                token={lightdashToken}
-                                styles={{
-                                    backgroundColor: 'transparent',
-                                    fontFamily: 'Comic Sans MS',
-                                }}
-                                contentOverrides={i18n.getResourceBundle(
-                                    i18n.language,
-                                    'analytics',
-                                )}
-                            />
+                            {savedChart ? (
+                                <Lightdash.Explore
+                                    instanceUrl={lightdashUrl}
+                                    token={lightdashToken}
+                                    exploreId={savedChart.tableName}
+                                    savedChart={savedChart}
+                                />
+                            ) : (
+                                <Lightdash.Dashboard
+                                    key={i18n.language}
+                                    instanceUrl={lightdashUrl}
+                                    token={lightdashToken}
+                                    styles={{
+                                        backgroundColor: 'transparent',
+                                        fontFamily: 'Comic Sans MS',
+                                    }}
+                                    contentOverrides={i18n.getResourceBundle(
+                                        i18n.language,
+                                        // Namespace is the name of the file in the locales folder
+                                        // (or the file in Locize)
+                                        'translation',
+                                    )}
+                                    onExplore={handleExploreClick}
+                                    // This replaces the embedded dashboard filters
+                                    // filters={[{
+                                    //     model: 'orders',
+                                    //     field: 'is_completed',
+                                    //     operator: FilterOperator.EQUALS,
+                                    //     value: [true],
+                                    // },]}
+                                />
+                            )}
                         </div>
 
                         {/* Info box with bluish text */}
                         <div style={infoBoxStyle}>
                             {t(
                                 'Additional Information: This chart is powered by Lightdash SDK.',
+                            )}
+                        </div>
+
+                        <h2
+                            style={{
+                                color: '#555',
+                                margin: '30px 0 10px 0',
+                            }}
+                        >
+                            {t('Chart component')}
+                        </h2>
+                        <p
+                            style={{
+                                fontSize: '1.1em',
+                                lineHeight: '1.6',
+                                color: '#666',
+                            }}
+                        >
+                            {t(
+                                'This section demonstrates the Chart component. Enter a chart UUID or slug to display just the visualization.',
+                            )}
+                        </p>
+
+                        <div style={{ marginBottom: '10px' }}>
+                            <h4>Chart UUID or Slug:</h4>
+                            <div style={{ display: 'flex', gap: '8px' }}>
+                                <input
+                                    type="text"
+                                    defaultValue={chartUuidOrSlug}
+                                    ref={chartIdRef}
+                                    placeholder="Enter chart UUID or slug"
+                                    style={{ flexGrow: 1 }}
+                                />
+                                <button
+                                    onClick={() => {
+                                        const { value } = chartIdRef.current;
+                                        setChartUuidOrSlug(value);
+                                        localStorage.setItem(
+                                            'chartUuidOrSlug',
+                                            value,
+                                        );
+                                    }}
+                                >
+                                    {t('Load Chart')}
+                                </button>
+                                <button
+                                    onClick={() => {
+                                        setChartUuidOrSlug('');
+                                        localStorage.removeItem(
+                                            'chartUuidOrSlug',
+                                        );
+                                    }}
+                                >
+                                    {t('Clear')}
+                                </button>
+                            </div>
+                        </div>
+
+                        <div style={singleChartContainerStyle}>
+                            {chartUuidOrSlug ? (
+                                <Lightdash.Chart
+                                    instanceUrl={lightdashUrl}
+                                    token={lightdashToken}
+                                    styles={{
+                                        backgroundColor: 'transparent',
+                                        fontFamily: 'Arial, sans-serif',
+                                    }}
+                                    id={chartUuidOrSlug}
+                                />
+                            ) : (
+                                <p style={{ color: '#999' }}>
+                                    {t('Enter a chart UUID or slug to display')}
+                                </p>
                             )}
                         </div>
                     </main>

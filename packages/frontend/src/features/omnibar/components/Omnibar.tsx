@@ -1,9 +1,7 @@
 import {
-    getSearchItemTypeFromResultKey,
     getSearchResultId,
     type SearchFilters,
     type SearchItemType,
-    type SearchResults,
 } from '@lightdash/common';
 import {
     ActionIcon,
@@ -14,6 +12,7 @@ import {
     rem,
     Stack,
     Transition,
+    useMantineColorScheme,
     useMantineTheme,
 } from '@mantine/core';
 import {
@@ -35,6 +34,7 @@ import MantineIcon from '../../../components/common/MantineIcon';
 import { PAGE_CONTENT_WIDTH } from '../../../components/common/Page/constants';
 import { useProject } from '../../../hooks/useProject';
 import { useValidationUserAbility } from '../../../hooks/validation/useValidation';
+import { getMantineThemeOverride } from '../../../mantineTheme';
 import useTracking from '../../../providers/Tracking/useTracking';
 import { EventName } from '../../../types/Events';
 import useSearch, { OMNIBAR_MIN_QUERY_LENGTH } from '../hooks/useSearch';
@@ -49,6 +49,7 @@ import OmnibarFilters from './OmnibarFilters';
 import OmnibarItemGroups from './OmnibarItemGroups';
 import { OmnibarKeyboardNav } from './OmnibarKeyboardNav';
 import OmnibarTarget from './OmnibarTarget';
+import { getSearchResultsGroupsSorted } from './utils';
 
 interface Props {
     projectUuid: string;
@@ -60,6 +61,7 @@ const Omnibar: FC<Props> = ({ projectUuid }) => {
     const { data: projectData } = useProject(projectUuid);
     const { track } = useTracking();
     const theme = useMantineTheme();
+    const { colorScheme } = useMantineColorScheme();
     const canUserManageValidation = useValidationUserAbility(projectUuid);
     const [searchFilters, setSearchFilters] = useState<SearchFilters>();
     const [query, setQuery] = useState<string>();
@@ -68,14 +70,20 @@ const Omnibar: FC<Props> = ({ projectUuid }) => {
     const [openPanels, setOpenPanels] =
         useState<SearchItemType[]>(allSearchItemTypes);
 
+    const omnibarTheme = useMemo(() => {
+        const fullTheme = getMantineThemeOverride(colorScheme);
+        const { globalStyles, ...themeWithoutGlobalStyles } = fullTheme;
+        return themeWithoutGlobalStyles;
+    }, [colorScheme]);
     const [focusedItemIndex, setFocusedItemIndex] =
         useState<FocusedItemIndex>();
 
-    const { data: searchResults, isFetching } = useSearch(
+    const { data: searchResults, isFetching } = useSearch({
         projectUuid,
-        debouncedValue,
-        searchFilters,
-    );
+        query: debouncedValue,
+        filters: searchFilters,
+        source: 'omnibar',
+    });
 
     const [isOmnibarOpen, { open: openOmnibar, close: closeOmnibar }] =
         useDisclosure(false);
@@ -123,9 +131,7 @@ const Omnibar: FC<Props> = ({ projectUuid }) => {
         setQuery(undefined);
     };
 
-    const handleItemClick = (item: SearchItem) => {
-        closeOmnibar();
-
+    const handleItemClick = (item: SearchItem, redirect = true) => {
         track({
             name: EventName.SEARCH_RESULT_CLICKED,
             properties: {
@@ -133,6 +139,16 @@ const Omnibar: FC<Props> = ({ projectUuid }) => {
                 id: getSearchResultId(item.item),
             },
         });
+        if (redirect) {
+            window.open(
+                item.location.pathname + (item.location.search || ''),
+                '_blank',
+            );
+            return;
+        }
+
+        closeOmnibar();
+
         track({
             name: EventName.GLOBAL_SEARCH_CLOSED,
             properties: {
@@ -158,25 +174,11 @@ const Omnibar: FC<Props> = ({ projectUuid }) => {
     const hasSearchResults =
         searchResults && !isSearchResultEmpty(searchResults);
 
-    const sortedGroupEntries = useMemo(() => {
-        return searchResults
-            ? Object.entries(searchResults)
-                  .map((items) => {
-                      return [
-                          getSearchItemTypeFromResultKey(
-                              items[0] as keyof SearchResults,
-                          ),
-                          items[1],
-                      ] as [SearchItemType, SearchItem[]];
-                  })
-                  .filter(([_type, items]) => items.length > 0)
-                  .sort(
-                      ([_a, itemsA], [_b, itemsB]) =>
-                          (itemsB[0].searchRank ?? 0) -
-                          (itemsA[0].searchRank ?? 0),
-                  )
-            : [];
-    }, [searchResults]);
+    const sortedGroupEntries = useMemo(
+        () =>
+            searchResults ? getSearchResultsGroupsSorted(searchResults) : [],
+        [searchResults],
+    );
     useEffect(() => {
         setFocusedItemIndex(undefined);
     }, [query, searchFilters]);
@@ -205,7 +207,7 @@ const Omnibar: FC<Props> = ({ projectUuid }) => {
                 )}
             </Transition>
 
-            <MantineProvider inherit theme={{ colorScheme: 'light' }}>
+            <MantineProvider theme={omnibarTheme}>
                 <Modal
                     withCloseButton={false}
                     size={`calc(${rem(PAGE_CONTENT_WIDTH)} - ${
@@ -237,7 +239,7 @@ const Omnibar: FC<Props> = ({ projectUuid }) => {
                                 query ? (
                                     <ActionIcon
                                         onClick={() => setQuery('')}
-                                        color="gray.5"
+                                        color="ldGray.5"
                                     >
                                         <MantineIcon
                                             icon={IconCircleXFilled}

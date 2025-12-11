@@ -34,6 +34,39 @@ export type UserActivity = {
     chartViews: ActivityViews[];
 };
 
+export type ApiUserActivity = {
+    status: 'ok';
+    results: UserActivity;
+};
+
+export type ApiUserActivityDownloadCsv = {
+    results: string; // CSV file URL to download
+    status: 'ok';
+};
+
+export type UnusedContentItem = {
+    lastViewedAt: Date | null;
+    lastViewedByUserUuid: string | null;
+    lastViewedByUserName: string | null;
+    createdByUserUuid: string;
+    createdByUserName: string;
+    createdAt: Date;
+    contentUuid: string;
+    contentName: string;
+    contentType: 'chart' | 'dashboard';
+    viewsCount: number;
+};
+
+export type UnusedContent = {
+    charts: UnusedContentItem[];
+    dashboards: UnusedContentItem[];
+};
+
+export type ApiUnusedContent = {
+    status: 'ok';
+    results: UnusedContent;
+};
+
 export type ViewStatistics = {
     views: number;
     firstViewedAt: Date | string | null;
@@ -45,6 +78,7 @@ export enum QueryExecutionContext {
     EXPLORE = 'exploreView',
     FILTER_AUTOCOMPLETE = 'filterAutocomplete',
     CHART = 'chartView',
+    CHART_HISTORY = 'chartHistory',
     SQL_CHART = 'sqlChartView',
     SQL_RUNNER = 'sqlRunner',
     VIEW_UNDERLYING_DATA = 'viewUnderlyingData',
@@ -60,8 +94,8 @@ export enum QueryExecutionContext {
     CALCULATE_SUBTOTAL = 'calculateSubtotal',
     EMBED = 'embed',
     AI = 'ai',
+    MCP = 'mcp',
     API = 'api',
     CLI = 'cli',
-    SEMANTIC_VIEWER = 'semanticViewer',
     METRICS_EXPLORER = 'metricsExplorer',
 }

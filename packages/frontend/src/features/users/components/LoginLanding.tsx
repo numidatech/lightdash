@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type FC } from 'react';
+import { useCallback, useEffect, useState, type FC } from 'react';
 
 import {
     getEmailSchema,
@@ -7,15 +7,16 @@ import {
     LocalIssuerTypes,
     SEED_ORG_1_ADMIN_EMAIL,
     SEED_ORG_1_ADMIN_PASSWORD,
+    type OpenIdIdentityIssuerType,
 } from '@lightdash/common';
 
 import {
     ActionIcon,
     Anchor,
+    Box,
     Button,
     Card,
     Divider,
-    Image,
     PasswordInput,
     Stack,
     Text,
@@ -23,17 +24,18 @@ import {
     Title,
 } from '@mantine/core';
 import { useForm, zodResolver } from '@mantine/form';
+import { useTimeout } from '@mantine/hooks';
 import { IconX } from '@tabler/icons-react';
 import { Navigate, useLocation } from 'react-router';
 import { z } from 'zod';
 import MantineIcon from '../../../components/common/MantineIcon';
 import { ThirdPartySignInButton } from '../../../components/common/ThirdPartySignInButton';
+import LightdashLogo from '../../../components/LightdashLogo/LightdashLogo';
 import PageSpinner from '../../../components/PageSpinner';
 import useToaster from '../../../hooks/toaster/useToaster';
 import { useFlashMessages } from '../../../hooks/useFlashMessages';
 import useApp from '../../../providers/App/useApp';
 import useTracking from '../../../providers/Tracking/useTracking';
-import LightdashLogo from '../../../svgs/lightdash-black.svg';
 import {
     useFetchLoginOptions,
     useLoginWithEmailMutation,
@@ -55,11 +57,17 @@ const Login: FC<{}> = () => {
             });
         }
     }, [flashMessages.data, showToastError]);
+    const queryParams = new URLSearchParams(location.search);
+    const redirectParam = queryParams.get('redirect');
 
     const [preCheckEmail, setPreCheckEmail] = useState<string>();
+    const [isLoginOptionsLoadingDebounced, setIsLoginOptionsLoadingDebounced] =
+        useState(false);
 
     const redirectUrl = location.state?.from
         ? `${location.state.from.pathname}${location.state.from.search}`
+        : redirectParam
+        ? redirectParam
         : '/';
 
     const form = useForm<LoginParams>({
@@ -77,10 +85,13 @@ const Login: FC<{}> = () => {
     const {
         data: loginOptions,
         isInitialLoading: isInitialLoadingLoginOptions,
-        isLoading: loginOptionsLoading,
+        isFetching: loginOptionsFetching,
         isSuccess: loginOptionsSuccess,
     } = useFetchLoginOptions({
         email: preCheckEmail,
+        useQueryOptions: {
+            keepPreviousData: true,
+        },
     });
 
     // Disable fetch once it has succeeded
@@ -91,6 +102,29 @@ const Login: FC<{}> = () => {
             }
         }
     }, [loginOptionsSuccess, loginOptions]);
+
+    const ssoOptions = loginOptions
+        ? (loginOptions.showOptions.filter(
+              isOpenIdIdentityIssuerType,
+          ) as OpenIdIdentityIssuerType[])
+        : [];
+
+    // Delayed loading state - only show loading if request takes longer than 400ms
+    const { start: startDelayedState, clear: clearDelayedState } = useTimeout(
+        () => setIsLoginOptionsLoadingDebounced(true),
+        400,
+    );
+
+    useEffect(() => {
+        if (loginOptionsFetching) {
+            // Start timer to show loading/disabled after 400ms
+            startDelayedState();
+        } else {
+            // Request completed, hide loading/disabled immediately and clear timer
+            setIsLoginOptionsLoadingDebounced(false);
+            clearDelayedState();
+        }
+    }, [loginOptionsFetching, startDelayedState, clearDelayedState]);
 
     const { mutate, isLoading, isSuccess, isIdle } = useLoginWithEmailMutation({
         onSuccess: (data) => {
@@ -116,11 +150,17 @@ const Login: FC<{}> = () => {
         }
     }, [isDemo, mutate, isIdle]);
 
-    const formStage = preCheckEmail ? 'login' : 'precheck';
-
     const isEmailLoginAvailable =
         loginOptions?.showOptions &&
         loginOptions?.showOptions.includes(LocalIssuerTypes.EMAIL);
+
+    const formStage =
+        preCheckEmail &&
+        loginOptions &&
+        loginOptionsSuccess &&
+        !loginOptionsFetching
+            ? 'login'
+            : 'precheck';
 
     const handleFormSubmit = useCallback(() => {
         if (formStage === 'precheck' && form.values.email !== '') {
@@ -135,18 +175,11 @@ const Login: FC<{}> = () => {
         }
     }, [form.values, formStage, isEmailLoginAvailable, mutate]);
 
-    const disableControls =
-        loginOptionsLoading ||
+    const isFormLoading =
+        isLoginOptionsLoadingDebounced ||
         (loginOptionsSuccess && loginOptions.forceRedirect === true) ||
         isLoading ||
         isSuccess;
-
-    const ssoOptions = useMemo(() => {
-        if (!loginOptions) {
-            return [];
-        }
-        return loginOptions.showOptions.filter(isOpenIdIdentityIssuerType);
-    }, [loginOptions]);
 
     if (health.isInitialLoading || isDemo || isInitialLoadingLoginOptions) {
         return <PageSpinner />;
@@ -167,13 +200,9 @@ const Login: FC<{}> = () => {
 
     return (
         <>
-            <Image
-                src={LightdashLogo}
-                alt="lightdash logo"
-                width={130}
-                mx="auto"
-                my="lg"
-            />
+            <Box mx="auto" my="lg">
+                <LightdashLogo />
+            </Box>
             <Card p="xl" radius="xs" withBorder shadow="xs">
                 <Title order={3} ta="center" mb="md">
                     Sign in
@@ -189,7 +218,7 @@ const Login: FC<{}> = () => {
                             placeholder="Your email address"
                             required
                             {...form.getInputProps('email')}
-                            disabled={disableControls}
+                            disabled={isFormLoading}
                             rightSection={
                                 preCheckEmail ? (
                                     <ActionIcon
@@ -215,14 +244,15 @@ const Login: FC<{}> = () => {
                                     required
                                     autoFocus
                                     {...form.getInputProps('password')}
-                                    disabled={disableControls}
+                                    disabled={isFormLoading}
                                 />
                                 <Anchor href="/recover-password" mx="auto">
                                     Forgot your password?
                                 </Anchor>
                                 <Button
                                     type="submit"
-                                    loading={disableControls}
+                                    loading={isFormLoading}
+                                    disabled={isFormLoading}
                                     data-cy="signin-button"
                                 >
                                     Sign in
@@ -232,7 +262,8 @@ const Login: FC<{}> = () => {
                         {formStage === 'precheck' && (
                             <Button
                                 type="submit"
-                                loading={disableControls}
+                                loading={isFormLoading}
+                                disabled={isFormLoading}
                                 data-cy="signin-button"
                             >
                                 Continue
@@ -247,7 +278,7 @@ const Login: FC<{}> = () => {
                                         labelPosition="center"
                                         label={
                                             <Text
-                                                color="gray.5"
+                                                color="ldGray.5"
                                                 size="sm"
                                                 fw={500}
                                             >
@@ -262,7 +293,7 @@ const Login: FC<{}> = () => {
                                             key={providerName}
                                             providerName={providerName}
                                             redirect={redirectUrl}
-                                            disabled={disableControls}
+                                            disabled={isFormLoading}
                                         />
                                     ))}
                                 </Stack>

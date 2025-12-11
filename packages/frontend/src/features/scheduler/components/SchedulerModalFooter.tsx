@@ -1,4 +1,4 @@
-import { Box, Button, Group } from '@mantine/core';
+import { Box, Button, Group, Tooltip } from '@mantine/core';
 import { IconChevronLeft, IconSend } from '@tabler/icons-react';
 import React from 'react';
 import MantineIcon from '../../../components/common/MantineIcon';
@@ -12,6 +12,7 @@ interface FooterProps {
     onCancel?: () => void;
     onConfirm?: () => void;
     loading?: boolean;
+    disabledMessage?: string;
 }
 
 const SchedulersModalFooter = ({
@@ -23,14 +24,15 @@ const SchedulersModalFooter = ({
     canSendNow,
     onConfirm,
     loading,
+    disabledMessage,
 }: FooterProps) => {
     return (
         <Group
             position="apart"
             sx={(theme) => ({
                 position: 'sticky',
-                backgroundColor: 'white',
-                borderTop: `1px solid ${theme.colors.gray[4]}`,
+                backgroundColor: theme.colors.background[0],
+                borderTop: `1px solid ${theme.colors.ldGray[4]}`,
                 bottom: 0,
                 zIndex: 2,
                 padding: theme.spacing.md,
@@ -64,14 +66,22 @@ const SchedulersModalFooter = ({
                     </Button>
                 )}
                 {!!confirmText && (
-                    <Button
-                        type="submit"
-                        disabled={disableConfirm}
-                        loading={loading}
-                        onClick={onConfirm}
+                    <Tooltip
+                        label={disabledMessage}
+                        disabled={!disableConfirm || !disabledMessage}
+                        fz="xs"
                     >
-                        {confirmText}
-                    </Button>
+                        <Box>
+                            <Button
+                                type="submit"
+                                disabled={disableConfirm}
+                                loading={loading}
+                                onClick={onConfirm}
+                            >
+                                {confirmText}
+                            </Button>
+                        </Box>
+                    </Tooltip>
                 )}
             </Group>
         </Group>

@@ -1,11 +1,6 @@
-import {
-    AnyType,
-    ParameterError,
-    SshKeyPair,
-    validateEmail,
-} from '@lightdash/common';
+import { SshKeyPair } from '@lightdash/common';
+import { CustomSamplingContext } from '@sentry/core';
 import * as Sentry from '@sentry/node';
-import { CustomSamplingContext } from '@sentry/types';
 import { generateKeyPair } from 'crypto';
 import { parseKey } from 'sshpk';
 import { Worker } from 'worker_threads';
@@ -34,7 +29,6 @@ export const wrapSentryTransaction = <T>(
     funct: (span: Sentry.Span) => Promise<T>,
 ): Promise<T> => {
     const startTime = Date.now();
-
     return Sentry.startSpanManual<Promise<T>>(
         {
             op: name,
@@ -42,33 +36,86 @@ export const wrapSentryTransaction = <T>(
             attributes: context,
         },
         async (span, end) => {
-            Logger.debug(
-                `Starting sentry transaction ${
-                    span?.spanContext().spanId
-                } "${name}" with context: ${JSON.stringify(context)}`,
-            );
+            if (Sentry.isEnabled()) {
+                Logger.debug(
+                    `Starting sentry transaction ${
+                        span?.spanContext().spanId
+                    } "${name}" with context: ${JSON.stringify(context)}`,
+                );
+            }
 
             try {
                 return await funct(span);
             } catch (error) {
-                Logger.error(
-                    `Error in wrapped sentry transaction ${
-                        span?.spanContext().spanId
-                    } "${name}": ${error}`,
-                );
-                Sentry.captureException(error);
+                if (Sentry.isEnabled()) {
+                    Logger.error(
+                        `Error in wrapped sentry transaction ${
+                            span?.spanContext().spanId
+                        } "${name}": ${error}`,
+                    );
+                    Sentry.captureException(error);
+                }
                 throw error;
             } finally {
-                Logger.debug(
-                    `End sentry transaction ${
-                        span?.spanContext().spanId
-                    } "${name}", took: ${Date.now() - startTime}ms`,
-                );
+                if (Sentry.isEnabled()) {
+                    Logger.debug(
+                        `End sentry transaction ${
+                            span?.spanContext().spanId
+                        } "${name}", took: ${Date.now() - startTime}ms`,
+                    );
+                }
                 end();
             }
         },
     );
 };
+
+export function wrapSentryTransactionSync<T>(
+    name: string,
+    context: CustomSamplingContext,
+    funct: (span: Sentry.Span) => T,
+): T {
+    const startTime = Date.now();
+
+    return Sentry.startSpan(
+        {
+            op: name,
+            name,
+            attributes: context,
+        },
+        (span) => {
+            if (Sentry.isEnabled()) {
+                Logger.debug(
+                    `Starting sync sentry transaction "${name}" with context: ${JSON.stringify(
+                        context,
+                    )}`,
+                );
+            }
+
+            try {
+                const result = funct(span);
+                return result;
+            } catch (error) {
+                if (Sentry.isEnabled()) {
+                    Logger.error(
+                        `Error in wrapped sync sentry transaction "${name}": ${error}`,
+                    );
+
+                    Sentry.captureException(error);
+                }
+                throw error;
+            } finally {
+                if (Sentry.isEnabled()) {
+                    Logger.debug(
+                        `End sync sentry transaction "${name}", took: ${
+                            Date.now() - startTime
+                        }ms`,
+                    );
+                }
+            }
+        },
+    );
+}
 
 export function runWorkerThread<T>(worker: Worker): Promise<T> {
     return new Promise((resolve, reject) => {

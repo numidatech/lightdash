@@ -10,7 +10,7 @@ type Props = {
     onOpenPanelsChange: (panels: SearchItemType[]) => void;
     projectUuid: string;
     canUserManageValidation: boolean;
-    onClick: (item: SearchItem) => void;
+    onClick: (item: SearchItem, redirect: boolean) => void;
     focusedItemIndex?: FocusedItemIndex;
     groupedItems: [SearchItemType, SearchItem[]][];
     scrollRef?: MutableRefObject<HTMLDivElement>;
@@ -55,9 +55,9 @@ const OmnibarItemGroups: FC<Props> = ({
                     height: theme.spacing.xxl,
                     paddingLeft: theme.spacing.md,
                     paddingRight: theme.spacing.md,
-                    backgroundColor: theme.colors.gray[0],
+                    backgroundColor: theme.colors.ldGray[0],
                     '&:hover': {
-                        backgroundColor: theme.colors.gray[1],
+                        backgroundColor: theme.colors.ldGray[1],
                     },
                 },
                 label: {
@@ -76,7 +76,7 @@ const OmnibarItemGroups: FC<Props> = ({
             {groupedItems.map(([groupType, groupItems], groupIndex) => (
                 <Accordion.Item key={groupType} value={groupType}>
                     <Accordion.Control>
-                        <Text color="dark" fw={500} fz="xs">
+                        <Text color="dimmed" fw={500} fz="xs">
                             {getSearchItemLabel(groupType)}
                         </Text>
                     </Accordion.Control>
@@ -93,7 +93,9 @@ const OmnibarItemGroups: FC<Props> = ({
                                     scrollRef={
                                         isFocused ? scrollRef : undefined
                                     }
-                                    onClick={() => onClick(item)}
+                                    onClick={(e: React.MouseEvent) => {
+                                        onClick(item, e.metaKey);
+                                    }}
                                     projectUuid={projectUuid}
                                     canUserManageValidation={
                                         canUserManageValidation

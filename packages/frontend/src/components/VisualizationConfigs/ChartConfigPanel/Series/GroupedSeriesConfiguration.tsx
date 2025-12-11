@@ -255,12 +255,12 @@ const GroupedSeriesConfiguration: FC<GroupedSeriesConfigurationProps> = ({
                         chartValue === CartesianSeriesType.AREA) && (
                         <Group spacing="xs">
                             <Checkbox
-                                checked={seriesGroup[0].showSymbol ?? true}
+                                checked={Boolean(seriesGroup[0].showSymbol)}
                                 label="Show symbol"
                                 onChange={() => {
                                     updateAllGroupedSeries(fieldKey, {
-                                        showSymbol: !(
-                                            seriesGroup[0].showSymbol ?? true
+                                        showSymbol: !Boolean(
+                                            seriesGroup[0].showSymbol,
                                         ),
                                     });
                                 }}
@@ -280,7 +280,7 @@ const GroupedSeriesConfiguration: FC<GroupedSeriesConfigurationProps> = ({
                     )}
                 </Stack>
                 <Box
-                    bg="gray.1"
+                    bg="ldGray.1"
                     p="xxs"
                     ml="md"
                     py="xs"

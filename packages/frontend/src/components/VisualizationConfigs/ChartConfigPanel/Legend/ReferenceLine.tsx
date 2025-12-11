@@ -331,6 +331,7 @@ export const ReferenceLine: FC<ReferenceLineProps> = ({
                     <ColorSelector
                         color={lineColor}
                         swatches={colorPalette}
+                        withAlpha
                         onColorChange={(c) => onColorChange(c)}
                     />
                 }
@@ -338,7 +339,7 @@ export const ReferenceLine: FC<ReferenceLineProps> = ({
 
             <Accordion.Panel>
                 <Stack
-                    bg={'gray.0'}
+                    bg={'ldGray.0'}
                     spacing="xs"
                     sx={(theme) => ({
                         borderRadius: theme.radius.sm,

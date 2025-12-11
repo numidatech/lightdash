@@ -20,8 +20,10 @@ import {
 } from '@mantine/core';
 import {
     IconChartBar,
+    IconMinus,
     IconSortAscending,
     IconSortDescending,
+    IconSwitchHorizontal,
     type Icon,
 } from '@tabler/icons-react';
 import { forwardRef, type FC } from 'react';
@@ -69,8 +71,12 @@ export const Axes: FC<Props> = ({ itemsMap }) => {
         setXMaxOffsetValue,
         setShowGridX,
         setShowGridY,
+        setShowXAxis,
+        setShowYAxis,
+        setShowAxisTicks,
         setXAxisSort,
         setXAxisLabelRotation,
+        setScrollableChart,
         dirtyChartType,
     } = visualizationConfig.chartConfig;
 
@@ -105,6 +111,11 @@ export const Axes: FC<Props> = ({ itemsMap }) => {
     const canSortByBarTotals =
         dirtyChartType === CartesianSeriesType.BAR &&
         getAxisTypeFromField(xAxisField) === 'category';
+
+    const showXAxis =
+        dirtyLayout?.showXAxis !== undefined ? dirtyLayout?.showXAxis : true;
+    const showYAxis =
+        dirtyLayout?.showYAxis !== undefined ? dirtyLayout?.showYAxis : true;
 
     return (
         <Stack>
@@ -175,6 +186,16 @@ export const Axes: FC<Props> = ({ itemsMap }) => {
                                 itemComponent={XAxisSortSelectItem}
                                 data={[
                                     {
+                                        value: XAxisSort.DEFAULT,
+                                        label: 'Default',
+                                        icon: IconMinus,
+                                    },
+                                    {
+                                        value: XAxisSort.DEFAULT_REVERSED,
+                                        label: 'Default (reversed)',
+                                        icon: IconSwitchHorizontal,
+                                    },
+                                    {
                                         value: XAxisSort.ASCENDING,
                                         label: 'Ascending',
                                         icon: IconSortAscending,
@@ -221,6 +242,19 @@ export const Axes: FC<Props> = ({ itemsMap }) => {
                             </Group>
                         )}
                     </Group>
+
+                    {getAxisTypeFromField(xAxisField) === 'category' && (
+                        <Checkbox
+                            label="Enable scrollable chart"
+                            checked={
+                                dirtyEchartsConfig?.xAxis?.[0]
+                                    ?.enableDataZoom || false
+                            }
+                            onChange={(e) =>
+                                setScrollableChart(e.currentTarget.checked)
+                            }
+                        />
+                    )}
                 </Config.Section>
             </Config>
 
@@ -328,6 +362,52 @@ export const Axes: FC<Props> = ({ itemsMap }) => {
                             }}
                         />
                     </Stack>
+                </Config.Section>
+            </Config>
+            <Config>
+                <Config.Section>
+                    <Config.Heading>Show axis</Config.Heading>
+
+                    <Stack spacing="xs">
+                        <Checkbox
+                            label={`${dirtyLayout?.flipAxes ? 'Y' : 'X'}-axis`}
+                            checked={
+                                dirtyLayout?.flipAxes ? showYAxis : showXAxis
+                            }
+                            onChange={() => {
+                                if (dirtyLayout?.flipAxes) {
+                                    setShowYAxis(!showYAxis);
+                                } else {
+                                    setShowXAxis(!showXAxis);
+                                }
+                            }}
+                        />
+                        <Checkbox
+                            label={`${dirtyLayout?.flipAxes ? 'X' : 'Y'}-axis`}
+                            checked={
+                                dirtyLayout?.flipAxes ? showXAxis : showYAxis
+                            }
+                            onChange={() => {
+                                if (dirtyLayout?.flipAxes) {
+                                    setShowXAxis(!showXAxis);
+                                } else {
+                                    setShowYAxis(!showYAxis);
+                                }
+                            }}
+                        />
+                    </Stack>
+                </Config.Section>
+            </Config>
+            <Config>
+                <Config.Section>
+                    <Config.Heading>Show tick lines</Config.Heading>
+                    <Checkbox
+                        label="Show tick lines on axes"
+                        checked={!!dirtyEchartsConfig?.showAxisTicks}
+                        onChange={(e) => {
+                            setShowAxisTicks(e.currentTarget.checked);
+                        }}
+                    />
                 </Config.Section>
             </Config>
         </Stack>

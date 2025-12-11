@@ -1,27 +1,32 @@
-import { WarehouseTypes } from '@lightdash/common';
-import { Center, Loader } from '@mantine/core';
+import { Center, Loader, useMantineTheme } from '@mantine/core';
 import Editor, {
     useMonaco,
     type BeforeMount,
-    type EditorProps,
-    type Monaco,
     type OnChange,
     type OnMount,
 } from '@monaco-editor/react';
-import {
-    bigqueryLanguageDefinition,
-    snowflakeLanguageDefinition,
-} from '@popsql/monaco-sql-languages';
 import { IconAlertCircle } from '@tabler/icons-react';
-import { debounce } from 'lodash';
-import { type editor, type languages } from 'monaco-editor';
-import { LanguageIdEnum, setupLanguageFeatures } from 'monaco-sql-languages';
+import debounce from 'lodash/debounce';
+import isEmpty from 'lodash/isEmpty';
+import { type editor } from 'monaco-editor';
 import { useCallback, useEffect, useMemo, useRef, type FC } from 'react';
 import SuboptimalState from '../../../components/common/SuboptimalState/SuboptimalState';
+import { useParameters } from '../../../hooks/parameters/useParameters';
 import '../../../styles/monaco.css';
-import { useTables } from '../hooks/useTables';
+import { useDetectedTableFields } from '../hooks/useDetectedTableFields';
+import { useSqlEditorPreferences } from '../hooks/useSqlEditorPreferences';
+import { useTableFields } from '../hooks/useTableFields';
+import { useTables, type TablesBySchema } from '../hooks/useTables';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
 import { setSql } from '../store/sqlRunnerSlice';
+import {
+    generateTableCompletions,
+    getLightdashMonacoTheme,
+    getMonacoLanguage,
+    MONACO_DEFAULT_OPTIONS,
+    registerCustomCompletionProvider,
+    registerMonacoLanguage,
+} from '../utils/monaco';
 
 // monaco highlight character
 export type MonacoHighlightChar = {
@@ -37,173 +42,12 @@ type MonacoHighlightLine = {
 
 const DEBOUNCE_TIME = 500;
 
-const MONACO_DEFAULT_OPTIONS: EditorProps['options'] = {
-    cursorBlinking: 'smooth',
-    folding: true,
-    minimap: { enabled: false },
-    scrollBeyondLastLine: false,
-    wordWrap: 'off',
-    quickSuggestions: true,
-    contextmenu: false,
-    automaticLayout: true,
-    tabSize: 2,
-};
-
-const getLanguage = (warehouseType?: WarehouseTypes): string => {
-    switch (warehouseType) {
-        case WarehouseTypes.BIGQUERY:
-            return bigqueryLanguageDefinition.id;
-        case WarehouseTypes.SNOWFLAKE:
-            return snowflakeLanguageDefinition.id;
-        case WarehouseTypes.TRINO:
-            return LanguageIdEnum.TRINO;
-        case WarehouseTypes.DATABRICKS:
-            return LanguageIdEnum.SPARK;
-        case WarehouseTypes.POSTGRES:
-        case WarehouseTypes.REDSHIFT:
-            return LanguageIdEnum.PG;
-        default:
-            return snowflakeLanguageDefinition.id;
-    }
-};
-
-const registerMonacoLanguage = (monaco: Monaco, language: string) => {
-    if (
-        [
-            bigqueryLanguageDefinition.id,
-            snowflakeLanguageDefinition.id,
-        ].includes(language)
-    ) {
-        const languageDefinition =
-            language === bigqueryLanguageDefinition.id
-                ? bigqueryLanguageDefinition
-                : snowflakeLanguageDefinition;
-        monaco.languages.register(languageDefinition);
-        monaco.languages.onLanguage(languageDefinition.id, () => {
-            void languageDefinition.loader().then((mod) => {
-                monaco.languages.setMonarchTokensProvider(
-                    languageDefinition.id,
-                    mod.language,
-                );
-                monaco.languages.setLanguageConfiguration(
-                    languageDefinition.id,
-                    mod.conf,
-                );
-            });
-        });
-    } else if (language in LanguageIdEnum) {
-        setupLanguageFeatures(language as LanguageIdEnum, {
-            completionItems: {
-                enable: true,
-                triggerCharacters: [' ', '.'],
-            },
-        });
-    }
-};
-
-const LIGHTDASH_THEME = {
-    rules: [
-        { token: '', foreground: '333333' },
-        { token: 'keyword', foreground: '7262FF', fontStyle: 'bold' },
-        { token: 'operator.sql', foreground: '#24cf62', fontStyle: 'bold' },
-        { token: 'number', foreground: '098658' },
-        { token: 'string', foreground: 'A31515' },
-        { token: 'delimiter', foreground: 'A31515' },
-        { token: 'identifier', foreground: '001080' },
-        { token: 'comment', foreground: '008000', fontStyle: 'italic' },
-    ],
-    colors: {
-        'editor.background': '#FFFFFF',
-        'editor.foreground': '#333333',
-        'editor.lineHighlightBackground': '#f8f8f8',
-        'editor.lineHighlight': '#e0e0e0',
-        'editorCursor.foreground': '#7262FF',
-        'editorWhitespace.foreground': '#efefef',
-        'editor.selectionBackground': '#E6E3FF',
-        'editor.selectionForeground': '#333333',
-        'editor.wordHighlightBackground': '#bcfeff',
-        'editor.selectionHighlightBorder': '#7262FF',
-    },
-};
-
-const registerCustomCompletionProvider = (
-    monaco: Monaco,
-    language: string,
-    quoteChar: string,
-    tables: string[],
-) => {
-    monaco.languages.registerCompletionItemProvider(language, {
-        provideCompletionItems: (model, position) => {
-            const wordUntilPosition = model.getWordUntilPosition(position);
-            const range = {
-                startLineNumber: position.lineNumber,
-                endLineNumber: position.lineNumber,
-                startColumn: wordUntilPosition.startColumn,
-                endColumn: wordUntilPosition.endColumn,
-            };
-
-            const textUntilPosition = model.getValueInRange({
-                startLineNumber: position.lineNumber,
-                startColumn: 1,
-                endLineNumber: position.lineNumber,
-                endColumn: position.column,
-            });
-
-            const suggestions: languages.CompletionItem[] = tables.map(
-                (table) => {
-                    const parts = table.split('.');
-                    const typedParts = textUntilPosition.split('.');
-                    const insertParts = parts.slice(typedParts.length - 1);
-
-                    // Check if the last typed part is already quoted
-                    const lastTypedPart = typedParts[typedParts.length - 1];
-                    const isLastPartQuoted =
-                        lastTypedPart.startsWith(`${quoteChar}`) &&
-                        !lastTypedPart.endsWith(`${quoteChar}`);
-
-                    let insertText = insertParts.join('.');
-                    if (isLastPartQuoted) {
-                        // Remove the opening quote from the first part to insert
-                        insertText = insertText.replace(/^${quoteChar}/, '');
-                    }
-                    return {
-                        label: table,
-                        kind: monaco.languages.CompletionItemKind.Class,
-                        insertText: insertText,
-                        range,
-                    };
-                },
-            );
-
-            return { suggestions };
-        },
-    });
-};
-
-const generateTableCompletions = (
-    quoteChar: string,
-    data: ReturnType<typeof useTables>['data'],
-) => {
-    if (!data) return;
-
-    const database = data.database;
-    const tablesList = data.tablesBySchema
-        ?.map((s) =>
-            Object.keys(s.tables).map(
-                (t) =>
-                    `${quoteChar}${database}${quoteChar}.${quoteChar}${s.schema}${quoteChar}.${quoteChar}${t}${quoteChar}`,
-            ),
-        )
-        .flat();
-
-    return tablesList;
-};
-
 export const SqlEditor: FC<{
     onSubmit?: (sql: string) => void;
     highlightText?: MonacoHighlightLine;
     resetHighlightError?: () => void;
 }> = ({ onSubmit, highlightText, resetHighlightError }) => {
+    const theme = useMantineTheme();
     const sql = useAppSelector((state) => state.sqlRunner.sql);
     const dispatch = useAppDispatch();
     const quoteChar = useAppSelector((state) => state.sqlRunner.quoteChar);
@@ -211,47 +55,84 @@ export const SqlEditor: FC<{
     const warehouseConnectionType = useAppSelector(
         (state) => state.sqlRunner.warehouseConnectionType,
     );
+
+    const [settings] = useSqlEditorPreferences(warehouseConnectionType);
+
+    // Fetch all available parameters for the project
+    const { data: availableParameters } = useParameters(projectUuid, undefined);
+
     const { data: tablesData, isLoading: isTablesDataLoading } = useTables({
         projectUuid,
+    });
+
+    const currentTable = useAppSelector((state) => state.sqlRunner.activeTable);
+    const currentSchema = useAppSelector(
+        (state) => state.sqlRunner.activeSchema,
+    );
+
+    const { data: tableFieldsData } = useTableFields({
+        projectUuid,
+        tableName: currentTable,
+        schema: currentSchema,
         search: undefined,
     });
+
+    const transformedData:
+        | { database: string; tablesBySchema: TablesBySchema }
+        | undefined = useMemo(() => {
+        if (!tablesData || isEmpty(tablesData)) return undefined;
+        const [database] = Object.keys(tablesData);
+        if (!database) return undefined;
+
+        const tablesBySchema = Object.entries(tablesData).flatMap(
+            ([, schemas]) =>
+                Object.entries(schemas).map(([schema, tables]) => ({
+                    schema,
+                    tables,
+                })),
+        );
+        return {
+            database,
+            tablesBySchema,
+        };
+    }, [tablesData]);
+
+    // Use React Query to fetch field data for all detected tables in SQL
+    const { data: detectedTablesFieldData } = useDetectedTableFields({
+        sql,
+        quoteChar,
+        projectUuid,
+        transformedData,
+    });
+
     const editorRef = useRef<Parameters<OnMount>['0'] | null>(null);
 
     const language = useMemo(
-        () => getLanguage(warehouseConnectionType),
+        () => getMonacoLanguage(warehouseConnectionType),
         [warehouseConnectionType],
     );
 
     const beforeMount: BeforeMount = useCallback(
         (monaco) => {
             registerMonacoLanguage(monaco, language);
-            monaco.editor.defineTheme('lightdash', {
+            monaco.editor.defineTheme('lightdash-light', {
                 base: 'vs',
                 inherit: true,
-                ...LIGHTDASH_THEME,
+                ...getLightdashMonacoTheme('light'),
             });
-
-            if (tablesData && quoteChar) {
-                const tablesList = generateTableCompletions(
-                    quoteChar,
-                    tablesData,
-                );
-                if (tablesList && tablesList.length > 0) {
-                    registerCustomCompletionProvider(
-                        monaco,
-                        language,
-                        quoteChar,
-                        tablesList,
-                    );
-                }
-            }
+            monaco.editor.defineTheme('lightdash-dark', {
+                base: 'vs-dark',
+                inherit: true,
+                ...getLightdashMonacoTheme('dark'),
+            });
         },
-        [language, quoteChar, tablesData],
+        [language],
     );
 
     const monaco = useMonaco();
     const decorationsCollectionRef =
         useRef<editor.IEditorDecorationsCollection | null>(null); // Ref to store the decorations collection
+    const completionProviderRef = useRef<{ dispose: () => void } | null>(null); // Ref to store the completion provider
 
     const onMount: OnMount = useCallback(
         (editorObj, monacoObj) => {
@@ -272,6 +153,64 @@ export const SqlEditor: FC<{
         },
         [onSubmit],
     );
+
+    // Register completion provider reactively when data changes
+    useEffect(() => {
+        // Setup logic only runs when all dependencies are available
+        if (monaco && quoteChar) {
+            // Dispose of the previous completion provider
+            if (completionProviderRef.current) {
+                completionProviderRef.current.dispose();
+                completionProviderRef.current = null;
+            }
+            const tablesList = transformedData
+                ? generateTableCompletions(quoteChar, transformedData, settings)
+                : [];
+            // Transform current table fields to include context and combine with detected table fields
+            const currentTableFieldsWithContext = (tableFieldsData || []).map(
+                (field) => ({
+                    ...field,
+                    table: currentTable || '',
+                    schema: currentSchema || '',
+                }),
+            );
+            const allFieldsData = [
+                ...currentTableFieldsWithContext,
+                ...(detectedTablesFieldData || []),
+            ];
+
+            // Always register completion provider, even without tables
+            const provider = registerCustomCompletionProvider(
+                monaco,
+                language,
+                quoteChar,
+                tablesList || [],
+                allFieldsData.length > 0 ? allFieldsData : undefined,
+                settings,
+                availableParameters,
+            );
+            completionProviderRef.current = provider;
+        }
+        // Cleanup function always runs on unmount regardless of conditions
+        return () => {
+            if (completionProviderRef.current) {
+                completionProviderRef.current.dispose();
+                completionProviderRef.current = null;
+            }
+        };
+    }, [
+        monaco,
+        language,
+        quoteChar,
+        transformedData,
+        tableFieldsData,
+        detectedTablesFieldData,
+        currentTable,
+        currentSchema,
+        warehouseConnectionType,
+        settings,
+        availableParameters,
+    ]);
 
     useEffect(() => {
         // remove any existing decorations
@@ -353,7 +292,11 @@ export const SqlEditor: FC<{
             value={sql}
             onChange={onChange}
             options={MONACO_DEFAULT_OPTIONS}
-            theme="lightdash"
+            theme={
+                theme.colorScheme === 'dark'
+                    ? 'lightdash-dark'
+                    : 'lightdash-light'
+            }
         />
     );
 };

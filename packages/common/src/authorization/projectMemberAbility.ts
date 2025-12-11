@@ -18,6 +18,9 @@ export const projectMemberAbilities: Record<
             projectUuid: member.projectUuid,
             isPrivate: false,
         });
+        can('view', 'JobStatus', {
+            createdByUserUuid: member.userUuid,
+        });
         can('view', 'SavedChart', {
             projectUuid: member.projectUuid,
             isPrivate: false,
@@ -65,6 +68,10 @@ export const projectMemberAbilities: Record<
         can('view', 'SpotlightTableConfig', {
             projectUuid: member.projectUuid,
         });
+        can('view', 'AiAgentThread', {
+            projectUuid: member.projectUuid,
+            userUuid: member.userUuid,
+        });
     },
     interactive_viewer(member, { can }) {
         projectMemberAbilities.viewer(member, { can });
@@ -81,6 +88,9 @@ export const projectMemberAbilities: Record<
             projectUuid: member.projectUuid,
         });
         can('create', 'ScheduledDeliveries', {
+            projectUuid: member.projectUuid,
+        });
+        can('manage', 'GoogleSheets', {
             projectUuid: member.projectUuid,
         });
         can('create', 'DashboardComments', {
@@ -133,6 +143,12 @@ export const projectMemberAbilities: Record<
                 },
             },
         });
+        can('view', 'AiAgent', {
+            projectUuid: member.projectUuid,
+        });
+        can('create', 'AiAgentThread', {
+            projectUuid: member.projectUuid,
+        });
     },
     editor(member, { can }) {
         projectMemberAbilities.interactive_viewer(member, { can });
@@ -150,6 +166,7 @@ export const projectMemberAbilities: Record<
         can('manage', 'ScheduledDeliveries', {
             projectUuid: member.projectUuid,
         });
+
         can('manage', 'DashboardComments', {
             projectUuid: member.projectUuid,
         });
@@ -158,6 +175,11 @@ export const projectMemberAbilities: Record<
         });
         can('manage', 'MetricsTree', {
             projectUuid: member.projectUuid,
+        });
+
+        can('manage', 'AiAgentThread', {
+            projectUuid: member.projectUuid,
+            userUuid: member.userUuid,
         });
     },
     developer(member, { can }) {
@@ -198,11 +220,21 @@ export const projectMemberAbilities: Record<
         can('manage', 'ContentAsCode', {
             projectUuid: member.projectUuid,
         });
+        can('view', 'JobStatus', {
+            projectUuid: member.projectUuid,
+        });
+        can('manage', 'AiAgent', {
+            projectUuid: member.projectUuid,
+        });
     },
     admin(member, { can }) {
         projectMemberAbilities.developer(member, { can });
 
         can('delete', 'Project', {
+            projectUuid: member.projectUuid,
+        });
+
+        can('view', 'Analytics', {
             projectUuid: member.projectUuid,
         });
 
@@ -219,6 +251,12 @@ export const projectMemberAbilities: Record<
         });
 
         can('manage', 'SavedChart', {
+            projectUuid: member.projectUuid,
+        });
+        can('view', 'AiAgentThread', {
+            projectUuid: member.projectUuid,
+        });
+        can('manage', 'AiAgentThread', {
             projectUuid: member.projectUuid,
         });
     },

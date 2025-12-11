@@ -1,32 +1,44 @@
-import {
-    type ApiQueryResults,
-    type ChartType,
-    type ItemsMap,
+import type {
+    ApiErrorDetail,
+    ChartConfig,
+    ChartType,
+    EChartsSeries,
+    ItemsMap,
+    MetricQuery,
+    ParametersValuesMap,
+    StackType,
 } from '@lightdash/common';
-import type EChartsReact from 'echarts-for-react';
+import type { Map as LeafletMap } from 'leaflet';
 import { createContext, type RefObject } from 'react';
 import { type CartesianTypeOptions } from '../../hooks/cartesianChartConfig/useCartesianChartConfig';
-import { type EChartSeries } from '../../hooks/echarts/useEchartsCartesianConfig';
 import { type SeriesLike } from '../../hooks/useChartColorConfig/types';
-import { type EchartSeriesClickEvent } from '../SimpleChart';
+import { type InfiniteQueryResults } from '../../hooks/useQueryResults';
+import { type EChartsReact } from '../EChartsReactWrapper';
+import { type EchartsSeriesClickEvent } from '../SimpleChart';
 import { type VisualizationConfig } from './types';
 
 type VisualizationContext = {
     minimal: boolean;
     chartRef: RefObject<EChartsReact | null>;
+    leafletMapRef: RefObject<LeafletMap | null>;
     pivotDimensions: string[] | undefined;
-    resultsData: ApiQueryResults | undefined;
+    resultsData:
+        | (InfiniteQueryResults & {
+              metricQuery?: MetricQuery;
+              fields?: ItemsMap;
+          })
+        | undefined;
     isLoading: boolean;
     columnOrder: string[];
     itemsMap: ItemsMap | undefined;
     visualizationConfig: VisualizationConfig;
     // cartesian config related
-    setStacking: (value: boolean | undefined) => void;
+    setStacking: (value: boolean | StackType | undefined) => void;
     setCartesianType(args: CartesianTypeOptions | undefined): void;
     // --
     onSeriesContextMenu?: (
-        e: EchartSeriesClickEvent,
-        series: EChartSeries[],
+        e: EchartsSeriesClickEvent,
+        series: EChartsSeries[],
     ) => void;
     setChartType: (value: ChartType) => void;
     setPivotDimensions: (value: string[] | undefined) => void;
@@ -34,6 +46,13 @@ type VisualizationContext = {
     getSeriesColor: (seriesLike: SeriesLike) => string;
     getGroupColor: (groupPrefix: string, groupName: string) => string;
     colorPalette: string[];
+    chartConfig: ChartConfig;
+    apiErrorDetail?: ApiErrorDetail | null;
+    parameters?: ParametersValuesMap;
+    // Container dimensions for responsive visualizations
+    containerWidth?: number;
+    containerHeight?: number;
+    isDashboard?: boolean;
 };
 
 const Context = createContext<VisualizationContext | undefined>(undefined);

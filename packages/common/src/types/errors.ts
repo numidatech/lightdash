@@ -2,17 +2,26 @@
 import { type AnyType } from './any';
 import { type DbtLog } from './job';
 
+type LightdashErrorData = {
+    /**
+     * Optional URL linking to relevant documentation.
+     * Can be used to provide users with additional context/guidance about the error.
+     */
+    documentationUrl?: string;
+    [key: string]: AnyType;
+};
+
 type LightdashErrorParams = {
     message: string;
     name: string;
     statusCode: number;
-    data: { [key: string]: AnyType };
+    data: LightdashErrorData;
 };
 
 export class LightdashError extends Error {
     statusCode: number;
 
-    data: { [key: string]: AnyType };
+    data: LightdashErrorData;
 
     constructor({ message, name, statusCode, data }: LightdashErrorParams) {
         super(message);
@@ -254,6 +263,17 @@ export class NotFoundError extends LightdashError {
     }
 }
 
+export class NotSupportedError extends LightdashError {
+    constructor(message: string) {
+        super({
+            message,
+            name: 'NotSupportedError',
+            statusCode: 400,
+            data: {},
+        });
+    }
+}
+
 export class InvalidUser extends LightdashError {
     constructor(message: string) {
         super({
@@ -341,11 +361,11 @@ export class NotEnoughResults extends LightdashError {
     }
 }
 
-export class KnexPaginationError extends LightdashError {
+export class PaginationError extends LightdashError {
     constructor(message: string) {
         super({
             message,
-            name: 'KnexPaginationError',
+            name: 'PaginationError',
             statusCode: 422,
             data: {},
         });
@@ -359,6 +379,34 @@ export class SlackInstallationNotFoundError extends LightdashError {
             name: 'SlackInstallationNotFoundError',
             statusCode: 404,
             data: {},
+        });
+    }
+}
+
+export class SlackError extends LightdashError {
+    constructor(
+        message: string = 'Slack API error occurred',
+        data: { [key: string]: AnyType } = {},
+    ) {
+        super({
+            message,
+            name: 'SlackError',
+            statusCode: 400,
+            data,
+        });
+    }
+}
+
+export class MsTeamsError extends LightdashError {
+    constructor(
+        message: string = 'Microsoft Teams API error occurred',
+        data: { [key: string]: AnyType } = {},
+    ) {
+        super({
+            message,
+            name: 'MsTeamsError',
+            statusCode: 400,
+            data,
         });
     }
 }
@@ -402,3 +450,196 @@ export class NotImplementedError extends LightdashError {
 }
 export const getErrorMessage = (e: unknown) =>
     e instanceof Error ? e.message : `Unknown ${typeof e} error`;
+
+export class ScreenshotError extends LightdashError {
+    constructor(
+        message = 'Error capturing screenshot',
+        data: { [key: string]: AnyType } = {},
+    ) {
+        super({
+            message,
+            name: 'ScreenshotError',
+            statusCode: 500,
+            data,
+        });
+    }
+}
+
+export class SshTunnelError extends LightdashError {
+    constructor(message: string) {
+        super({
+            message,
+            name: 'SshTunnelError',
+            statusCode: 400,
+            data: {},
+        });
+    }
+}
+
+export class ReadFileError extends LightdashError {
+    constructor(message: string, data: { [key: string]: AnyType } = {}) {
+        super({
+            message,
+            name: 'ReadFileError',
+            statusCode: 404,
+            data,
+        });
+    }
+}
+
+export class S3Error extends LightdashError {
+    constructor(
+        message = 'Error occurred while interacting with S3',
+        data: { [key: string]: AnyType } = {},
+    ) {
+        super({
+            message,
+            name: 'S3Error',
+            statusCode: 500,
+            data,
+        });
+    }
+}
+
+export class TimeoutError extends LightdashError {
+    constructor(message: string) {
+        super({
+            message,
+            name: 'TimeoutError',
+            statusCode: 400,
+            data: {},
+        });
+    }
+}
+
+export class AiDuplicateSlackPromptError extends LightdashError {
+    constructor(message: string) {
+        super({
+            message,
+            name: 'AiDuplicateSlackPromptError',
+            statusCode: 400,
+            data: {},
+        });
+    }
+}
+
+export class AiSlackMappingNotFoundError extends LightdashError {
+    constructor(message: string) {
+        super({
+            message,
+            name: 'AiSlackMappingNotFoundError',
+            statusCode: 400,
+            data: {},
+        });
+    }
+}
+
+export class AiAgentNotFoundError extends LightdashError {
+    constructor(message: string) {
+        super({
+            message,
+            name: 'AiAgentNotFoundError',
+            statusCode: 400,
+            data: {},
+        });
+    }
+}
+
+/* This specific error will be used in the frontend
+to show a "reauthenticate" button in the UI
+*/
+export class SnowflakeTokenError extends LightdashError {
+    constructor(message: string) {
+        super({
+            message,
+            name: 'SnowflakeTokenError',
+            statusCode: 401,
+            data: {},
+        });
+    }
+}
+
+export class CustomSqlQueryForbiddenError extends LightdashError {
+    constructor(
+        message: string = 'User cannot run queries with custom SQL dimensions',
+    ) {
+        super({
+            message,
+            name: 'CustomSqlQueryForbiddenError',
+            statusCode: 403,
+            data: {
+                documentationUrl: `https://docs.lightdash.com/references/custom-fields#custom-sql`,
+            },
+        });
+    }
+}
+
+export class OauthAuthenticationError extends LightdashError {
+    constructor(
+        message = 'OAuth authentication error',
+        data: { [key: string]: AnyType } = {},
+    ) {
+        super({
+            message,
+            name: 'OauthAuthenticationError',
+            statusCode: 401,
+            data,
+        });
+    }
+}
+
+export class GenerateDailySchedulerJobError extends LightdashError {
+    schedulerUuid: string;
+
+    constructor(
+        message: string,
+        schedulerUuid: string,
+        originalError?: unknown,
+    ) {
+        super({
+            message,
+            name: 'GenerateDailySchedulerJobError',
+            statusCode: 500,
+            data: {
+                schedulerUuid,
+                originalError:
+                    originalError instanceof Error
+                        ? originalError.message
+                        : String(originalError),
+            },
+        });
+        this.schedulerUuid = schedulerUuid;
+        if (originalError instanceof Error) {
+            this.stack = originalError.stack;
+            this.cause = originalError;
+        }
+    }
+}
+
+export class LightdashProjectConfigError extends LightdashError {
+    constructor(
+        message = 'Invalid lightdash.config.yml',
+        data: Record<string, AnyType> = {},
+    ) {
+        super({
+            message,
+            name: 'LightdashProjectConfigError',
+            statusCode: 400,
+            data,
+        });
+    }
+}
+
+export class CorruptedExploreError extends LightdashError {
+    constructor(
+        message = 'Explore has corrupted or missing data',
+        data: Record<string, AnyType> = {},
+    ) {
+        super({
+            message,
+            name: 'CorruptedExploreError',
+            statusCode: 500,
+            data,
+        });
+    }
+}

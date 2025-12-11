@@ -1,3 +1,4 @@
+import { type EmailStatusExpiring } from '@lightdash/common';
 import {
     Alert,
     Anchor,
@@ -12,7 +13,6 @@ import { IconAlertCircle } from '@tabler/icons-react';
 import { useEffect, type FC } from 'react';
 import Countdown, { zeroPad } from 'react-countdown';
 import {
-    useEmailStatus,
     useOneTimePassword,
     useVerifyEmail,
 } from '../../hooks/useEmailVerification';
@@ -20,13 +20,15 @@ import useApp from '../../providers/App/useApp';
 import LoadingState from '../common/LoadingState';
 import MantineIcon from '../common/MantineIcon';
 
-const VerifyEmailForm: FC<{ isLoading?: boolean }> = ({ isLoading }) => {
+const VerifyEmailForm: FC<{
+    isLoading?: boolean;
+    emailStatusData?: EmailStatusExpiring;
+    statusLoading?: boolean;
+}> = ({ isLoading, emailStatusData, statusLoading }) => {
     const { health, user } = useApp();
     const { mutate: verifyCode, isLoading: verificationLoading } =
         useVerifyEmail();
-    const { data, isInitialLoading: statusLoading } = useEmailStatus(
-        !!health.data?.isAuthenticated,
-    );
+    const data = emailStatusData;
     const { mutate: sendVerificationEmail, isLoading: emailLoading } =
         useOneTimePassword();
     const form = useForm<{ code: string }>({
@@ -67,7 +69,7 @@ const VerifyEmailForm: FC<{ isLoading?: boolean }> = ({ isLoading }) => {
         // FIXME: update hardcoded widths with Mantine widths
         <Stack spacing="md" justify="center" align="center" w={300} mx="auto">
             <Title order={3}>Check your inbox!</Title>
-            <Text color="gray.6" ta="center">
+            <Text color="ldGray.6" ta="center">
                 Verify your email address by entering the code we've just sent
                 to <b>{user?.data?.email || 'your email'}</b>
             </Text>
@@ -88,6 +90,7 @@ const VerifyEmailForm: FC<{ isLoading?: boolean }> = ({ isLoading }) => {
                         }
                         {...form.getInputProps('code')}
                         data-testid="pin-input"
+                        autoFocus
                     />
                     <Text ta="center" color="red.7">
                         {errorMessage?.toString()}
@@ -127,7 +130,7 @@ const VerifyEmailForm: FC<{ isLoading?: boolean }> = ({ isLoading }) => {
                                 >
                                     Submit
                                 </Button>
-                                <Text color="gray.6" ta="center">
+                                <Text color="ldGray.6" ta="center">
                                     Your one-time password expires in{' '}
                                     <b>
                                         {zeroPad(minutes)}:{zeroPad(seconds)}

@@ -24,7 +24,7 @@ import {
 import { useForm } from '@mantine/form';
 import { useDebouncedValue } from '@mantine/hooks';
 import { IconEye, IconEyeOff } from '@tabler/icons-react';
-import { uniqBy } from 'lodash';
+import uniqBy from 'lodash/uniqBy';
 import React, { useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router';
 import { useChartSummariesV2 } from '../../../hooks/useChartSummariesV2';
@@ -148,10 +148,11 @@ const ChartUpdateModal = ({
                                     separator: {
                                         position: 'sticky',
                                         top: 0,
-                                        backgroundColor: 'white',
+                                        backgroundColor:
+                                            theme.colors.background[0],
                                     },
                                     separatorLabel: {
-                                        color: theme.colors.gray[6],
+                                        color: theme.colors.ldGray[6],
                                         fontWeight: 500,
                                     },
                                 })}

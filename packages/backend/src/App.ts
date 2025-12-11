@@ -1,14 +1,18 @@
 // organize-imports-ignore
 // eslint-disable-next-line import/order
 import './sentry'; // Sentry has to be initialized before anything else
-
 import {
+    Account,
     AnyType,
     ApiError,
+    getErrorMessage,
     LightdashError,
     LightdashMode,
-    SessionServiceAccount,
     LightdashVersionHeader,
+    MissingConfigError,
+    OauthAuthenticationError,
+    Project,
+    ServiceAccount,
     SessionUser,
     UnexpectedServerError,
 } from '@lightdash/common';
@@ -26,18 +30,19 @@ import path from 'path';
 import reDoc from 'redoc-express';
 import { URL } from 'url';
 import cors from 'cors';
+import { produce } from 'immer';
 import { LightdashAnalytics } from './analytics/LightdashAnalytics';
 import {
     ClientProviderMap,
     ClientRepository,
 } from './clients/ClientRepository';
-import { SlackBot } from './clients/Slack/Slackbot';
 import { LightdashConfig } from './config/parseConfig';
 import {
     apiKeyPassportStrategy,
     createAzureAdPassportStrategy,
     createGenericOidcPassportStrategy,
     googlePassportStrategy,
+    invalidUserErrorHandler,
     isAzureAdPassportStrategyAvailableToUse,
     isGenericOidcPassportStrategyAvailableToUse,
     isOktaPassportStrategyAvailableToUse,
@@ -56,6 +61,10 @@ import {
 import { ModelProviderMap, ModelRepository } from './models/ModelRepository';
 import { postHogClient } from './postHog';
 import { apiV1Router } from './routers/apiV1Router';
+import {
+    oauthAuthorizationServerHandler,
+    oauthProtectedResourceHandler,
+} from './routers/oauthRouter';
 import { SchedulerWorker } from './scheduler/SchedulerWorker';
 import {
     OperationContext,
@@ -65,6 +74,13 @@ import {
 import { UtilProviderMap, UtilRepository } from './utils/UtilRepository';
 import { VERSION } from './version';
 import PrometheusMetrics from './prometheus';
+import { snowflakePassportStrategy } from './controllers/authentication/strategies/snowflakeStrategy';
+import { databricksPassportStrategy } from './controllers/authentication/strategies/databricksStrategy';
+import { jwtAuthMiddleware } from './middlewares/jwtAuthMiddleware';
+import { InstanceConfigurationService } from './services/InstanceConfigurationService/InstanceConfigurationService';
+import { slackPassportStrategy } from './controllers/authentication/strategies/slackStrategy';
+import { SlackClient } from './clients/Slack/SlackClient';
+import { sessionAccountMiddleware } from './middlewares/accountMiddleware';
 
 // We need to override this interface to have our user typing
 declare global {
@@ -76,11 +92,14 @@ declare global {
          */
         interface Request {
             services: ServiceRepository;
-            serviceAccount?: SessionServiceAccount;
+            serviceAccount?: Pick<ServiceAccount, 'organizationUuid'>;
+            // The project associated with this request
+            project?: Pick<Project, 'projectUuid'>;
             /**
              * @deprecated Clients should be used inside services. This will be removed soon.
              */
             clients: ClientRepository;
+            account?: Account;
         }
 
         interface User extends SessionUser {}
@@ -98,6 +117,8 @@ const schedulerWorkerFactory = (context: {
     new SchedulerWorker({
         lightdashConfig: context.lightdashConfig,
         analytics: context.analytics,
+        // SlackClient should initialize before UnfurlService and AiAgentService
+        slackClient: context.clients.getSlackClient(),
         unfurlService: context.serviceRepository.getUnfurlService(),
         csvService: context.serviceRepository.getCsvService(),
         dashboardService: context.serviceRepository.getDashboardService(),
@@ -109,25 +130,12 @@ const schedulerWorkerFactory = (context: {
         googleDriveClient: context.clients.getGoogleDriveClient(),
         s3Client: context.clients.getS3Client(),
         schedulerClient: context.clients.getSchedulerClient(),
-        slackClient: context.clients.getSlackClient(),
-        semanticLayerService:
-            context.serviceRepository.getSemanticLayerService(),
+        msTeamsClient: context.clients.getMsTeamsClient(),
         catalogService: context.serviceRepository.getCatalogService(),
         encryptionUtil: context.utils.getEncryptionUtil(),
-    });
-
-const slackBotFactory = (context: {
-    lightdashConfig: LightdashConfig;
-    analytics: LightdashAnalytics;
-    serviceRepository: ServiceRepository;
-    models: ModelRepository;
-    clients: ClientRepository;
-}) =>
-    new SlackBot({
-        lightdashConfig: context.lightdashConfig,
-        analytics: context.analytics,
-        slackAuthenticationModel: context.models.getSlackAuthenticationModel(),
-        unfurlService: context.serviceRepository.getUnfurlService(),
+        renameService: context.serviceRepository.getRenameService(),
+        asyncQueryService: context.serviceRepository.getAsyncQueryService(),
+        featureFlagService: context.serviceRepository.getFeatureFlagService(),
     });
 
 export type AppArguments = {
@@ -142,7 +150,6 @@ export type AppArguments = {
     clientProviders?: ClientProviderMap;
     modelProviders?: ModelProviderMap;
     utilProviders?: UtilProviderMap;
-    slackBotFactory?: typeof slackBotFactory;
     schedulerWorkerFactory?: typeof schedulerWorkerFactory;
     customExpressMiddlewares?: Array<(app: Express) => void>; // Array of custom middleware functions
 };
@@ -167,8 +174,6 @@ export default class App {
     private readonly models: ModelRepository;
 
     private readonly database: Knex;
-
-    private readonly slackBotFactory: typeof slackBotFactory;
 
     private readonly schedulerWorkerFactory: typeof schedulerWorkerFactory;
 
@@ -216,6 +221,9 @@ export default class App {
             }),
             models: this.models,
         });
+        this.prometheusMetrics = new PrometheusMetrics(
+            this.lightdashConfig.prometheus,
+        );
         this.serviceRepository = new ServiceRepository({
             serviceProviders: args.serviceProviders,
             context: new OperationContext({
@@ -226,18 +234,16 @@ export default class App {
             clients: this.clients,
             models: this.models,
             utils: this.utils,
+            prometheusMetrics: this.prometheusMetrics,
         });
-        this.slackBotFactory = args.slackBotFactory || slackBotFactory;
         this.schedulerWorkerFactory =
             args.schedulerWorkerFactory || schedulerWorkerFactory;
-        this.prometheusMetrics = new PrometheusMetrics(
-            this.lightdashConfig.prometheus,
-        );
         this.customExpressMiddlewares = args.customExpressMiddlewares || [];
     }
 
     async start() {
         this.prometheusMetrics.start();
+        this.prometheusMetrics.monitorDatabase(this.database);
         // @ts-ignore
         // eslint-disable-next-line no-extend-native, func-names
         BigInt.prototype.toJSON = function () {
@@ -267,6 +273,23 @@ export default class App {
             this.prometheusMetrics.monitorQueues(
                 this.clients.getSchedulerClient(),
             );
+        }
+
+        try {
+            const instanceConfigurationService =
+                this.serviceRepository.getInstanceConfigurationService<InstanceConfigurationService>();
+            await instanceConfigurationService.initializeInstance();
+            await instanceConfigurationService.updateInstanceConfiguration();
+        } catch (e) {
+            if (e instanceof MissingConfigError) {
+                Logger.debug(
+                    `No instance configuration service found: ${getErrorMessage(
+                        e,
+                    )}`,
+                );
+            } else {
+                throw e;
+            }
         }
     }
 
@@ -374,67 +397,81 @@ export default class App {
                 .allowedDomains,
         ];
 
-        expressApp.use(
-            helmet({
-                contentSecurityPolicy: {
-                    directives: {
-                        'default-src': [
-                            "'self'",
-                            ...contentSecurityPolicyAllowedDomains,
-                        ],
-                        'img-src': ["'self'", 'data:', 'https://*'],
-                        'frame-src': ["'self'", 'https://*'],
-                        'frame-ancestors': [
-                            "'self'",
-                            ...this.lightdashConfig.security
-                                .contentSecurityPolicy.frameAncestors,
-                        ],
-                        'worker-src': [
-                            "'self'",
-                            'blob:',
-                            ...contentSecurityPolicyAllowedDomains,
-                        ],
-                        'child-src': [
-                            // Fallback of worker-src for safari older than 15.5
-                            "'self'",
-                            'blob:',
-                            ...contentSecurityPolicyAllowedDomains,
-                        ],
-                        'script-src': [
-                            "'self'",
-                            "'unsafe-eval'",
-                            ...contentSecurityPolicyAllowedDomains,
-                        ],
-                        'script-src-elem': [
-                            "'self'",
-                            "'unsafe-inline'",
-                            ...contentSecurityPolicyAllowedDomains,
-                        ],
-                        'report-uri': reportUris.map((uri) => uri.href),
-                    },
-                    reportOnly:
-                        this.lightdashConfig.security.contentSecurityPolicy
-                            .reportOnly,
+        const helmetConfig = {
+            contentSecurityPolicy: {
+                directives: {
+                    'default-src': [
+                        "'self'",
+                        ...contentSecurityPolicyAllowedDomains,
+                    ],
+                    'img-src': ["'self'", 'data:', 'https://*'],
+                    'frame-src': ["'self'", 'https://*'],
+                    'frame-ancestors': [
+                        "'self'",
+                        ...this.lightdashConfig.security.contentSecurityPolicy
+                            .frameAncestors,
+                    ],
+                    'worker-src': [
+                        "'self'",
+                        'blob:',
+                        ...contentSecurityPolicyAllowedDomains,
+                    ],
+                    'child-src': [
+                        // Fallback of worker-src for safari older than 15.5
+                        "'self'",
+                        'blob:',
+                        ...contentSecurityPolicyAllowedDomains,
+                    ],
+                    'script-src': [
+                        "'self'",
+                        "'unsafe-eval'",
+                        ...contentSecurityPolicyAllowedDomains,
+                    ],
+                    'script-src-elem': [
+                        "'self'",
+                        "'unsafe-inline'",
+                        ...contentSecurityPolicyAllowedDomains,
+                    ],
+                    'form-action': [
+                        "'self'",
+                        ...contentSecurityPolicyAllowedDomains,
+                    ],
+                    'report-uri': reportUris.map((uri) => uri.href),
                 },
-                strictTransportSecurity: {
-                    maxAge: 31536000,
-                    includeSubDomains: true,
-                    preload: true,
-                },
-                referrerPolicy: {
-                    policy: 'strict-origin-when-cross-origin',
-                },
-                noSniff: true,
-                xFrameOptions: false,
-                crossOriginOpenerPolicy: {
-                    policy: [LightdashMode.DEMO, LightdashMode.PR].includes(
-                        this.lightdashConfig.mode,
-                    )
-                        ? 'unsafe-none'
-                        : 'same-origin',
-                },
-            }),
-        );
+                reportOnly:
+                    this.lightdashConfig.security.contentSecurityPolicy
+                        .reportOnly,
+            },
+            strictTransportSecurity: {
+                maxAge: 31536000,
+                includeSubDomains: true,
+                preload: true,
+            },
+            referrerPolicy: {
+                policy: 'strict-origin-when-cross-origin',
+            },
+            noSniff: true,
+            xFrameOptions: false,
+            crossOriginOpenerPolicy: {
+                policy: [LightdashMode.DEMO, LightdashMode.PR].includes(
+                    this.lightdashConfig.mode,
+                )
+                    ? 'unsafe-none'
+                    : 'same-origin',
+            },
+        } as const;
+
+        expressApp.use(helmet(helmetConfig));
+
+        const helmetConfigForEmbeds = produce(helmetConfig, (draft) => {
+            // eslint-disable-next-line no-param-reassign
+            draft.contentSecurityPolicy.directives['frame-ancestors'] = [
+                "'self'",
+                'https://*',
+            ];
+        });
+
+        expressApp.use('/embed/*', helmet(helmetConfigForEmbeds));
 
         expressApp.use((req, res, next) => {
             // Permissions-Policy header that is not yet supported by helmet. More details here: https://github.com/helmetjs/helmet/issues/234
@@ -448,6 +485,11 @@ export default class App {
 
         expressApp.use(
             expressSession({
+                name:
+                    process.env.NODE_ENV === 'development' &&
+                    process.env.DEV_SCOPED_COOKIE_NAMES_ENABLED === 'true'
+                        ? `connect.sid.${this.port}`
+                        : 'connect.sid',
                 secret: this.lightdashConfig.lightdashSecret,
                 proxy: this.lightdashConfig.trustProxy,
                 rolling: true,
@@ -490,7 +532,23 @@ export default class App {
          */
         expressApp.use((req, res, next) => {
             req.services = this.serviceRepository;
-            req.clients = this.clients;
+            next();
+        });
+
+        // Add JWT parsing here so we can get services off the request
+        // We'll also be able to add the user to Sentry for embedded users.
+        expressApp.use(jwtAuthMiddleware);
+        expressApp.use(sessionAccountMiddleware);
+
+        expressApp.use((req, res, next) => {
+            if (req.user) {
+                Sentry.setUser({
+                    id: req.user.userUuid,
+                    organization: req.user.organizationUuid,
+                    email: req.user.email,
+                    username: req.user.email,
+                });
+            }
             next();
         });
 
@@ -530,6 +588,27 @@ export default class App {
                 },
             ),
         );
+
+        // Root-level .well-known endpoints for OAuth discovery (required by many MCP clients)
+        // Use the same handlers as the API-level endpoints to ensure consistency
+        expressApp.get(
+            '/.well-known/oauth-authorization-server',
+            oauthAuthorizationServerHandler,
+        );
+        expressApp.get(
+            '/.well-known/oauth-authorization-server/api/v1/mcp',
+            oauthAuthorizationServerHandler,
+        );
+
+        expressApp.get(
+            '/.well-known/oauth-protected-resource',
+            oauthProtectedResourceHandler,
+        );
+        expressApp.get(
+            '/.well-known/oauth-protected-resource/api/v1/mcp',
+            oauthProtectedResourceHandler,
+        );
+
         // frontend static files - no cache
         expressApp.use(
             express.static(path.join(__dirname, '../../frontend/build'), {
@@ -540,6 +619,20 @@ export default class App {
                 }),
             }),
         );
+
+        // handling api 404s before frontend catch all
+        expressApp.use('/api/*', (req, res) => {
+            const apiErrorResponse = {
+                status: 'error',
+                error: {
+                    statusCode: 404,
+                    name: 'NotFoundError',
+                    message: `API endpoint not found`,
+                    data: {},
+                },
+            } satisfies ApiError;
+            res.status(404).json(apiErrorResponse);
+        });
 
         expressApp.get('*', (req, res) => {
             res.sendFile(
@@ -562,6 +655,7 @@ export default class App {
         // Errors
         Sentry.setupExpressErrorHandler(expressApp);
         expressApp.use(scimErrorHandler); // SCIM error check before general error handler
+        expressApp.use(invalidUserErrorHandler);
         expressApp.use(
             (error: Error, req: Request, res: Response, _: NextFunction) => {
                 const errorResponse = errorHandler(error);
@@ -569,12 +663,18 @@ export default class App {
                     error instanceof UnexpectedServerError ||
                     !(error instanceof LightdashError)
                 ) {
-                    console.error(error); // Log original error for debug purposes
+                    // This intentionally uses console vs. winston because of problems from some error/JSON payloads.
+                    console.error(error);
                 }
                 Logger.error(
                     `Handled error of type ${errorResponse.name} on [${req.method}] ${req.path}`,
                     errorResponse,
                 );
+
+                if (process.env.NODE_ENV === 'development') {
+                    Logger.error(error.stack);
+                }
+
                 this.analytics.track({
                     event: 'api.error',
                     userId: req.user?.userUuid,
@@ -588,6 +688,18 @@ export default class App {
                         method: req.method,
                     },
                 });
+
+                // Check if this is an OAuth endpoint and return OAuth2-compliant error response
+                if (error instanceof OauthAuthenticationError) {
+                    const oauthErrorResponse = {
+                        error: errorResponse.data?.error || 'server_error',
+                        error_description: errorResponse.message,
+                    };
+                    res.status(errorResponse.statusCode).send(
+                        oauthErrorResponse,
+                    );
+                    return;
+                }
 
                 const apiErrorResponse: ApiError = {
                     status: 'error',
@@ -608,6 +720,7 @@ export default class App {
                                 : undefined,
                     },
                 };
+
                 res.status(errorResponse.statusCode).send(apiErrorResponse);
             },
         );
@@ -621,6 +734,8 @@ export default class App {
                 userService,
             }),
         );
+
+        // Refresh strategies also need to be registered on SchedulerApp
         if (googlePassportStrategy) {
             passport.use(googlePassportStrategy);
             refresh.use(googlePassportStrategy);
@@ -637,6 +752,17 @@ export default class App {
         if (isGenericOidcPassportStrategyAvailableToUse) {
             passport.use('oidc', await createGenericOidcPassportStrategy());
         }
+        if (snowflakePassportStrategy) {
+            passport.use('snowflake', snowflakePassportStrategy);
+            refresh.use('snowflake', snowflakePassportStrategy);
+        }
+        if (databricksPassportStrategy) {
+            passport.use('databricks', databricksPassportStrategy);
+            refresh.use('databricks', databricksPassportStrategy);
+        }
+        if (slackPassportStrategy) {
+            passport.use('slack', slackPassportStrategy);
+        }
 
         passport.serializeUser((user, done) => {
             // On login (user changes), user.userUuid is written to the session store in the `sess.passport.data` field
@@ -652,8 +778,6 @@ export default class App {
                 passportUser: { id: string; organization: string },
                 done,
             ) => {
-                // Set the organization tag so we can filter by it in Sentry
-                Sentry.setTag('organization', passportUser.organization);
                 // Convert to a full user profile
                 try {
                     done(null, await userService.findSessionUser(passportUser));
@@ -667,14 +791,11 @@ export default class App {
     }
 
     private async initSlack(expressApp: Express) {
-        const slackBot = this.slackBotFactory({
-            lightdashConfig: this.lightdashConfig,
-            analytics: this.analytics,
-            serviceRepository: this.serviceRepository,
-            models: this.models,
-            clients: this.clients,
-        });
-        await slackBot.start(expressApp);
+        const slackClient = this.clients.getSlackClient();
+        await slackClient.start(expressApp);
+
+        const slackService = this.serviceRepository.getSlackService();
+        slackService.setupEventListeners();
     }
 
     private initSchedulerWorker() {
@@ -718,6 +839,10 @@ export default class App {
 
     getModels() {
         return this.models;
+    }
+
+    getClients() {
+        return this.clients;
     }
 
     getDatabase() {

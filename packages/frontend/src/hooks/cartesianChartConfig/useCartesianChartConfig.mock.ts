@@ -63,18 +63,6 @@ export const simpleSeriesMapArgs: GetExpectedSeriesMapArgs = {
     defaultAreaStyle: undefined,
     isStacked: false,
     resultsData: {
-        metricQuery: {
-            exploreName: '',
-            dimensions: ['dimension_x'],
-            metrics: [],
-            filters: {},
-            sorts: [],
-            limit: 10,
-            tableCalculations: [],
-        },
-        cacheMetadata: {
-            cacheHit: false,
-        },
         rows: [
             {
                 dimension_x: { value: { raw: 'a', formatted: 'a' } },
@@ -89,12 +77,12 @@ export const simpleSeriesMapArgs: GetExpectedSeriesMapArgs = {
                 my_second_metric: { value: { raw: 'a', formatted: 'a' } },
             },
         ],
-        fields: {},
-    },
+    } as any,
     pivotKeys: undefined,
     yFields: ['my_metric', 'my_second_metric'],
     xField: 'my_dimension',
     availableDimensions: ['my_dimension', 'dimension_x'],
+    itemsMap: undefined,
 };
 
 export const expectedSimpleSeriesMap: Record<string, Series> = {
@@ -219,18 +207,6 @@ export const multiPivotSeriesMapArgs: GetExpectedSeriesMapArgs = {
     pivotKeys: ['dimension_x', 'dimension_y'],
     yFields: ['my_metric'],
     resultsData: {
-        metricQuery: {
-            exploreName: '',
-            dimensions: ['dimension_x', 'dimension_y'],
-            metrics: [],
-            filters: {},
-            sorts: [],
-            limit: 10,
-            tableCalculations: [],
-        },
-        cacheMetadata: {
-            cacheHit: false,
-        },
         rows: [
             {
                 dimension_x: { value: { raw: 'a', formatted: 'a' } },
@@ -257,8 +233,7 @@ export const multiPivotSeriesMapArgs: GetExpectedSeriesMapArgs = {
                 my_metric: { value: { raw: 'a', formatted: 'a' } },
             },
         ],
-        fields: {},
-    },
+    } as any,
 };
 
 export const expectedMultiPivotedSeriesMap: Record<string, Series> = {
@@ -658,6 +633,7 @@ export const useCartesianChartConfigParamsMock = {
             tableCalculations: [],
             additionalMetrics: [],
         },
+        hasFetchedAllRows: true,
     },
     columnOrder: [
         'orders_customer_id',

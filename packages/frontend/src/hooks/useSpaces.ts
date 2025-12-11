@@ -13,7 +13,7 @@ import {
 } from '@tanstack/react-query';
 import { lightdashApi } from '../api';
 import useToaster from './toaster/useToaster';
-import useUser from './user/useUser';
+import { useAccount } from './user/useAccount';
 
 const getSpaceSummaries = async (projectUuid: string) => {
     return lightdashApi<SpaceSummary[]>({
@@ -23,26 +23,33 @@ const getSpaceSummaries = async (projectUuid: string) => {
     });
 };
 
+export const hasDirectAccessToSpace = (
+    space: Pick<SpaceSummary, 'isPrivate' | 'access'>,
+    userUuid: string,
+) => {
+    return !space.isPrivate || space.access.includes(userUuid);
+};
+
 export const useSpaceSummaries = (
     projectUuid?: string,
     includePrivateSpaces: boolean = false,
     queryOptions?: UseQueryOptions<SpaceSummary[], ApiError>,
 ) => {
-    const { data: user } = useUser(true);
+    const { data: account } = useAccount();
     return useQuery<SpaceSummary[], ApiError>(
         ['projects', projectUuid, 'spaces'],
         () => getSpaceSummaries(projectUuid!),
         {
             select: (data) =>
                 // only get spaces that the user has direct access to
-                !includePrivateSpaces
-                    ? data.filter(
+                includePrivateSpaces
+                    ? data
+                    : data.filter(
                           (space) =>
-                              !space.isPrivate ||
-                              (!!user && space.access.includes(user.userUuid)),
-                      )
-                    : data,
-            enabled: !!projectUuid,
+                              !!account?.user &&
+                              hasDirectAccessToSpace(space, account.user.id),
+                      ),
+            enabled: !!projectUuid && account?.isRegisteredUser(),
             ...queryOptions,
         },
     );
@@ -89,6 +96,7 @@ export const useSpaceDeleteMutation = (projectUuid: string) => {
                     'spaces',
                 ]);
                 await queryClient.invalidateQueries(['pinned_items']);
+                await queryClient.refetchQueries(['content']);
                 showToastSuccess({
                     title: `Success! Space was deleted.`,
                 });
@@ -135,6 +143,7 @@ export const useUpdateMutation = (
                     'spaces',
                 ]);
                 await queryClient.invalidateQueries(['pinned_items']);
+                await queryClient.invalidateQueries(['content']);
                 await queryClient.refetchQueries(['spaces', projectUuid]);
                 queryClient.setQueryData(
                     ['space', projectUuid, spaceUuid],
@@ -176,12 +185,22 @@ export const useCreateMutation = (
             projectUuid ? createSpace(projectUuid, data) : Promise.reject(),
         {
             mutationKey: ['space_create', projectUuid],
-            onSuccess: async (space) => {
+            onSuccess: async (space, { parentSpaceUuid }) => {
                 await queryClient.invalidateQueries([
                     'projects',
                     projectUuid!,
                     'spaces',
                 ]);
+
+                await queryClient.invalidateQueries(['content']);
+
+                if (parentSpaceUuid) {
+                    await queryClient.invalidateQueries([
+                        'space',
+                        projectUuid!,
+                        parentSpaceUuid,
+                    ]);
+                }
 
                 options?.onSuccess?.(space);
 

@@ -1,7 +1,7 @@
 import { Format } from '@lightdash/common';
 import { Box, Group, Select, Text } from '@mantine/core';
 import { IconClearAll, IconPercentage } from '@tabler/icons-react';
-import { capitalize } from 'lodash';
+import capitalize from 'lodash/capitalize';
 import { forwardRef, type ComponentPropsWithoutRef, type FC } from 'react';
 import MantineIcon from '../../common/MantineIcon';
 
@@ -15,7 +15,7 @@ const FormatIcon: FC<{ format: string | undefined }> = ({ format }) => {
             icon = IconClearAll;
     }
 
-    return <MantineIcon color={format ? 'indigo.4' : 'gray.4'} icon={icon} />;
+    return <MantineIcon color={format ? 'indigo.4' : 'ldGray.4'} icon={icon} />;
 };
 
 type Props = {
@@ -59,15 +59,15 @@ export const CartesianChartFormatConfig: FC<Props> = ({
                 },
                 item: {
                     '&[data-selected="true"]': {
-                        color: theme.colors.gray[7],
+                        color: theme.colors.ldGray[7],
                         fontWeight: 500,
-                        backgroundColor: theme.colors.gray[2],
+                        backgroundColor: theme.colors.ldGray[2],
                     },
                     '&[data-selected="true"]:hover': {
-                        backgroundColor: theme.colors.gray[3],
+                        backgroundColor: theme.colors.ldGray[3],
                     },
                     '&:hover': {
-                        backgroundColor: theme.colors.gray[1],
+                        backgroundColor: theme.colors.ldGray[1],
                     },
                 },
             })}

@@ -9,13 +9,15 @@ import {
     Text,
     Tooltip,
     type MultiSelectProps,
+    type MultiSelectValueProps,
 } from '@mantine/core';
-import { IconPlus } from '@tabler/icons-react';
+import { IconAlertCircle, IconPlus } from '@tabler/icons-react';
 import uniq from 'lodash/uniq';
 import {
     useCallback,
     useEffect,
     useMemo,
+    useRef,
     useState,
     type FC,
     type ReactNode,
@@ -36,6 +38,23 @@ type Props = Omit<MultiSelectProps, 'data' | 'onChange'> & {
     values: string[];
     suggestions: string[];
     onChange: (values: string[]) => void;
+    singleValue?: boolean;
+};
+
+// Single value component that mimics a single select behavior - maxSelectedValues={1} behaves weirdly so we don't use it.
+const SingleValueComponent = ({
+    value,
+    label,
+    onRemove,
+    ...others
+}: MultiSelectValueProps & { value: string }) => {
+    return (
+        <div {...others}>
+            <Text size="xs" lineClamp={1}>
+                {label}
+            </Text>
+        </div>
+    );
 };
 
 const FilterStringAutoComplete: FC<Props> = ({
@@ -48,8 +67,10 @@ const FilterStringAutoComplete: FC<Props> = ({
     placeholder,
     onDropdownOpen,
     onDropdownClose,
+    singleValue,
     ...rest
 }) => {
+    const multiSelectRef = useRef<HTMLInputElement>(null);
     const { projectUuid, getAutocompleteFilterGroup } = useFiltersContext();
     if (!projectUuid) {
         throw new Error('projectUuid is required in FiltersProvider');
@@ -75,6 +96,8 @@ const FilterStringAutoComplete: FC<Props> = ({
         results: resultsSet,
         refreshedAt,
         refetch,
+        error,
+        isError,
     } = useFieldValues(
         search,
         initialSuggestionData,
@@ -103,25 +126,40 @@ const FilterStringAutoComplete: FC<Props> = ({
 
     const handleChange = useCallback(
         (updatedValues: string[]) => {
-            onChange(uniq(updatedValues));
+            if (singleValue && updatedValues.length > 1) {
+                onChange([updatedValues[updatedValues.length - 1]]);
+            } else {
+                onChange(uniq(updatedValues));
+            }
+            if (singleValue) {
+                multiSelectRef.current?.blur();
+            }
         },
-        [onChange],
+        [onChange, singleValue],
     );
 
     const handleAdd = useCallback(
         (newValue: string) => {
-            handleChange([...values, newValue]);
+            if (singleValue) {
+                handleChange([newValue]);
+            } else {
+                handleChange([...values, newValue]);
+            }
             return newValue;
         },
-        [handleChange, values],
+        [handleChange, values, singleValue],
     );
 
     const handleAddMultiple = useCallback(
         (newValues: string[]) => {
-            handleChange([...values, ...newValues]);
+            if (singleValue && newValues.length > 0) {
+                handleChange([newValues[newValues.length - 1]]);
+            } else {
+                handleChange([...values, ...newValues]);
+            }
             return newValues;
         },
-        [handleChange, values],
+        [handleChange, values, singleValue],
     );
 
     const handlePaste = useCallback(
@@ -145,6 +183,12 @@ const FilterStringAutoComplete: FC<Props> = ({
         [handleAdd, handleResetSearch, search],
     );
 
+    useEffect(() => {
+        if (singleValue && values.length > 1) {
+            handleChange([values[values.length - 1]]);
+        }
+    }, [values, singleValue, handleChange]);
+
     const data = useMemo(() => {
         // Mantine does not show value tag if value is not found in data
         // so we need to add it manually here
@@ -162,14 +206,7 @@ const FilterStringAutoComplete: FC<Props> = ({
             <Stack w="100%" spacing={0}>
                 <ScrollArea {...props}>
                     {searchedMaxResults ? (
-                        <Text
-                            color="dimmed"
-                            size="xs"
-                            px="sm"
-                            pt="xs"
-                            pb="xxs"
-                            bg="white"
-                        >
+                        <Text color="dimmed" size="xs" px="sm" pt="xs" pb="xxs">
                             Showing first {MAX_AUTOCOMPLETE_RESULTS} results.{' '}
                             {search ? 'Continue' : 'Start'} typing...
                         </Text>
@@ -191,9 +228,9 @@ const FilterStringAutoComplete: FC<Props> = ({
                                 p="xxs"
                                 sx={(theme) => ({
                                     cursor: 'pointer',
-                                    borderTop: `1px solid ${theme.colors.gray[2]}`,
+                                    borderTop: `1px solid ${theme.colors.ldGray[2]}`,
                                     '&:hover': {
-                                        backgroundColor: theme.colors.gray[1],
+                                        backgroundColor: theme.colors.ldGray[1],
                                     },
                                 })}
                                 onClick={() => setForceRefresh(true)}
@@ -241,6 +278,7 @@ const FilterStringAutoComplete: FC<Props> = ({
             }}
         >
             <MultiSelect
+                ref={multiSelectRef}
                 size="xs"
                 w="100%"
                 placeholder={
@@ -248,6 +286,7 @@ const FilterStringAutoComplete: FC<Props> = ({
                 }
                 disabled={disabled}
                 creatable
+                valueComponent={singleValue ? SingleValueComponent : undefined}
                 /**
                  * Opts out of Mantine's default condition and always allows adding, as long as not
                  * an empty query.
@@ -277,6 +316,7 @@ const FilterStringAutoComplete: FC<Props> = ({
                 }}
                 disableSelectedItemFiltering
                 searchable
+                clearable={singleValue}
                 clearSearchOnChange
                 {...rest}
                 searchValue={search}
@@ -287,7 +327,18 @@ const FilterStringAutoComplete: FC<Props> = ({
                     isInitialLoading ? 'Loading...' : 'No results found'
                 }
                 rightSection={
-                    isInitialLoading ? <Loader size="xs" color="gray" /> : null
+                    isInitialLoading ? (
+                        <Loader size="xs" color="gray" />
+                    ) : isError ? (
+                        <Tooltip
+                            label={
+                                error?.error?.message || 'Filter not available'
+                            }
+                            withinPortal
+                        >
+                            <MantineIcon icon={IconAlertCircle} color="red" />
+                        </Tooltip>
+                    ) : null
                 }
                 dropdownComponent={DropdownComponentOverride}
                 itemComponent={({ label, ...others }) =>

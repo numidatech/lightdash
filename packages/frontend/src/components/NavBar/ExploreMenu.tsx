@@ -1,10 +1,8 @@
 import { subject } from '@casl/ability';
-import { FeatureFlags } from '@lightdash/common';
 import { Button, Menu } from '@mantine/core';
 import {
     IconFolder,
     IconFolderPlus,
-    IconLayersLinked,
     IconLayoutDashboard,
     IconSquareRoundedPlus,
     IconTable,
@@ -12,8 +10,6 @@ import {
 } from '@tabler/icons-react';
 import { memo, useState, type FC } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router';
-import { useSemanticLayerInfo } from '../../features/semanticViewer/api/hooks';
-import { useFeatureFlagEnabled } from '../../hooks/useFeatureFlagEnabled';
 import { Can } from '../../providers/Ability';
 import useApp from '../../providers/App/useApp';
 import LargeMenuItem from '../common/LargeMenuItem';
@@ -30,16 +26,7 @@ const ExploreMenu: FC<Props> = memo(({ projectUuid }) => {
     const navigate = useNavigate();
     const location = useLocation();
 
-    const isSemanticLayerEnabled = useFeatureFlagEnabled(
-        FeatureFlags.SemanticLayerEnabled,
-    );
-
     const { user } = useApp();
-
-    const semanticLayerInfoQuery = useSemanticLayerInfo(
-        { projectUuid },
-        { enabled: isSemanticLayerEnabled },
-    );
 
     const [isOpen, setIsOpen] = useState(false);
     const [isCreateSpaceOpen, setIsCreateSpaceOpen] = useState(false);
@@ -89,27 +76,6 @@ const ExploreMenu: FC<Props> = memo(({ projectUuid }) => {
                             icon={IconTable}
                         />
 
-                        {isSemanticLayerEnabled &&
-                            semanticLayerInfoQuery.isSuccess &&
-                            semanticLayerInfoQuery.data !== null && (
-                                <Can
-                                    I="view"
-                                    this={subject('SemanticViewer', {
-                                        organizationUuid:
-                                            user.data?.organizationUuid,
-                                        projectUuid,
-                                    })}
-                                >
-                                    <LargeMenuItem
-                                        component={Link}
-                                        title={`Query from ${semanticLayerInfoQuery.data.name} semantic layer`}
-                                        description={`Build queries using your ${semanticLayerInfoQuery.data.name} semantic layer connection`}
-                                        to={`/projects/${projectUuid}/semantic-viewer`}
-                                        icon={IconLayersLinked}
-                                    />
-                                </Can>
-                            )}
-
                         <Can
                             I="manage"
                             this={subject('SqlRunner', {
@@ -140,23 +106,14 @@ const ExploreMenu: FC<Props> = memo(({ projectUuid }) => {
                                 icon={IconTerminal2}
                             />
                         </Can>
-
-                        <Can
-                            I="create"
-                            this={subject('Dashboard', {
-                                organizationUuid: user.data?.organizationUuid,
-                                projectUuid,
-                            })}
-                        >
-                            <LargeMenuItem
-                                title="Dashboard"
-                                description="Arrange multiple charts into a single view."
-                                onClick={() => setIsCreateDashboardOpen(true)}
-                                icon={IconLayoutDashboard}
-                                data-testid="ExploreMenu/NewDashboardButton"
-                            />
-                        </Can>
-
+                        <LargeMenuItem
+                            // Users who manage explores should be able to create dashboards in any space
+                            title="Dashboard"
+                            description="Arrange multiple charts into a single view."
+                            onClick={() => setIsCreateDashboardOpen(true)}
+                            icon={IconLayoutDashboard}
+                            data-testid="ExploreMenu/NewDashboardButton"
+                        />
                         <Can
                             I="create"
                             this={subject('Space', {
@@ -189,21 +146,23 @@ const ExploreMenu: FC<Props> = memo(({ projectUuid }) => {
                                 `/projects/${projectUuid}/spaces/${space.uuid}`,
                             );
                     }}
+                    parentSpaceUuid={null}
                 />
             )}
+            {isCreateDashboardOpen && (
+                <DashboardCreateModal
+                    projectUuid={projectUuid}
+                    opened={isCreateDashboardOpen}
+                    onClose={() => setIsCreateDashboardOpen(false)}
+                    onConfirm={(dashboard) => {
+                        void navigate(
+                            `/projects/${projectUuid}/dashboards/${dashboard.uuid}/edit`,
+                        );
 
-            <DashboardCreateModal
-                projectUuid={projectUuid}
-                opened={isCreateDashboardOpen}
-                onClose={() => setIsCreateDashboardOpen(false)}
-                onConfirm={(dashboard) => {
-                    void navigate(
-                        `/projects/${projectUuid}/dashboards/${dashboard.uuid}/edit`,
-                    );
-
-                    setIsCreateDashboardOpen(false);
-                }}
-            />
+                        setIsCreateDashboardOpen(false);
+                    }}
+                />
+            )}
         </>
     );
 });

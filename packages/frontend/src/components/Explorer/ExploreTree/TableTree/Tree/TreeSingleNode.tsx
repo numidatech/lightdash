@@ -1,15 +1,15 @@
 import {
     getItemId,
     isAdditionalMetric,
+    isCompiledMetric,
     isCustomDimension,
     isDimension,
     isField,
     isFilterableField,
-    isMetric,
-    isTableCalculation,
     isTimeInterval,
     timeFrameConfigs,
     type AdditionalMetric,
+    type FilterableField,
     type Item,
 } from '@lightdash/common';
 import {
@@ -20,6 +20,7 @@ import {
     NavLink,
     Text,
     Tooltip,
+    useMantineTheme,
 } from '@mantine/core';
 import {
     IconAlertTriangle,
@@ -27,74 +28,113 @@ import {
     IconInfoCircle,
 } from '@tabler/icons-react';
 import { darken, lighten } from 'polished';
-import { memo, useMemo, type FC } from 'react';
+import { memo, useCallback, useMemo, type FC } from 'react';
 import { useToggle } from 'react-use';
+import {
+    explorerActions,
+    selectIsFieldActive,
+    selectIsFieldFiltered,
+    useExplorerDispatch,
+    useExplorerSelector,
+    type ExplorerStoreState,
+} from '../../../../../features/explorer/store';
 import { getItemBgColor } from '../../../../../hooks/useColumns';
-import { useFilters } from '../../../../../hooks/useFilters';
+import { useAddFilter } from '../../../../../hooks/useFilters';
 import useTracking from '../../../../../providers/Tracking/useTracking';
 import { EventName } from '../../../../../types/Events';
 import FieldIcon from '../../../../common/Filters/FieldIcon';
 import MantineIcon from '../../../../common/MantineIcon';
-import { ItemDetailMarkdown, ItemDetailPreview } from '../ItemDetailPreview';
-import { useItemDetail } from '../useItemDetails';
+import { ItemDetailPreview } from '../ItemDetailPreview';
+import { getFieldIconColor } from '../utils';
 import TreeSingleNodeActions from './TreeSingleNodeActions';
 import { type Node } from './types';
-import { useTableTreeContext } from './useTableTree';
+import useTableTree from './useTableTree';
+
+const NavItemIcon = ({
+    isMissing,
+    item,
+}: {
+    isMissing?: boolean;
+    item: Item | AdditionalMetric;
+}) => {
+    return isMissing ? (
+        <MantineIcon icon={IconAlertTriangle} color="ldGray.7" />
+    ) : (
+        <FieldIcon item={item} color={getFieldIconColor(item)} size="md" />
+    );
+};
+
+NavItemIcon.displayName = 'NavItemIcon';
 
 type Props = {
     node: Node;
 };
 
-const TreeSingleNode: FC<Props> = memo(({ node }) => {
-    const {
-        itemsMap,
-        selectedItems,
-        isSearching,
-        searchResults,
-        searchQuery,
-        missingCustomMetrics,
-        itemsAlerts,
-        missingCustomDimensions,
-        onItemClick,
-    } = useTableTreeContext();
-    const { isFilteredField } = useFilters();
-    const { showItemDetail } = useItemDetail();
-
-    const { addFilter } = useFilters();
+const TreeSingleNodeComponent: FC<Props> = ({ node }) => {
+    const theme = useMantineTheme();
+    const itemsMap = useTableTree((context) => {
+        return context.itemsMap;
+    });
+    const isSearching = useTableTree((context) => context.isSearching);
+    const searchResults = useTableTree((context) => context.searchResults);
+    const searchQuery = useTableTree((context) => context.searchQuery);
+    const missingCustomMetrics = useTableTree(
+        (context) => context.missingCustomMetrics,
+    );
+    const itemsAlerts = useTableTree((context) => context.itemsAlerts);
+    const missingCustomDimensions = useTableTree(
+        (context) => context.missingCustomDimensions,
+    );
+    const onItemClick = useTableTree((context) => context.onItemClick);
+    const isVirtualized = useTableTree((context) => context.isVirtualized);
+    const depth = useTableTree((context) => context.depth);
     const { track } = useTracking();
+
+    const addFilter = useAddFilter();
+
+    const dispatch = useExplorerDispatch();
 
     const [isHover, toggleHover] = useToggle(false);
     const [isMenuOpen, toggleMenu] = useToggle(false);
 
-    const isSelected = selectedItems.has(node.key);
-    const isVisible = !isSearching || searchResults.has(node.key);
+    const isVisible = !isSearching || searchResults.includes(node.key);
 
     const item = itemsMap[node.key];
 
+    const fieldId = useMemo(() => getItemId(item), [item]);
+
+    const selectIsFiltered = useMemo(
+        () => (state: ExplorerStoreState) =>
+            selectIsFieldFiltered(state, fieldId),
+        [fieldId],
+    );
+    const selectIsActive = useMemo(
+        () => (state: ExplorerStoreState) =>
+            selectIsFieldActive(state, fieldId),
+        [fieldId],
+    );
+
+    const isFieldFiltered = useExplorerSelector(
+        selectIsFiltered,
+        (a, b) => a === b,
+    );
+    const isSelected = useExplorerSelector(selectIsActive, (a, b) => a === b);
+
     const metricInfo = useMemo(() => {
-        if (isMetric(item)) {
+        if (isCompiledMetric(item)) {
             return {
                 type: item.type,
                 sql: item.sql,
+                compiledSql: item.compiledSql,
+                filters: item.filters,
+                table: item.table,
+                name: item.name,
             };
         }
+        return undefined;
     }, [item]);
 
-    if (!item || !isVisible) return null;
-
-    const timeIntervalLabel =
-        isDimension(item) &&
-        item.timeInterval &&
-        isTimeInterval(item.timeInterval)
-            ? timeFrameConfigs[item.timeInterval].getLabel()
-            : undefined;
-
-    const isFiltered = isField(item) && isFilteredField(item);
-
-    const label =
-        isField(item) || isAdditionalMetric(item)
-            ? timeIntervalLabel || item.label || item.name
-            : item.name;
+    const description = isField(item) ? item.description : undefined;
 
     const isMissing =
         (isAdditionalMetric(item) &&
@@ -104,92 +144,165 @@ const TreeSingleNode: FC<Props> = memo(({ node }) => {
             missingCustomDimensions &&
             missingCustomDimensions.includes(item));
 
+    const isHoverCardDisabled = useMemo(() => {
+        // Show metric info if either metric info or description is present
+        if (isCompiledMetric(item) && (!!metricInfo || !!description)) {
+            return false;
+        }
+        // Show description if it's not missing
+        if (!description && !isMissing) return true;
+
+        return false;
+    }, [description, isMissing, item, metricInfo]);
+
+    const bgColor = getItemBgColor(item, theme);
     const alerts = itemsAlerts?.[getItemId(item)];
+    const isFiltered = isField(item) && isFieldFiltered;
+    const showFilterAction =
+        (isFiltered || isHover) &&
+        !isAdditionalMetric(item) &&
+        isFilterableField(item);
 
-    const description = isField(item) ? item.description : undefined;
+    const timeIntervalLabel =
+        isDimension(item) &&
+        item.timeInterval &&
+        isTimeInterval(item.timeInterval)
+            ? timeFrameConfigs[item.timeInterval].getLabel()
+            : undefined;
 
-    const bgColor = getItemBgColor(item);
+    const label =
+        isField(item) || isAdditionalMetric(item)
+            ? timeIntervalLabel || item.label || item.name
+            : item.name;
 
-    // TODO: Add getFieldType function to common which should return FieldType enum (which should also have CUSTOM_METRIC, CUSTOM_DIMENSION)
-    const getFieldIconColor = (field: Item | AdditionalMetric) => {
-        if (isCustomDimension(field) || isDimension(field)) return 'blue.9';
-        if (isAdditionalMetric(field)) return 'yellow.9';
-        if (isTableCalculation(field)) return 'green.9';
-        if (isMetric(field)) return 'yellow.9';
+    const handleFilterClick = useCallback(
+        (e: React.MouseEvent<HTMLButtonElement>) => {
+            track({ name: EventName.ADD_FILTER_CLICKED });
+            if (!isFiltered) addFilter(item as FilterableField, undefined);
+            e.stopPropagation();
+        },
+        [isFiltered, addFilter, item, track],
+    );
+    const handleClick = useCallback(() => {
+        onItemClick(node.key, item);
+    }, [onItemClick, node.key, item]);
+    const handleMouseEnter = useCallback(
+        () => toggleHover(true),
+        [toggleHover],
+    );
+    const handleMouseLeave = useCallback(
+        () => toggleHover(false),
+        [toggleHover],
+    );
+    const handleDropdownClick = useCallback(
+        /**
+         * If we don't stop propagation, users may unintentionally toggle dimensions/metrics
+         * while interacting with the hovercard.
+         */
+        (e: React.MouseEvent) => e.stopPropagation(),
+        [],
+    );
 
-        return 'yellow.9';
-    };
-
-    /**
-     * Handles putting together and opening the shared modal for a field's
-     * detailed description.
-     */
-    const onOpenDescriptionView = () => {
+    const onOpenDescriptionView = useCallback(() => {
         toggleHover(false);
+        dispatch(
+            explorerActions.openItemDetail({
+                itemType: 'field',
+                label,
+                description,
+                fieldItem: item,
+            }),
+        );
+    }, [toggleHover, dispatch, item, label, description]);
 
-        showItemDetail({
-            header: (
-                <Group>
-                    <FieldIcon
-                        item={item}
-                        color={getFieldIconColor(item)}
-                        size="md"
-                    />
-                    <Text size="md">{label}</Text>
-                </Group>
-            ),
-            detail: description ? (
-                <ItemDetailMarkdown source={description}></ItemDetailMarkdown>
-            ) : (
-                <Text color="gray">No description available.</Text>
-            ),
-        });
-    };
-
-    const onToggleMenu = () => {
+    const onToggleMenu = useCallback(() => {
         toggleHover(false);
         toggleMenu();
-    };
+    }, [toggleHover, toggleMenu]);
+
+    const navLinkSx = useMemo(
+        () => ({
+            backgroundColor: isSelected ? bgColor : undefined,
+            '&:hover': {
+                backgroundColor: isSelected
+                    ? darken(0.02, bgColor)
+                    : lighten(0.1, bgColor),
+            },
+        }),
+        [isSelected, bgColor],
+    );
+    const icon = useMemo(
+        () => <NavItemIcon isMissing={isMissing} item={item} />,
+        [isMissing, item],
+    );
+
+    const renderAlerts = useMemo(() => {
+        const alertTypes = [
+            { type: 'infos', alertIcon: IconInfoCircle, color: 'blue.6' },
+            {
+                type: 'warnings',
+                alertIcon: IconAlertTriangle,
+                color: 'yellow.9',
+            },
+            { type: 'errors', alertIcon: IconAlertTriangle, color: 'red.6' },
+        ];
+
+        return alertTypes.flatMap(({ type, alertIcon, color }) => {
+            const messages = alerts?.[type as keyof typeof alerts];
+            if (!messages || messages.length === 0) return [];
+
+            return (
+                <Tooltip
+                    key={type}
+                    withinPortal
+                    maw={300}
+                    multiline
+                    label={messages.join('\n')}
+                >
+                    <MantineIcon
+                        icon={alertIcon}
+                        color={color}
+                        style={{ flexShrink: 0 }}
+                    />
+                </Tooltip>
+            );
+        });
+    }, [alerts]);
+
+    // Apply indentation for virtualized mode only
+    // Non-virtualized mode uses NavLink's built-in nesting with childrenOffset
+    const pl = useMemo(() => {
+        if (isVirtualized) {
+            // Base padding is 12px, each nesting level adds 20px
+            return `${12 + (depth ?? 0) * 20}px`;
+        }
+        return undefined;
+    }, [depth, isVirtualized]);
+
+    if (!item || !isVisible) return null;
 
     return (
         <NavLink
             component="div"
             noWrap
-            sx={{
-                backgroundColor: isSelected ? bgColor : undefined,
-                '&:hover': {
-                    backgroundColor: isSelected
-                        ? darken(0.02, bgColor)
-                        : lighten(0.1, bgColor),
-                },
-            }}
-            icon={
-                isMissing ? (
-                    <MantineIcon icon={IconAlertTriangle} color="gray.7" />
-                ) : (
-                    <FieldIcon
-                        item={item}
-                        color={getFieldIconColor(item)}
-                        size="md"
-                    />
-                )
-            }
-            onClick={() => onItemClick(node.key, item)}
-            onMouseEnter={() => toggleHover(true)}
-            onMouseLeave={() => toggleHover(false)}
+            sx={navLinkSx}
+            icon={icon}
+            onClick={handleClick}
+            onMouseEnter={handleMouseEnter}
+            onMouseLeave={handleMouseLeave}
+            pl={pl}
             label={
-                <Group noWrap spacing={'xs'}>
+                <Group noWrap spacing="xs">
                     <HoverCard
                         openDelay={300}
                         keepMounted={false}
                         shadow="subtle"
                         withinPortal
                         withArrow
-                        disabled={!description && !isMissing}
+                        disabled={isHoverCardDisabled}
                         position="right"
                         radius="md"
-                        /** Ensures the hover card does not overlap with the right-hand menu. */
-                        offset={isFiltered ? 80 : 40}
+                        offset={70}
                     >
                         <HoverCard.Target>
                             <Highlight
@@ -204,16 +317,15 @@ const TreeSingleNode: FC<Props> = memo(({ node }) => {
                         <HoverCard.Dropdown
                             hidden={!isHover}
                             p="xs"
+                            miw={400}
+                            mah={500}
                             /**
                              * Takes up space to the right, so it's OK to go fairly wide in the interest
                              * of readability.
                              */
                             maw={500}
-                            /**
-                             * If we don't stop propagation, users may unintentionally toggle dimensions/metrics
-                             * while interacting with the hovercard.
-                             */
-                            onClick={(event) => event.stopPropagation()}
+                            sx={{ overflow: 'auto' }}
+                            onClick={handleDropdownClick}
                         >
                             {isMissing ? (
                                 `This field from '${item.table}' table is no longer available`
@@ -226,79 +338,24 @@ const TreeSingleNode: FC<Props> = memo(({ node }) => {
                             )}
                         </HoverCard.Dropdown>
                     </HoverCard>
-                    {alerts?.infos && alerts.infos.length > 0 ? (
-                        <Tooltip
-                            withinPortal
-                            maw={300}
-                            multiline
-                            label={alerts.infos.join('\n')}
-                        >
-                            <MantineIcon
-                                icon={IconInfoCircle}
-                                color="blue.6"
-                                style={{ flexShrink: 0 }}
-                            />
-                        </Tooltip>
-                    ) : null}
-                    {alerts?.warnings && alerts.warnings.length > 0 ? (
-                        <Tooltip
-                            withinPortal
-                            maw={300}
-                            multiline
-                            label={alerts.warnings.join('\n')}
-                        >
-                            <MantineIcon
-                                icon={IconAlertTriangle}
-                                color="yellow.9"
-                                style={{ flexShrink: 0 }}
-                            />
-                        </Tooltip>
-                    ) : null}
-                    {alerts?.errors && alerts.errors.length > 0 ? (
-                        <Tooltip
-                            withinPortal
-                            maw={300}
-                            multiline
-                            label={alerts.errors.join('\n')}
-                        >
-                            <MantineIcon
-                                icon={IconAlertTriangle}
-                                color="red.6"
-                                style={{ flexShrink: 0 }}
-                            />
-                        </Tooltip>
-                    ) : null}
-                    {(isFiltered || isHover) &&
-                    !isAdditionalMetric(item) &&
-                    isFilterableField(item) ? (
+                    {renderAlerts}
+                    {showFilterAction && (
                         <Tooltip
                             withinPortal
                             label={
                                 isFiltered
                                     ? 'This field is filtered'
-                                    : `Click here to add filter`
+                                    : 'Click here to add filter'
                             }
                         >
-                            <ActionIcon
-                                onClick={(
-                                    e: React.MouseEvent<HTMLButtonElement>,
-                                ) => {
-                                    track({
-                                        name: EventName.ADD_FILTER_CLICKED,
-                                    });
-                                    if (!isFiltered) addFilter(item, undefined);
-                                    e.stopPropagation(); // Do not toggle the field on filter click
-                                }}
-                            >
+                            <ActionIcon onClick={handleFilterClick}>
                                 <MantineIcon
                                     icon={IconFilter}
-                                    color="gray.7"
                                     style={{ flexShrink: 0 }}
                                 />
                             </ActionIcon>
                         </Tooltip>
-                    ) : null}
-
+                    )}
                     {isField(item) && item.hidden ? (
                         <Tooltip
                             withinPortal
@@ -327,6 +384,10 @@ const TreeSingleNode: FC<Props> = memo(({ node }) => {
             data-testid={`tree-single-node-${label}`}
         />
     );
-});
+};
+
+const TreeSingleNode = memo(TreeSingleNodeComponent);
+
+TreeSingleNode.displayName = 'TreeSingleNode';
 
 export default TreeSingleNode;

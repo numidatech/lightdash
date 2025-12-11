@@ -18,11 +18,16 @@ import {
 } from '@tabler/icons-react';
 import { useMemo, useState, type FC } from 'react';
 import {
+    explorerActions,
+    selectAdditionalMetrics,
+    useExplorerDispatch,
+    useExplorerSelector,
+} from '../../../features/explorer/store';
+import {
     DeleteTableCalculationModal,
     UpdateTableCalculationModal,
 } from '../../../features/tableCalculation';
 import { useFilters } from '../../../hooks/useFilters';
-import useExplorerContext from '../../../providers/Explorer/useExplorerContext';
 import useTracking from '../../../providers/Tracking/useTracking';
 import { EventName } from '../../../types/Events';
 import MantineIcon from '../../common/MantineIcon';
@@ -48,14 +53,8 @@ const ContextMenu: FC<ContextMenuProps> = ({
     const item = meta?.item;
     const sort = meta?.sort?.sort;
 
-    const removeActiveField = useExplorerContext(
-        (context) => context.actions.removeActiveField,
-    );
-
-    const additionalMetrics = useExplorerContext(
-        (context) =>
-            context.state.unsavedChartVersion.metricQuery.additionalMetrics,
-    );
+    const additionalMetrics = useExplorerSelector(selectAdditionalMetrics);
+    const dispatch = useExplorerDispatch();
 
     const additionalMetric = useMemo(
         () =>
@@ -67,18 +66,6 @@ const ContextMenu: FC<ContextMenuProps> = ({
 
     const isItemAdditionalMetric = !!additionalMetric;
 
-    const toggleAdditionalMetricModal = useExplorerContext(
-        (context) => context.actions.toggleAdditionalMetricModal,
-    );
-
-    const toggleCustomDimensionModal = useExplorerContext(
-        (context) => context.actions.toggleCustomDimensionModal,
-    );
-
-    const removeCustomDimension = useExplorerContext(
-        (context) => context.actions.removeCustomDimension,
-    );
-
     if (item && isField(item)) {
         const itemFieldId = getItemId(item);
         return (
@@ -89,7 +76,7 @@ const ContextMenu: FC<ContextMenuProps> = ({
                             icon={<MantineIcon icon={IconFilter} />}
                             onClick={() => {
                                 track({ name: EventName.ADD_FILTER_CLICKED });
-                                addFilter(item, undefined, false);
+                                addFilter(item, undefined);
                             }}
                         >
                             Filter by{' '}
@@ -123,11 +110,13 @@ const ContextMenu: FC<ContextMenuProps> = ({
                     <Menu.Item
                         icon={<MantineIcon icon={IconPencil} />}
                         onClick={() => {
-                            toggleAdditionalMetricModal({
-                                item: additionalMetric,
-                                type: additionalMetric.type,
-                                isEditing: true,
-                            });
+                            dispatch(
+                                explorerActions.toggleAdditionalMetricModal({
+                                    item: additionalMetric,
+                                    type: additionalMetric.type,
+                                    isEditing: true,
+                                }),
+                            );
                         }}
                     >
                         Edit custom metric
@@ -138,7 +127,7 @@ const ContextMenu: FC<ContextMenuProps> = ({
                     icon={<MantineIcon icon={IconTrash} />}
                     color="red"
                     onClick={() => {
-                        removeActiveField(itemFieldId);
+                        dispatch(explorerActions.removeField(itemFieldId));
                     }}
                 >
                     Remove
@@ -152,7 +141,7 @@ const ContextMenu: FC<ContextMenuProps> = ({
                     icon={<MantineIcon icon={IconTrash} />}
                     color="red"
                     onClick={() => {
-                        removeActiveField(header.column.id);
+                        dispatch(explorerActions.removeField(header.column.id));
                     }}
                 >
                     Remove
@@ -168,7 +157,7 @@ const ContextMenu: FC<ContextMenuProps> = ({
                             icon={<MantineIcon icon={IconFilter} />}
                             onClick={() => {
                                 track({ name: EventName.ADD_FILTER_CLICKED });
-                                addFilter(item, undefined, false);
+                                addFilter(item, undefined);
                             }}
                         >
                             Filter by{' '}
@@ -184,10 +173,12 @@ const ContextMenu: FC<ContextMenuProps> = ({
                 <Menu.Item
                     icon={<MantineIcon icon={IconPencil} />}
                     onClick={() => {
-                        toggleCustomDimensionModal({
-                            item,
-                            isEditing: true,
-                        });
+                        dispatch(
+                            explorerActions.toggleCustomDimensionModal({
+                                item,
+                                isEditing: true,
+                            }),
+                        );
                     }}
                 >
                     Edit custom dimension
@@ -202,7 +193,7 @@ const ContextMenu: FC<ContextMenuProps> = ({
                     icon={<MantineIcon icon={IconTrash} />}
                     color="red"
                     onClick={() => {
-                        removeCustomDimension(getItemId(item));
+                        dispatch(explorerActions.removeField(getItemId(item)));
                     }}
                 >
                     Remove
@@ -216,7 +207,7 @@ const ContextMenu: FC<ContextMenuProps> = ({
                     icon={<MantineIcon icon={IconFilter} />}
                     onClick={() => {
                         track({ name: EventName.ADD_FILTER_CLICKED });
-                        addFilter(item, undefined, false);
+                        addFilter(item, undefined);
                     }}
                 >
                     Filter by{' '}

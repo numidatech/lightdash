@@ -16,10 +16,19 @@ import {
     Select,
     Text,
     Tooltip,
+    useMantineTheme,
     type SelectProps,
 } from '@mantine/core';
-import { forwardRef, useCallback, useEffect, useMemo, useRef } from 'react';
+import {
+    forwardRef,
+    memo,
+    useCallback,
+    useEffect,
+    useMemo,
+    useRef,
+} from 'react';
 import FieldIcon from '../Filters/FieldIcon';
+import { FILTER_SELECT_LIMIT } from '../Filters/constants';
 
 interface ItemComponentProps extends React.ComponentPropsWithoutRef<'div'> {
     item: Item;
@@ -86,7 +95,7 @@ const getLabel = (item: Item, hasGrouping: boolean) => {
         : getItemLabel(item);
 };
 
-const FieldSelect = <T extends Item = Item>({
+const FieldSelectComponent = <T extends Item = Item>({
     item,
     items,
     onChange,
@@ -97,6 +106,7 @@ const FieldSelect = <T extends Item = Item>({
     focusOnRender = false,
     ...rest
 }: FieldSelectProps<T>) => {
+    const theme = useMantineTheme();
     const inputRef = useRef<HTMLInputElement | null>(null); // Input ref for focus handling
     useEffect(() => {
         if (focusOnRender) {
@@ -217,6 +227,7 @@ const FieldSelect = <T extends Item = Item>({
 
     return (
         <Select
+            limit={FILTER_SELECT_LIMIT}
             ref={inputRef}
             w="100%"
             searchable
@@ -225,7 +236,10 @@ const FieldSelect = <T extends Item = Item>({
                     position: 'sticky',
                     top: 0,
                     zIndex: 1,
-                    backgroundColor: 'white',
+                    backgroundColor:
+                        theme.colorScheme === 'dark'
+                            ? theme.colors.dark[6]
+                            : 'white',
                 },
                 separatorLabel: {
                     fontWeight: 600,
@@ -258,5 +272,8 @@ const FieldSelect = <T extends Item = Item>({
         />
     );
 };
+
+// Memoize with generic type support
+const FieldSelect = memo(FieldSelectComponent) as typeof FieldSelectComponent;
 
 export default FieldSelect;

@@ -18,6 +18,7 @@ import {
 import useDashboardStorage from '../../../../hooks/dashboard/useDashboardStorage';
 import useToaster from '../../../../hooks/toaster/useToaster';
 import { useCreateMutation } from '../../../../hooks/useSavedQuery';
+import { DEFAULT_CHART_METADATA, type ChartMetadata } from './types';
 
 type Props = {
     dashboardName: string | null;
@@ -25,6 +26,7 @@ type Props = {
     savedData: CreateSavedChartVersion;
     projectUuid?: string;
     onClose: () => void;
+    defaults?: ChartMetadata;
 };
 
 type SaveToDashboardFormValues = { name: string; description: string };
@@ -42,6 +44,7 @@ export const SaveToDashboard: FC<Props> = ({
     dashboardUuid,
     projectUuid,
     onClose,
+    defaults = DEFAULT_CHART_METADATA,
 }) => {
     const [dashboardInfoFromStorage, setDashboardInfoFromStorage] = useState({
         name: dashboardName,
@@ -86,8 +89,7 @@ export const SaveToDashboard: FC<Props> = ({
     const unsavedDashboardTiles = getUnsavedDashboardTiles();
     const form = useForm<FormValues>({
         initialValues: {
-            name: '',
-            description: '',
+            ...defaults,
         },
         validate: zodResolver(validationSchema),
     });
@@ -128,7 +130,9 @@ export const SaveToDashboard: FC<Props> = ({
 
             clearIsEditingDashboardChart();
             void navigate(
-                `/projects/${projectUuid}/dashboards/${dashboardUuid}/edit`,
+                activeTabUuid
+                    ? `/projects/${projectUuid}/dashboards/${dashboardUuid}/edit/tabs/${activeTabUuid}`
+                    : `/projects/${projectUuid}/dashboards/${dashboardUuid}/edit`,
             );
             showToastSuccess({
                 title: `Success! ${values.name} was added to ${dashboardName}`,
@@ -174,7 +178,7 @@ export const SaveToDashboard: FC<Props> = ({
                 </Stack>
                 <Stack spacing="xxs">
                     <Text fw={500}>Saving to "{dashboardName}" dashboard</Text>
-                    <Text fw={400} color="gray.6" fz="xs">
+                    <Text fw={400} color="ldGray.6" fz="xs">
                         This chart will be saved exclusively to the dashboard "
                         {dashboardName}", keeping your space clutter-free.
                     </Text>
@@ -185,7 +189,7 @@ export const SaveToDashboard: FC<Props> = ({
                 position="right"
                 w="100%"
                 sx={(theme) => ({
-                    borderTop: `1px solid ${theme.colors.gray[4]}`,
+                    borderTop: `1px solid ${theme.colors.ldGray[4]}`,
                     bottom: 0,
                     padding: theme.spacing.md,
                 })}

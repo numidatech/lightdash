@@ -1,12 +1,10 @@
 import {
     AllVizChartConfig,
     CreateSqlChart,
-    generateSlug,
     NotFoundError,
     SpaceSummary,
     SqlChart,
     UpdateSqlChart,
-    VizBaseConfig,
 } from '@lightdash/common';
 import { Knex } from 'knex';
 import { DashboardsTableName } from '../database/entities/dashboards';
@@ -39,7 +37,7 @@ type SelectSavedSql = Pick<
     | 'last_viewed_at'
 > &
     Pick<DbSavedSqlVersion, 'sql' | 'limit' | 'config' | 'chart_kind'> &
-    Pick<DbSpace, 'space_uuid'> &
+    Pick<DbSpace, 'space_uuid' | 'path'> &
     Pick<DbProject, 'project_uuid'> &
     Pick<DbOrganization, 'organization_uuid'> & {
         updated_at: Date;
@@ -119,7 +117,7 @@ export class SavedSqlModel {
 
     async find(options: {
         uuid?: string;
-        slug?: string;
+        slugs?: string[];
         projectUuid?: string;
     }) {
         return this.database
@@ -192,6 +190,7 @@ export class SavedSqlModel {
                 `${SpaceTableName}.space_uuid`,
                 `${SpaceTableName}.name as spaceName`,
                 `${SpaceTableName}.is_private as space_is_private`,
+                `${SpaceTableName}.path`,
             ])
             .where((builder) => {
                 if (options.uuid) {
@@ -201,10 +200,10 @@ export class SavedSqlModel {
                     );
                 }
 
-                if (options.slug) {
-                    void builder.where(
+                if (options.slugs && options.slugs.length > 0) {
+                    void builder.whereIn(
                         `${SavedSqlTableName}.slug`,
-                        options.slug,
+                        options.slugs,
                     );
                 }
 
@@ -234,7 +233,7 @@ export class SavedSqlModel {
     }
 
     async getBySlug(projectUuid: string, slug: string) {
-        const results = await this.find({ slug, projectUuid });
+        const results = await this.find({ slugs: [slug], projectUuid });
         const [result] = results;
         if (!result) {
             throw new NotFoundError('Saved sql not found');
@@ -294,15 +293,16 @@ export class SavedSqlModel {
         savedSqlVersionUuid: string;
     }> {
         return this.database.transaction(async (trx) => {
+            // Use provided slug or generate one from the name
+            const finalSlug =
+                data.slug ??
+                (await generateUniqueSlug(trx, SavedSqlTableName, data.name));
+
             const [{ saved_sql_uuid: savedSqlUuid, slug }] = await trx(
                 SavedSqlTableName,
             ).insert(
                 {
-                    slug: await generateUniqueSlug(
-                        trx,
-                        SavedSqlTableName,
-                        data.name,
-                    ),
+                    slug: finalSlug,
                     name: data.name,
                     description: data.description,
                     created_by_user_uuid: userUuid,
@@ -358,5 +358,31 @@ export class SavedSqlModel {
         await this.database(SavedSqlTableName)
             .where('saved_sql_uuid', uuid)
             .delete();
+    }
+
+    async moveToSpace(
+        {
+            projectUuid,
+            itemUuid: savedSqlUuid,
+            targetSpaceUuid,
+        }: {
+            projectUuid: string;
+            itemUuid: string;
+            targetSpaceUuid: string | null;
+        },
+        { tx = this.database }: { tx?: Knex } = {},
+    ): Promise<void> {
+        if (targetSpaceUuid === null) {
+            throw new Error('Cannot move saved sql chart out of a space');
+        }
+
+        const updateCount = await tx(SavedSqlTableName)
+            .update({ space_uuid: targetSpaceUuid })
+            .where('saved_sql_uuid', savedSqlUuid)
+            .where('project_uuid', projectUuid);
+
+        if (updateCount !== 1) {
+            throw new Error('Failed to move saved sql to space');
+        }
     }
 }

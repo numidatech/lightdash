@@ -23,7 +23,13 @@ export const isGenericOidcPassportStrategyAvailableToUse =
     lightdashConfig.auth.oidc.metadataDocumentEndpoint;
 
 const createOpenIdUserFromProfile = (
-    profile: PassportProfile,
+    profile: PassportProfile & {
+        _json?: {
+            given_name?: string;
+            family_name?: string;
+            [key: string]: unknown;
+        };
+    },
     issuer: string,
     issuerType: OpenIdIdentityIssuerType,
     done: ArgumentsOf<VerifyFunctionWithRequest>['3'],
@@ -31,18 +37,41 @@ const createOpenIdUserFromProfile = (
     const email = profile.emails?.[0]?.value || profile.email;
     const subject = profile.id || profile.sub;
 
-    if (!(email && subject)) {
+    if (!email) {
+        Logger.error(
+            `Authentication failed: missing email in OpenID profile. ${JSON.stringify(
+                profile,
+            )}`,
+        );
         return done(null, false, {
-            message: 'Could not parse authentication token',
+            message: 'Authentication failed: missing email in OpenID profile.',
+        });
+    }
+
+    if (!subject) {
+        Logger.error(
+            `Authentication failed: missing subject (user ID) in OpenID profile. ${JSON.stringify(
+                profile,
+            )}`,
+        );
+        return done(null, false, {
+            message:
+                'Authentication failed: missing subject (user ID) in OpenID profile.',
         });
     }
 
     const displayName = profile.displayName || '';
     const [fallbackFirstName, fallbackLastName] = displayName.split(' ');
     const firstName =
-        profile.name?.givenName || profile.given_name || fallbackFirstName;
+        profile.name?.givenName ||
+        profile._json?.given_name ||
+        profile.given_name ||
+        fallbackFirstName;
     const lastName =
-        profile.name?.familyName || profile.family_name || fallbackLastName;
+        profile.name?.familyName ||
+        profile._json?.family_name ||
+        profile.family_name ||
+        fallbackLastName;
 
     const openIdUser: OpenIdUser = {
         openId: {

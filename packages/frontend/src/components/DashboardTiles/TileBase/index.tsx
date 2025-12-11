@@ -1,6 +1,6 @@
 import {
     DashboardTileTypes,
-    isChartTile,
+    isDashboardChartTileType,
     type Dashboard,
     type DashboardTab,
 } from '@lightdash/common';
@@ -21,9 +21,11 @@ import {
     IconArrowAutofitContent,
     IconDots,
     IconEdit,
+    IconGripVertical,
     IconTrash,
 } from '@tabler/icons-react';
 import { useState, type ReactNode } from 'react';
+import { useDelayedHover } from '../../../hooks/useDelayedHover';
 import MantineIcon from '../../common/MantineIcon';
 import DeleteChartTileThatBelongsToDashboardModal from '../../common/modal/DeleteChartTileThatBelongsToDashboardModal';
 import ChartUpdateModal from '../TileForms/ChartUpdateModal';
@@ -31,9 +33,10 @@ import MoveTileToTabModal from '../TileForms/MoveTileToTabModal';
 import TileUpdateModal from '../TileForms/TileUpdateModal';
 
 import {
-    ButtonsWrapper,
     ChartContainer,
+    DragHandle,
     HeaderContainer,
+    TileCardWrapper,
     TileTitleLink,
     TitleWrapper,
 } from './TileBase.styles';
@@ -86,8 +89,10 @@ const TileBase = <T extends Dashboard['tiles'][number]>({
         setIsDeletingChartThatBelongsToDashboard,
     ] = useState(false);
     const { hovered: containerHovered, ref: containerRef } = useHover();
-    const { hovered: titleHovered, ref: titleRef } =
-        useHover<HTMLAnchorElement>();
+    const { isHovered: chartHovered, ...chartHoveredProps } = useDelayedHover({
+        delay: 500,
+    });
+    const [titleHovered, setTitleHovered] = useState(false);
     const [isMenuOpen, toggleMenu] = useToggle([false, true]);
 
     const hideTitle =
@@ -95,80 +100,83 @@ const TileBase = <T extends Dashboard['tiles'][number]>({
             ? tile.properties.hideTitle
             : false;
     const belongsToDashboard: boolean =
-        isChartTile(tile) && !!tile.properties.belongsToDashboard;
+        isDashboardChartTileType(tile) && !!tile.properties.belongsToDashboard;
 
     const isMarkdownTileTitleEmpty =
         tile.type === DashboardTileTypes.MARKDOWN && !title;
 
     return (
-        <Card
-            component={Flex}
-            className="tile-base"
-            ref={containerRef}
-            h="100%"
-            direction="column"
-            p="md"
-            bg="white"
-            radius="sm"
-            shadow={isEditMode ? 'xs' : undefined}
-            sx={(theme) => {
-                let border = `1px solid ${theme.colors.gray[1]}`;
-                if (tabs && tabs.length > 1) {
-                    border = `1px solid ${theme.colors.gray[3]}`;
-                }
-                if (isEditMode) {
-                    border = `1px dashed ${theme.colors.blue[5]}`;
-                }
-                return {
-                    overflow: 'unset',
-                    border: border,
-                };
-            }}
-        >
-            <LoadingOverlay
-                className="loading_chart_overlay"
-                visible={isLoading ?? false}
-                zIndex={getDefaultZIndex('modal') - 10}
-            />
-
-            <HeaderContainer
-                $isEditMode={isEditMode}
-                $isEmpty={isMarkdownTileTitleEmpty || hideTitle}
-                style={{
-                    alignItems: 'flex-start',
-                    backgroundColor: 'white',
-                    zIndex: isLoading ? getDefaultZIndex('modal') - 10 : 3,
-                    borderRadius: '5px',
+        <TileCardWrapper>
+            <Card
+                component={Flex}
+                className="tile-base"
+                ref={containerRef}
+                h="100%"
+                direction="column"
+                p="md"
+                radius="sm"
+                bg="background"
+                shadow={isEditMode ? 'xs' : undefined}
+                sx={(theme) => {
+                    let border = `1px solid ${theme.colors.ldGray[1]}`;
+                    if (isEditMode) {
+                        border = `1px dashed ${theme.colors.blue[5]}`;
+                    }
+                    return {
+                        overflow: 'unset',
+                        border: border,
+                    };
                 }}
             >
-                {minimal ? (
-                    !hideTitle ? (
-                        <Text fw={600} size="md">
-                            {title}
-                        </Text>
-                    ) : (
-                        <Box />
-                    )
-                ) : (
-                    <Tooltip
-                        disabled={!description || !!titleLeftIcon}
-                        label={
-                            <Text style={{ whiteSpace: 'pre-line' }}>
-                                {description}
+                <LoadingOverlay
+                    // ! Very important to have this class name on the tile loading overlay, otherwise the unfurl service will not be able to find it
+                    className="loading_chart_overlay"
+                    visible={isLoading ?? false}
+                    zIndex={getDefaultZIndex('modal') - 10}
+                />
+                {isEditMode && !minimal && (
+                    <DragHandle className="drag-handle-icon">
+                        <ActionIcon size="sm" color="gray" variant="subtle">
+                            <MantineIcon icon={IconGripVertical} />
+                        </ActionIcon>
+                    </DragHandle>
+                )}
+                <HeaderContainer
+                    $isEditMode={isEditMode}
+                    $isEmpty={isMarkdownTileTitleEmpty || hideTitle}
+                    style={{
+                        alignItems: 'flex-start',
+                        zIndex: isLoading ? getDefaultZIndex('modal') - 10 : 3,
+                        borderRadius: '5px',
+                    }}
+                >
+                    {minimal ? (
+                        !hideTitle ? (
+                            <Text fw={600} size="md">
+                                {title}
                             </Text>
-                        }
-                        multiline
-                        position="top-start"
-                        withinPortal
-                        maw={400}
-                    >
-                        <TitleWrapper $hovered={titleHovered}>
-                            <Group spacing="xs">
-                                {titleLeftIcon}
+                        ) : (
+                            <Box />
+                        )
+                    ) : (
+                        <Group
+                            spacing="xs"
+                            noWrap
+                            align="start"
+                            sx={{ overflow: 'hidden' }}
+                        >
+                            {titleLeftIcon}
 
+                            <TitleWrapper $hovered={titleHovered}>
                                 <Tooltip
-                                    disabled={!description || !titleLeftIcon}
-                                    label={description}
+                                    disabled={!description}
+                                    label={
+                                        <Text
+                                            style={{ whiteSpace: 'pre-line' }}
+                                        >
+                                            {description}
+                                        </Text>
+                                    }
                                     multiline
                                     position="top-start"
                                     withinPortal
@@ -181,14 +189,20 @@ const TileBase = <T extends Dashboard['tiles'][number]>({
                                             fw={600}
                                             fz="md"
                                             hidden={hideTitle}
+                                            c="foreground"
                                         >
                                             {title}
                                         </Text>
                                     ) : (
                                         <Text
                                             component={TileTitleLink}
-                                            ref={titleRef}
                                             href={titleHref}
+                                            onMouseEnter={() =>
+                                                setTitleHovered(true)
+                                            }
+                                            onMouseLeave={() =>
+                                                setTitleHovered(false)
+                                            }
                                             $hovered={titleHovered}
                                             target="_blank"
                                             className="non-draggable"
@@ -198,189 +212,210 @@ const TileBase = <T extends Dashboard['tiles'][number]>({
                                         </Text>
                                     )}
                                 </Tooltip>
-                            </Group>
-                        </TitleWrapper>
-                    </Tooltip>
-                )}
-                {visibleHeaderElement && (
-                    <ButtonsWrapper className="non-draggable">
-                        {visibleHeaderElement}
-                    </ButtonsWrapper>
-                )}
-
-                <ButtonsWrapper className="non-draggable">
-                    {(containerHovered && !titleHovered) ||
-                    isMenuOpen ||
-                    lockHeaderVisibility ? (
-                        <>
-                            {extraHeaderElement}
-
-                            {(isEditMode ||
-                                (!isEditMode && extraMenuItems)) && (
-                                <Menu
-                                    withArrow
-                                    withinPortal
-                                    shadow="md"
-                                    position="bottom-end"
-                                    offset={4}
-                                    arrowOffset={10}
-                                    opened={isMenuOpen}
-                                    onOpen={() => toggleMenu(true)}
-                                    onClose={() => toggleMenu(false)}
-                                >
-                                    <Menu.Dropdown>
-                                        {extraMenuItems}
-                                        {isEditMode && extraMenuItems && (
-                                            <Menu.Divider />
-                                        )}
-                                        {isEditMode && (
-                                            <>
-                                                <Box>
-                                                    <Menu.Item
-                                                        icon={
-                                                            <MantineIcon
-                                                                icon={IconEdit}
-                                                            />
-                                                        }
-                                                        onClick={() =>
-                                                            setIsEditingTileContent(
-                                                                true,
-                                                            )
-                                                        }
-                                                    >
-                                                        Edit tile content
-                                                    </Menu.Item>
-                                                </Box>
-                                                {tabs && tabs.length > 1 && (
-                                                    <Menu.Item
-                                                        icon={
-                                                            <MantineIcon
-                                                                icon={
-                                                                    IconArrowAutofitContent
-                                                                }
-                                                            />
-                                                        }
-                                                        onClick={() =>
-                                                            setIsMovingTabs(
-                                                                true,
-                                                            )
-                                                        }
-                                                    >
-                                                        Move to another tab
-                                                    </Menu.Item>
-                                                )}
-                                                <Menu.Divider />
-                                                {belongsToDashboard ? (
-                                                    <Menu.Item
-                                                        color="red"
-                                                        onClick={() =>
-                                                            setIsDeletingChartThatBelongsToDashboard(
-                                                                true,
-                                                            )
-                                                        }
-                                                    >
-                                                        Delete chart
-                                                    </Menu.Item>
-                                                ) : (
-                                                    <Menu.Item
-                                                        color="red"
-                                                        icon={
-                                                            <MantineIcon
-                                                                icon={IconTrash}
-                                                            />
-                                                        }
-                                                        onClick={() =>
-                                                            onDelete(tile)
-                                                        }
-                                                    >
-                                                        Remove tile
-                                                    </Menu.Item>
-                                                )}
-                                            </>
-                                        )}
-                                    </Menu.Dropdown>
-
-                                    <Menu.Target>
-                                        <ActionIcon
-                                            size="sm"
-                                            style={{
-                                                position: 'relative',
-                                                zIndex: 1,
-                                            }}
-                                        >
-                                            <MantineIcon
-                                                data-testid="tile-icon-more"
-                                                icon={IconDots}
-                                            />
-                                        </ActionIcon>
-                                    </Menu.Target>
-                                </Menu>
-                            )}
-                        </>
-                    ) : null}
-                </ButtonsWrapper>
-            </HeaderContainer>
-
-            <ChartContainer className="non-draggable sentry-block ph-no-capture">
-                {children}
-            </ChartContainer>
-
-            {isEditingTileContent &&
-                (tile.type === DashboardTileTypes.SAVED_CHART ||
-                tile.type === DashboardTileTypes.SQL_CHART ? (
-                    <ChartUpdateModal
-                        opened={isEditingTileContent}
-                        tile={tile}
-                        onClose={() => setIsEditingTileContent(false)}
-                        onConfirm={(newTitle, newUuid, shouldHideTitle) => {
-                            onEdit({
-                                ...tile,
-                                properties: {
-                                    ...tile.properties,
-                                    title: newTitle,
-                                    savedChartUuid: newUuid,
-                                    hideTitle: shouldHideTitle,
-                                },
-                            });
-                            setIsEditingTileContent(false);
-                        }}
-                        hideTitle={!!hideTitle}
-                    />
-                ) : (
-                    <TileUpdateModal
+                            </TitleWrapper>
+                        </Group>
+                    )}
+                    <Group
+                        spacing="xs"
                         className="non-draggable"
-                        opened={isEditingTileContent}
-                        tile={tile}
-                        onClose={() => setIsEditingTileContent(false)}
-                        onConfirm={(newTile) => {
-                            onEdit(newTile);
-                            setIsEditingTileContent(false);
-                        }}
-                    />
-                ))}
+                        sx={{ marginLeft: 'auto' }}
+                        noWrap
+                    >
+                        {visibleHeaderElement && (
+                            <Group spacing="xs" className="non-draggable">
+                                {visibleHeaderElement}
+                            </Group>
+                        )}
+                        {(containerHovered && !titleHovered && !chartHovered) ||
+                        isMenuOpen ||
+                        lockHeaderVisibility ? (
+                            <>
+                                {extraHeaderElement}
 
-            <DeleteChartTileThatBelongsToDashboardModal
-                className={'non-draggable'}
-                name={chartName ?? ''}
-                opened={isDeletingChartThatBelongsToDashboard}
-                onClose={() => setIsDeletingChartThatBelongsToDashboard(false)}
-                onConfirm={() => {
-                    onDelete(tile);
-                    setIsDeletingChartThatBelongsToDashboard(false);
-                }}
-            />
-            <MoveTileToTabModal
-                className="non-draggable"
-                opened={isMovingTabs}
-                onConfirm={(newTile) => {
-                    onEdit(newTile as T);
-                    setIsMovingTabs(false);
-                }}
-                tabs={tabs}
-                tile={tile}
-                onClose={() => setIsMovingTabs(false)}
-            />
-        </Card>
+                                {(isEditMode ||
+                                    (!isEditMode && extraMenuItems)) && (
+                                    <Menu
+                                        withArrow
+                                        withinPortal
+                                        shadow="md"
+                                        position="bottom-end"
+                                        offset={4}
+                                        arrowOffset={10}
+                                        opened={isMenuOpen}
+                                        onOpen={() => toggleMenu(true)}
+                                        onClose={() => toggleMenu(false)}
+                                    >
+                                        <Menu.Dropdown>
+                                            {extraMenuItems}
+                                            {isEditMode && extraMenuItems && (
+                                                <Menu.Divider />
+                                            )}
+                                            {isEditMode && (
+                                                <>
+                                                    <Box>
+                                                        <Menu.Item
+                                                            icon={
+                                                                <MantineIcon
+                                                                    icon={
+                                                                        IconEdit
+                                                                    }
+                                                                />
+                                                            }
+                                                            onClick={() =>
+                                                                setIsEditingTileContent(
+                                                                    true,
+                                                                )
+                                                            }
+                                                        >
+                                                            Edit tile content
+                                                        </Menu.Item>
+                                                    </Box>
+                                                    {tabs &&
+                                                        tabs.length > 1 && (
+                                                            <Menu.Item
+                                                                icon={
+                                                                    <MantineIcon
+                                                                        icon={
+                                                                            IconArrowAutofitContent
+                                                                        }
+                                                                    />
+                                                                }
+                                                                onClick={() =>
+                                                                    setIsMovingTabs(
+                                                                        true,
+                                                                    )
+                                                                }
+                                                            >
+                                                                Move to another
+                                                                tab
+                                                            </Menu.Item>
+                                                        )}
+                                                    <Menu.Divider />
+                                                    {belongsToDashboard ? (
+                                                        <Menu.Item
+                                                            color="red"
+                                                            onClick={() =>
+                                                                setIsDeletingChartThatBelongsToDashboard(
+                                                                    true,
+                                                                )
+                                                            }
+                                                        >
+                                                            Delete chart
+                                                        </Menu.Item>
+                                                    ) : (
+                                                        <Menu.Item
+                                                            color="red"
+                                                            icon={
+                                                                <MantineIcon
+                                                                    icon={
+                                                                        IconTrash
+                                                                    }
+                                                                />
+                                                            }
+                                                            onClick={() =>
+                                                                onDelete(tile)
+                                                            }
+                                                        >
+                                                            Remove tile
+                                                        </Menu.Item>
+                                                    )}
+                                                </>
+                                            )}
+                                        </Menu.Dropdown>
+
+                                        <Menu.Target>
+                                            <ActionIcon
+                                                size="sm"
+                                                style={{
+                                                    position: 'relative',
+                                                    zIndex: 1,
+                                                }}
+                                            >
+                                                <MantineIcon
+                                                    data-testid="tile-icon-more"
+                                                    icon={IconDots}
+                                                />
+                                            </ActionIcon>
+                                        </Menu.Target>
+                                    </Menu>
+                                )}
+                            </>
+                        ) : null}
+                    </Group>
+                </HeaderContainer>
+                <ChartContainer
+                    className="non-draggable sentry-block ph-no-capture"
+                    onMouseEnter={
+                        hideTitle
+                            ? chartHoveredProps.handleMouseEnter
+                            : undefined
+                    }
+                    onMouseLeave={
+                        hideTitle
+                            ? chartHoveredProps.handleMouseLeave
+                            : undefined
+                    }
+                >
+                    {children}
+                </ChartContainer>
+                {isEditingTileContent &&
+                    (tile.type === DashboardTileTypes.SAVED_CHART ||
+                    tile.type === DashboardTileTypes.SQL_CHART ? (
+                        <ChartUpdateModal
+                            opened={isEditingTileContent}
+                            tile={tile}
+                            onClose={() => setIsEditingTileContent(false)}
+                            onConfirm={(newTitle, newUuid, shouldHideTitle) => {
+                                onEdit({
+                                    ...tile,
+                                    properties: {
+                                        ...tile.properties,
+                                        title: newTitle,
+                                        savedChartUuid: newUuid,
+                                        hideTitle: shouldHideTitle,
+                                    },
+                                });
+                                setIsEditingTileContent(false);
+                            }}
+                            hideTitle={!!hideTitle}
+                        />
+                    ) : (
+                        <TileUpdateModal
+                            className="non-draggable"
+                            opened={isEditingTileContent}
+                            tile={tile}
+                            onClose={() => setIsEditingTileContent(false)}
+                            onConfirm={(newTile) => {
+                                onEdit(newTile);
+                                setIsEditingTileContent(false);
+                            }}
+                        />
+                    ))}
+                <DeleteChartTileThatBelongsToDashboardModal
+                    className={'non-draggable'}
+                    name={chartName ?? ''}
+                    opened={isDeletingChartThatBelongsToDashboard}
+                    onClose={() =>
+                        setIsDeletingChartThatBelongsToDashboard(false)
+                    }
+                    onConfirm={() => {
+                        onDelete(tile);
+                        setIsDeletingChartThatBelongsToDashboard(false);
+                    }}
+                />
+                <MoveTileToTabModal
+                    className="non-draggable"
+                    opened={isMovingTabs}
+                    onConfirm={(newTile) => {
+                        onEdit(newTile as T);
+                        setIsMovingTabs(false);
+                    }}
+                    tabs={tabs}
+                    tile={tile}
+                    onClose={() => setIsMovingTabs(false)}
+                />
+            </Card>
+        </TileCardWrapper>
     );
 };
 

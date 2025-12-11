@@ -11,6 +11,7 @@ import {
     UserAllowedOrganization,
 } from '@lightdash/common';
 import { Knex } from 'knex';
+import { LightdashConfig } from '../config/parseConfig';
 import {
     DbOrganizationColorPalette,
     OrganizationColorPaletteTableName,
@@ -179,21 +180,27 @@ export const PRESET_COLOR_PALETTES = [
 export class OrganizationModel {
     private database: Knex;
 
-    constructor(database: Knex) {
+    private lightdashConfig: LightdashConfig | undefined;
+
+    constructor(database: Knex, lightdashConfig?: LightdashConfig) {
         this.database = database;
+        this.lightdashConfig = lightdashConfig;
     }
 
     static mapDBObjectToOrganization(
         data: DbOrganization,
-        palette?: DbOrganizationColorPalette,
+        palette?: DbOrganizationColorPalette['colors'],
+        darkPalette?: DbOrganizationColorPalette['dark_colors'],
     ): Organization {
         return {
             organizationUuid: data.organization_uuid,
             name: data.organization_name,
-            chartColors: palette?.colors ?? undefined,
+            chartColors: palette ?? undefined,
+            chartDarkColors: darkPalette ?? undefined,
             defaultProjectUuid: data.default_project_uuid
                 ? data.default_project_uuid
                 : undefined,
+            createdAt: data.created_at,
         };
     }
 
@@ -202,6 +209,13 @@ export class OrganizationModel {
             'organization_id',
         );
         return orgs.length > 0;
+    }
+
+    async getOrgUuids(): Promise<string[]> {
+        const orgs = await this.database(OrganizationTableName).select(
+            'organization_uuid',
+        );
+        return orgs.map((org) => org.organization_uuid);
     }
 
     async get(organizationUuid: string): Promise<Organization> {
@@ -213,12 +227,29 @@ export class OrganizationModel {
             throw new NotFoundError(`No organization found`);
         }
 
-        const [palette] = await this.database(OrganizationColorPaletteTableName)
+        // If override color palette is configured, always override the active palette
+        if (
+            this.lightdashConfig?.appearance?.overrideColorPalette &&
+            this.lightdashConfig.appearance.overrideColorPalette.length > 0
+        ) {
+            return OrganizationModel.mapDBObjectToOrganization(
+                org,
+                this.lightdashConfig.appearance.overrideColorPalette,
+                undefined,
+            );
+        }
+
+        const palette = await this.database(OrganizationColorPaletteTableName)
             .where('color_palette_uuid', org.color_palette_uuid)
             .andWhere('organization_uuid', organizationUuid)
-            .select('*');
+            .select('*')
+            .first();
 
-        return OrganizationModel.mapDBObjectToOrganization(org, palette);
+        return OrganizationModel.mapDBObjectToOrganization(
+            org,
+            palette?.colors,
+            palette?.dark_colors,
+        );
     }
 
     async create(data: CreateOrganization): Promise<Organization> {
@@ -237,7 +268,11 @@ export class OrganizationModel {
             })),
         );
 
-        return OrganizationModel.mapDBObjectToOrganization(org);
+        return OrganizationModel.mapDBObjectToOrganization(
+            org,
+            undefined,
+            undefined,
+        );
     }
 
     async update(
@@ -268,10 +303,18 @@ export class OrganizationModel {
                 .andWhere('organization_uuid', organizationUuid)
                 .select('*');
 
-            return OrganizationModel.mapDBObjectToOrganization(org, palette);
+            return OrganizationModel.mapDBObjectToOrganization(
+                org,
+                palette.colors,
+                palette.dark_colors,
+            );
         }
 
-        return OrganizationModel.mapDBObjectToOrganization(org);
+        return OrganizationModel.mapDBObjectToOrganization(
+            org,
+            undefined,
+            undefined,
+        );
     }
 
     async deleteOrgAndUsers(
@@ -341,6 +384,7 @@ export class OrganizationModel {
                 organization_uuid: organizationUuid,
                 name: data.name,
                 colors: data.colors,
+                dark_colors: data.darkColors || null,
             })
             .returning('*');
 
@@ -377,6 +421,7 @@ export class OrganizationModel {
             .update({
                 name: data.name,
                 colors: data.colors,
+                dark_colors: data.darkColors,
             })
             .returning('*');
 
@@ -440,6 +485,7 @@ export class OrganizationModel {
             organizationUuid: palette.organization_uuid,
             name: palette.name,
             colors: palette.colors,
+            darkColors: palette.dark_colors,
             createdAt: palette.created_at,
         };
     }

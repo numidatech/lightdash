@@ -1,5 +1,6 @@
 import {
     type DbtModelJoinType,
+    type FieldSetDefinition,
     type LineageGraph,
     type SupportedDbtAdapter,
 } from './dbt';
@@ -13,6 +14,13 @@ import {
 import { type LightdashProjectConfig } from './lightdashProjectConfig';
 import { type TableBase } from './table';
 
+export enum JoinRelationship {
+    ONE_TO_MANY = 'one-to-many',
+    MANY_TO_ONE = 'many-to-one',
+    ONE_TO_ONE = 'one-to-one',
+    MANY_TO_MANY = 'many-to-many',
+}
+
 export type ExploreJoin = {
     table: string; // Must match a tableName in containing Explore
     sqlOn: string; // Built sql
@@ -22,13 +30,17 @@ export type ExploreJoin = {
     hidden?: boolean;
     fields?: string[]; // Optional list of fields to include from the joined table
     always?: boolean; // Optional flag to always join the table
+    relationship?: JoinRelationship;
+    description?: string; // Optional description override for the joined table
 };
 
 export type CompiledExploreJoin = Pick<
     ExploreJoin,
-    'table' | 'sqlOn' | 'type' | 'hidden' | 'always'
+    'table' | 'sqlOn' | 'type' | 'hidden' | 'always' | 'relationship'
 > & {
-    compiledSqlOn: string; // Sql on clause with template variables resolved
+    compiledSqlOn: string; // SQL on clause with template variables resolved
+    tablesReferences?: string[]; // Tables referenced in SQL. Optional, to keep it backwards compatible.
+    parameterReferences?: string[];
 };
 
 export type CompiledTable = TableBase & {
@@ -37,6 +49,9 @@ export type CompiledTable = TableBase & {
     lineageGraph: LineageGraph;
     source?: Source | undefined;
     uncompiledSqlWhere?: string;
+    parameterReferences?: string[];
+    parameters?: LightdashProjectConfig['parameters'];
+    sets?: Record<string, FieldSetDefinition>;
 };
 
 export enum ExploreType {
@@ -64,6 +79,8 @@ export type Explore = {
         visibility: LightdashProjectConfig['spotlight']['default_visibility'];
         categories?: string[]; // yaml_reference
     };
+    aiHint?: string | string[];
+    parameters?: LightdashProjectConfig['parameters'];
 };
 
 export enum InlineErrorType {
@@ -85,7 +102,13 @@ export const isExploreError = (
     explore: Explore | ExploreError,
 ): explore is ExploreError => 'errors' in explore;
 
-type SummaryExploreFields = 'name' | 'label' | 'tags' | 'groupLabel' | 'type';
+type SummaryExploreFields =
+    | 'name'
+    | 'label'
+    | 'tags'
+    | 'groupLabel'
+    | 'type'
+    | 'aiHint';
 type SummaryExploreErrorFields = SummaryExploreFields | 'errors';
 type SummaryExtraFields = {
     description?: string;
@@ -103,6 +126,8 @@ export type Table = TableBase & {
     metrics: { [fieldName: string]: Metric }; //
     lineageGraph: LineageGraph; // DAG structure representing the lineage of the table
     source?: Source;
+    parameters?: LightdashProjectConfig['parameters'];
+    sets?: Record<string, FieldSetDefinition>;
 };
 
 export enum CustomViewType {

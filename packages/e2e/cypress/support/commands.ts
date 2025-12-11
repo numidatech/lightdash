@@ -24,8 +24,10 @@
 // -- This will overwrite an existing command --
 // Cypress.Commands.overwrite('visit', (originalFn, url, options) => { ... })
 import {
+    AnyType,
     ApiChartSummaryListResponse,
     CreateChartInSpace,
+    CreateEmbedJwt,
     CreatePersonalAccessToken,
     CreateWarehouseCredentials,
     DashboardBasicDetails,
@@ -33,6 +35,10 @@ import {
     SavedChart,
     SEED_ORG_1_ADMIN_EMAIL,
     SEED_ORG_1_ADMIN_PASSWORD,
+    SEED_ORG_1_EDITOR_EMAIL,
+    SEED_ORG_1_EDITOR_PASSWORD,
+    SEED_ORG_1_VIEWER_EMAIL,
+    SEED_ORG_1_VIEWER_PASSWORD,
     SEED_ORG_2_ADMIN_EMAIL,
     SEED_ORG_2_ADMIN_PASSWORD,
     SEED_PROJECT,
@@ -49,6 +55,8 @@ declare global {
             ): Chainable<Element>;
 
             login(): Chainable<Element>;
+            loginAsEditor(): Chainable<Element>;
+            loginAsViewer(): Chainable<Element>;
 
             anotherLogin(): Chainable<Element>;
 
@@ -56,20 +64,24 @@ declare global {
 
             registerNewUser(): Chainable<Element>;
 
-            invite(email, role): Chainable<string>;
+            invite(email: string, role: string): Chainable<string>;
 
-            registerWithCode(inviteCode): Chainable<Element>;
+            registerWithCode(inviteCode: string): Chainable<Element>;
 
             verifyEmail(): Chainable<Element>;
 
-            addProjectPermission(email, role, projectUuid): Chainable<Element>;
-
-            loginWithPermissions(
-                orgRole,
-                projectPermissions,
+            addProjectPermission(
+                email: string,
+                role: string,
+                projectUuid: string,
             ): Chainable<Element>;
 
-            loginWithEmail: (email) => Chainable<Element>;
+            loginWithPermissions(
+                orgRole: string,
+                projectPermissions: ProjectPermission[],
+            ): Chainable<Element>;
+
+            loginWithEmail(email: string): Chainable<Element>;
 
             getApiToken(): Chainable<string>;
 
@@ -95,6 +107,21 @@ declare global {
                 dragSelector: string,
                 dropSelector: string,
             ): Chainable<Element>;
+            getJwtToken(
+                projectUuid: string,
+                options?: {
+                    userEmail?: string;
+                    userExternalId?: string | null;
+                    canExportCsv?: boolean;
+                    canExportImages?: boolean;
+                    canExportPagePdf?: boolean;
+                    canDateZoom?: boolean;
+                    canExplore?: boolean;
+                },
+            ): Chainable<string>;
+
+            getMonacoEditorText(): Chainable<string>;
+            scrollTreeToItem(itemText: string): Chainable<Element>;
         }
     }
 }
@@ -136,6 +163,52 @@ Cypress.Commands.add('login', () => {
                 body: {
                     email: SEED_ORG_1_ADMIN_EMAIL.email,
                     password: SEED_ORG_1_ADMIN_PASSWORD.password,
+                },
+            })
+                .its('status')
+                .should('eq', 200);
+        },
+        {
+            validate() {
+                cy.request('api/v1/user').its('status').should('eq', 200);
+            },
+        },
+    );
+});
+
+Cypress.Commands.add('loginAsEditor', () => {
+    cy.session(
+        SEED_ORG_1_EDITOR_EMAIL.email,
+        () => {
+            cy.request({
+                url: 'api/v1/login',
+                method: 'POST',
+                body: {
+                    email: SEED_ORG_1_EDITOR_EMAIL.email,
+                    password: SEED_ORG_1_EDITOR_PASSWORD.password,
+                },
+            })
+                .its('status')
+                .should('eq', 200);
+        },
+        {
+            validate() {
+                cy.request('api/v1/user').its('status').should('eq', 200);
+            },
+        },
+    );
+});
+
+Cypress.Commands.add('loginAsViewer', () => {
+    cy.session(
+        SEED_ORG_1_VIEWER_EMAIL.email,
+        () => {
+            cy.request({
+                url: 'api/v1/login',
+                method: 'POST',
+                body: {
+                    email: SEED_ORG_1_VIEWER_EMAIL.email,
+                    password: SEED_ORG_1_VIEWER_PASSWORD.password,
                 },
             })
                 .its('status')
@@ -393,8 +466,9 @@ Cypress.Commands.add(
                     target: '',
                     environment: [],
                     type: 'dbt',
+                    project_dir: Cypress.env('DBT_PROJECT_DIR'),
                 },
-                dbtVersion: 'v1.4',
+                dbtVersion: 'v1.7',
                 warehouseConnection: warehouseConfig || {
                     host: Cypress.env('PGHOST') || 'localhost',
                     user: 'postgres',
@@ -560,7 +634,7 @@ Cypress.Commands.add(
                                             );
 
                                             // On complete, allow a little time for React to update the DOM
-                                            setTimeout(resolve, 200);
+                                            setTimeout(() => resolve(), 200);
                                         }, 50);
                                     }, 50);
                                 }, 50);
@@ -584,3 +658,175 @@ Cypress.Commands.add(
             });
     },
 );
+
+Cypress.Commands.add(
+    'getJwtToken',
+    (
+        projectUuid: string,
+        options: {
+            userEmail?: string;
+            userExternalId?: string | null;
+            canExportCsv?: boolean;
+            canExportImages?: boolean;
+            canExportPagePdf?: boolean;
+            canDateZoom?: boolean;
+            canExplore?: boolean;
+        } = {},
+    ) => {
+        const {
+            userEmail = 'test@example.com',
+            userExternalId = 'test-user-123',
+            canExportCsv = false,
+            canExportImages = false,
+            canExportPagePdf = false,
+            canDateZoom = false,
+            canExplore = false,
+        } = options;
+
+        // First login to get embed configuration and dashboard UUID
+        cy.login();
+
+        let dashboardUuid: string;
+
+        // Get a dashboard UUID from the project
+        cy.request({
+            url: `api/v1/projects/${projectUuid}/dashboards`,
+            method: 'GET',
+        }).then((dashboardsResponse) => {
+            expect(dashboardsResponse.status).to.eq(200);
+            expect(dashboardsResponse.body.results).to.have.length.greaterThan(
+                0,
+            );
+            dashboardUuid = dashboardsResponse.body.results[0].uuid;
+
+            // Get embed configuration to get the encoded secret
+            cy.request({
+                url: `api/v1/embed/${projectUuid}/config`,
+                method: 'GET',
+            }).then((configResponse) => {
+                expect(configResponse.status).to.eq(200);
+
+                // Create JWT data structure
+                const jwtData: CreateEmbedJwt = {
+                    content: {
+                        type: 'dashboard',
+                        projectUuid,
+                        dashboardUuid,
+                        canExportCsv,
+                        canExportImages,
+                        canExportPagePdf,
+                        canDateZoom,
+                        canExplore,
+                    },
+                    userAttributes: {
+                        email: userEmail,
+                        externalId: userExternalId || '',
+                    },
+                    user: {
+                        email: userEmail,
+                        externalId: userExternalId || undefined,
+                    },
+                    expiresIn: '1h',
+                };
+
+                // Create embed URL to get the JWT token
+                cy.request({
+                    url: `api/v1/embed/${projectUuid}/get-embed-url`,
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: jwtData,
+                }).then((embedUrlResponse) => {
+                    expect(embedUrlResponse.status).to.eq(200);
+
+                    // Extract JWT token from the URL (it's in the hash fragment)
+                    const { url } = embedUrlResponse.body.results;
+                    const jwtToken = url.split('#')[1];
+
+                    // Logout to clear session
+                    cy.logout();
+
+                    // Return the JWT token
+                    cy.wrap(jwtToken);
+                });
+            });
+        });
+    },
+);
+
+Cypress.Commands.add('getMonacoEditorText', () => {
+    cy.wait(200); // wait for new SQL to load
+    cy.get('.monaco-editor').should('exist');
+    // NOTE: This is probably the most reliable way to get the SQL from the Monaco editor, without having to target specific classes/ids
+    cy.window().then((win: AnyType) => {
+        expect(win.monaco).to.be.an('object');
+        const editor = win.monaco.editor.getModels()[0];
+        const sqlRunnerText = editor.getValue();
+        // Normalize the text by removing new lines and converting multiple white spaces to single white space
+        const normalizedText = sqlRunnerText
+            .replace(/\n/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+        cy.wrap(normalizedText);
+    });
+});
+
+/**
+ * Scrolls the virtualized tree to make a specific item visible.
+ * This is needed because virtualized lists only render items in the viewport,
+ * and standard scrollIntoView() doesn't work with absolute positioning.
+ */
+Cypress.Commands.add('scrollTreeToItem', (itemText: string) => {
+    cy.get('[data-testid="virtualized-tree-scroll-container"]', {
+        timeout: 10000,
+    }).then(($container) => {
+        const container = $container[0];
+        const maxScroll = container.scrollHeight;
+        const viewportHeight = container.clientHeight;
+
+        container.scrollTop = 0;
+
+        const checkAndScroll = (scrollPosition: number): Cypress.Chainable => {
+            container.scrollTop = scrollPosition;
+
+            return cy.wait(200).then(() => {
+                const elements = Array.from(container.querySelectorAll('*'));
+                const found = elements.find((el) => {
+                    const text = el.textContent?.trim() || '';
+                    const childTexts = Array.from(el.children)
+                        .map((child) => child.textContent?.trim() || '')
+                        .join('');
+                    const ownText = text.replace(childTexts, '').trim();
+
+                    return (
+                        text === itemText ||
+                        ownText === itemText ||
+                        (text.includes(itemText) && el.children.length === 0)
+                    );
+                });
+
+                if (found) {
+                    return cy.wrap(found);
+                }
+
+                const nextScroll = scrollPosition + viewportHeight * 0.5;
+
+                if (nextScroll >= maxScroll - viewportHeight) {
+                    container.scrollTop = maxScroll;
+                    return cy
+                        .wait(200)
+                        .then(() =>
+                            cy
+                                .get(
+                                    '[data-testid="virtualized-tree-scroll-container"]',
+                                )
+                                .within(() => cy.findByText(itemText)),
+                        );
+                }
+
+                return checkAndScroll(nextScroll);
+            });
+        };
+
+        return checkAndScroll(0);
+    });
+});

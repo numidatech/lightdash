@@ -40,7 +40,7 @@ const UserAttributeModal: FC<{
     allUserAttributes: UserAttribute[];
     onClose: () => void;
 }> = ({ opened, userAttribute, allUserAttributes, onClose }) => {
-    const { data: UserGroupsFeatureFlag } = useFeatureFlag(
+    const userGroupsFeatureFlagQuery = useFeatureFlag(
         FeatureFlags.UserGroupsEnabled,
     );
 
@@ -134,16 +134,20 @@ const UserAttributeModal: FC<{
         handleClose();
     };
 
+    if (userGroupsFeatureFlagQuery.isError) {
+        console.error(userGroupsFeatureFlagQuery.error);
+        throw new Error('Error fetching user groups feature flag');
+    }
+
+    const isGroupManagementEnabled =
+        userGroupsFeatureFlagQuery.isSuccess &&
+        userGroupsFeatureFlagQuery.data.enabled;
+
     const { data: orgUsers } = useOrganizationUsers();
-    const { data: groups } = useOrganizationGroups({
-        queryOptions: {
-            enabled: !!UserGroupsFeatureFlag?.enabled,
-        },
-    });
-
-    if (!UserGroupsFeatureFlag) return null;
-
-    const isGroupManagementEnabled = UserGroupsFeatureFlag?.enabled;
+    const { data: groups } = useOrganizationGroups(
+        {},
+        { enabled: isGroupManagementEnabled },
+    );
 
     return (
         <Modal
@@ -157,7 +161,7 @@ const UserAttributeModal: FC<{
             yOffset={65}
             size="lg"
             styles={(theme) => ({
-                header: { borderBottom: `1px solid ${theme.colors.gray[4]}` },
+                header: { borderBottom: `1px solid ${theme.colors.ldGray[4]}` },
                 body: { padding: 0 },
             })}
         >
@@ -197,7 +201,7 @@ const UserAttributeModal: FC<{
                                 label="This will be the default value for the attribute if no other value is assigned to the user or group."
                             >
                                 <MantineIcon
-                                    color="gray.6"
+                                    color="ldGray.6"
                                     icon={IconInfoCircle}
                                 />
                             </Tooltip>
@@ -409,8 +413,8 @@ const UserAttributeModal: FC<{
                     position="right"
                     sx={(theme) => ({
                         position: 'sticky',
-                        backgroundColor: 'white',
-                        borderTop: `1px solid ${theme.colors.gray[4]}`,
+                        backgroundColor: theme.colors.background[0],
+                        borderTop: `1px solid ${theme.colors.ldGray[4]}`,
                         bottom: 0,
                         zIndex: 2,
                         padding: theme.spacing.md,

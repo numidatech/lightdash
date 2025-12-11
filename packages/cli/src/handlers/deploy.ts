@@ -2,6 +2,7 @@ import {
     AuthorizationError,
     Explore,
     ExploreError,
+    ParseError,
     Project,
     ProjectType,
     friendlyName,
@@ -20,7 +21,10 @@ import GlobalState from '../globalState';
 import { readAndLoadLightdashProjectConfig } from '../lightdash-config';
 import * as styles from '../styles';
 import { compile } from './compile';
-import { createProject } from './createProject';
+import {
+    createProject,
+    resolveOrganizationCredentialsName,
+} from './createProject';
 import { checkLightdashVersion, lightdashApi } from './dbt/apiClient';
 import { DbtCompileOptions } from './dbt/compile';
 import { getDbtVersion } from './dbt/getDbtVersion';
@@ -34,6 +38,8 @@ type DeployHandlerOptions = DbtCompileOptions & {
     verbose: boolean;
     ignoreErrors: boolean;
     startOfWeek?: number;
+    warehouseCredentials?: boolean;
+    organizationCredentials?: string;
 };
 
 type DeployArgs = DeployHandlerOptions & {
@@ -58,6 +64,17 @@ const replaceProjectYamlTags = async (
         method: 'PUT',
         url: `/api/v1/projects/${projectUuid}/tags/yaml`,
         body: JSON.stringify(yamlTags),
+    });
+};
+
+const replaceProjectParameters = async (
+    projectUuid: string,
+    lightdashProjectConfig: LightdashProjectConfig,
+) => {
+    await lightdashApi<null>({
+        method: 'PUT',
+        url: `/api/v2/projects/${projectUuid}/parameters`,
+        body: JSON.stringify(lightdashProjectConfig.parameters ?? {}),
     });
 };
 
@@ -94,6 +111,7 @@ export const deploy = async (
     );
 
     await replaceProjectYamlTags(options.projectUuid, lightdashProjectConfig);
+    await replaceProjectParameters(options.projectUuid, lightdashProjectConfig);
 
     await lightdashApi<null>({
         method: 'PUT',
@@ -114,16 +132,22 @@ const createNewProject = async (
 ): Promise<Project | undefined> => {
     console.error('');
     const absoluteProjectPath = path.resolve(options.projectDir);
-    const context = await getDbtContext({
-        projectDir: absoluteProjectPath,
-    });
-    const dbtName = friendlyName(context.projectName);
 
-    // default project name
-    const defaultProjectName = dbtName;
-    let projectName = defaultProjectName;
+    let defaultProjectName: string = 'My new Lightdash Project'; // TODO: improve
+    try {
+        const context = await getDbtContext({
+            projectDir: absoluteProjectPath,
+            targetPath: options.targetPath,
+        });
+        defaultProjectName = friendlyName(context.projectName);
+    } catch (e) {
+        if (e instanceof ParseError) {
+            // stick with default name
+        }
+    }
 
     // If interactive and no name provided, prompt for project name
+    let projectName = defaultProjectName;
     if (options.create === true && process.env.CI !== 'true') {
         const answers = await inquirer.prompt([
             {
@@ -151,7 +175,7 @@ const createNewProject = async (
         properties: {
             executionId,
             projectName,
-            isDefaultName: dbtName === projectName,
+            isDefaultName: defaultProjectName === projectName,
         },
     });
     try {
@@ -159,6 +183,7 @@ const createNewProject = async (
             ...options,
             name: projectName,
             type: ProjectType.DEFAULT,
+            warehouseCredentials: options.warehouseCredentials,
         });
 
         const project = results?.project;
@@ -193,8 +218,34 @@ const createNewProject = async (
     }
 };
 
-export const deployHandler = async (options: DeployHandlerOptions) => {
+export const deployHandler = async (originalOptions: DeployHandlerOptions) => {
+    const options = {
+        ...originalOptions,
+    };
     GlobalState.setVerbose(options.verbose);
+
+    // No warehouse credentials assumes we skip dbt compile and warehouse catalog
+    if (options.warehouseCredentials === false) {
+        options.skipDbtCompile = true;
+        options.skipWarehouseCatalog = true;
+    }
+
+    // Resolve organization credentials early before doing any heavy work
+    if (options.organizationCredentials) {
+        try {
+            await resolveOrganizationCredentialsName(
+                options.organizationCredentials,
+            );
+        } catch (error) {
+            console.error(
+                styles.error(
+                    error instanceof Error ? error.message : 'Unknown error',
+                ),
+            );
+            process.exit(1);
+        }
+    }
+
     const dbtVersion = await getDbtVersion();
     await checkLightdashVersion();
     const executionId = uuidv4();

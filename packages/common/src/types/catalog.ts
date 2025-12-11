@@ -1,5 +1,5 @@
 import assertUnreachable from '../utils/assertUnreachable';
-import { type CompiledExploreJoin, type InlineError } from './explore';
+import { type InlineError } from './explore';
 import {
     DimensionType,
     MetricType,
@@ -8,9 +8,11 @@ import {
     type Dimension,
     type Field,
     type FieldType,
+    type Metric,
 } from './field';
 import type { KnexPaginatedData } from './knex-paginate';
 import { type ChartSummary } from './savedCharts';
+import { type TraceTaskBase } from './scheduler';
 import { type TableBase } from './table';
 import type { Tag } from './tags';
 
@@ -64,13 +66,16 @@ export type CatalogField = Pick<
     Pick<Dimension, 'requiredAttributes'> & {
         catalogSearchUuid: string;
         type: CatalogType.Field;
-        basicType?: string; // string, number, timestamp... used in metadata
+        basicType: 'string' | 'number' | 'date' | 'timestamp' | 'boolean';
+        fieldValueType: Metric['type'] | Dimension['type'];
         tableName: string;
         tableGroupLabel?: string;
         tags?: string[]; // Tags from table, for filtering
         categories: Pick<Tag, 'name' | 'color' | 'tagUuid' | 'yamlReference'>[]; // Tags manually added by the user in the catalog
         chartUsage: number | undefined;
         icon: CatalogItemIcon | null;
+        aiHints: string[] | null;
+        searchRank?: number;
     };
 
 export type CatalogTable = Pick<
@@ -83,9 +88,11 @@ export type CatalogTable = Pick<
     groupLabel?: string;
     tags?: string[];
     categories: Pick<Tag, 'name' | 'color' | 'tagUuid' | 'yamlReference'>[]; // Tags manually added by the user in the catalog
-    joinedTables?: CompiledExploreJoin[]; // Matched type in explore
     chartUsage: number | undefined;
     icon: CatalogItemIcon | null;
+    aiHints: string[] | null;
+    joinedTables: string[] | null;
+    searchRank?: number;
 };
 
 export type CatalogItem = CatalogField | CatalogTable;
@@ -166,15 +173,12 @@ export type CatalogAnalytics = {
 };
 export type ApiCatalogAnalyticsResults = CatalogAnalytics;
 
-export const getBasicType = (
-    field: CompiledDimension | CompiledMetric,
-): string => {
+export const getBasicType = (field: CompiledDimension | CompiledMetric) => {
     const { type } = field;
     switch (type) {
         case DimensionType.STRING:
         case MetricType.STRING:
-            return 'string';
-
+            return 'string' as const;
         case DimensionType.NUMBER:
         case MetricType.NUMBER:
         case MetricType.PERCENTILE:
@@ -185,16 +189,19 @@ export const getBasicType = (
         case MetricType.SUM:
         case MetricType.MIN:
         case MetricType.MAX:
-            return 'number';
+        case MetricType.PERCENT_OF_PREVIOUS:
+        case MetricType.PERCENT_OF_TOTAL:
+        case MetricType.RUNNING_TOTAL:
+            return 'number' as const;
         case DimensionType.DATE:
         case MetricType.DATE:
-            return 'date';
+            return 'date' as const;
         case DimensionType.TIMESTAMP:
         case MetricType.TIMESTAMP:
-            return 'timestamp';
+            return 'timestamp' as const;
         case DimensionType.BOOLEAN:
         case MetricType.BOOLEAN:
-            return 'boolean';
+            return 'boolean' as const;
         default:
             return assertUnreachable(type, `Invalid field type ${type}`);
     }
@@ -231,9 +238,7 @@ export type CatalogItemWithTagUuids = CatalogItemSummary & {
 export type CatalogItemsWithIcons = CatalogItemSummary &
     Pick<CatalogItem, 'icon'>;
 
-export type SchedulerIndexCatalogJobPayload = {
-    projectUuid: string;
-    userUuid: string;
+export type SchedulerIndexCatalogJobPayload = TraceTaskBase & {
     prevCatalogItemsWithTags: CatalogItemWithTagUuids[];
     prevCatalogItemsWithIcons: CatalogItemsWithIcons[];
     prevMetricTreeEdges: CatalogMetricsTreeEdge[];
@@ -275,8 +280,6 @@ export type ChartFieldUsageChanges = {
 export type ChartUsageIn = CatalogFieldWhere & {
     chartUsage: number;
 };
-
-export const indexCatalogJob = 'indexCatalog';
 
 export type ApiMetricsWithAssociatedTimeDimensionResponse = {
     status: 'ok';

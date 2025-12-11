@@ -1,8 +1,11 @@
-import { Center, Loader, Text } from '@mantine/core';
-import { Suspense, lazy, type FC } from 'react';
+import { Anchor, Text } from '@mantine/core';
+import { IconChartBarOff } from '@tabler/icons-react';
+import { Suspense, lazy, useEffect, type FC } from 'react';
 import { type CustomVisualizationConfigAndData } from '../../hooks/useCustomVisualizationConfig';
 import { isCustomVisualizationConfig } from '../LightdashVisualization/types';
 import { useVisualizationContext } from '../LightdashVisualization/useVisualizationContext';
+import { LoadingChart } from '../SimpleChart';
+import SuboptimalState from '../common/SuboptimalState/SuboptimalState';
 
 const VegaLite = lazy(() =>
     import('react-vega').then((module) => ({ default: module.VegaLite })),
@@ -14,21 +17,52 @@ type Props = {
 };
 
 const CustomVisualization: FC<Props> = (props) => {
-    const { isLoading, visualizationConfig } = useVisualizationContext();
+    const {
+        isLoading,
+        visualizationConfig,
+        resultsData,
+        containerWidth,
+        containerHeight,
+    } = useVisualizationContext();
 
-    if (isLoading) {
-        return <Text>Loading...</Text>;
-    }
+    useEffect(() => {
+        // Load all the rows
+        resultsData?.setFetchAll(true);
+    }, [resultsData]);
 
     if (!isCustomVisualizationConfig(visualizationConfig)) return null;
     const spec = visualizationConfig.chartConfig.validConfig.spec;
+
+    if (isLoading) {
+        return <LoadingChart />;
+    }
 
     if (
         !visualizationConfig ||
         !isCustomVisualizationConfig(visualizationConfig) ||
         !spec
     ) {
-        return null;
+        return (
+            <div style={{ height: '100%', width: '100%', padding: '50px 0' }}>
+                <SuboptimalState
+                    title="No visualization loaded"
+                    description={
+                        <Text>
+                            Start by entering your{' '}
+                            <Anchor
+                                href="https://vega.github.io/vega-lite/examples/"
+                                target="_blank"
+                            >
+                                Vega-Lite JSON
+                            </Anchor>{' '}
+                            code or choose from our pre-built templates to
+                            create your chart.
+                        </Text>
+                    }
+                    icon={IconChartBarOff}
+                />
+            </div>
+        );
     }
 
     // TODO: 'chartConfig' is more props than config. It has data and
@@ -46,25 +80,20 @@ const CustomVisualization: FC<Props> = (props) => {
                 minHeight: 'inherit',
                 height: '100%',
                 width: '100%',
+                overflow: 'hidden',
             }}
         >
-            <Suspense
-                fallback={
-                    <Center>
-                        <Loader color="gray" />
-                    </Center>
-                }
-            >
+            <Suspense fallback={<LoadingChart />}>
                 <VegaLite
                     style={{
-                        width: 'inherit',
-                        height: 'inherit',
-                        minHeight: 'inherit',
+                        width: containerWidth,
+                        height: containerHeight,
                     }}
                     config={{
+                        font: 'Inter, sans-serif',
                         autosize: {
-                            resize: true,
                             type: 'fit',
+                            resize: true,
                         },
                     }}
                     // TODO: We are ignoring some typescript errors here because the type
@@ -79,7 +108,6 @@ const CustomVisualization: FC<Props> = (props) => {
                         width: 'container',
                         // @ts-ignore, see above
                         height: 'container',
-
                         data: { name: 'values' },
                     }}
                     data={data}

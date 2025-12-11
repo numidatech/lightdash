@@ -1,4 +1,5 @@
-import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
+import { ModalsProvider } from '@mantine/modals';
+import { wrapCreateBrowserRouterV7 } from '@sentry/react';
 import { createBrowserRouter, Outlet, RouterProvider } from 'react-router';
 import VersionAutoUpdater from './components/VersionAutoUpdater/VersionAutoUpdater';
 import {
@@ -12,6 +13,7 @@ import AbilityProvider from './providers/Ability/AbilityProvider';
 import ActiveJobProvider from './providers/ActiveJob/ActiveJobProvider';
 import AppProvider from './providers/App/AppProvider';
 import FullscreenProvider from './providers/Fullscreen/FullscreenProvider';
+import Mantine8Provider from './providers/Mantine8Provider';
 import MantineProvider from './providers/MantineProvider';
 import ReactQueryProvider from './providers/ReactQuery/ReactQueryProvider';
 import ThirdPartyProvider from './providers/ThirdPartyServicesProvider';
@@ -27,7 +29,11 @@ const isMobile = window.innerWidth < 768;
 
 const isMinimalPage = window.location.pathname.startsWith('/minimal');
 
-const router = createBrowserRouter([
+// Sentry wrapper for createBrowserRouter
+const sentryCreateBrowserRouter =
+    wrapCreateBrowserRouterV7(createBrowserRouter);
+
+const router = sentryCreateBrowserRouter([
     {
         path: '/',
         element: (
@@ -63,9 +69,12 @@ const App = () => (
 
         <ReactQueryProvider>
             <MantineProvider withGlobalStyles withNormalizeCSS withCSSVariables>
-                <RouterProvider router={router} />
+                <Mantine8Provider>
+                    <ModalsProvider>
+                        <RouterProvider router={router} />
+                    </ModalsProvider>
+                </Mantine8Provider>
             </MantineProvider>
-            <ReactQueryDevtools initialIsOpen={false} />
         </ReactQueryProvider>
     </>
 );

@@ -1,16 +1,74 @@
-import { Alert, Loader, Stack, Title } from '@mantine/core';
-import { Prism } from '@mantine/prism';
+import { Alert, Loader, Stack, Title, useMantineTheme } from '@mantine/core';
+import Editor, {
+    type BeforeMount,
+    type EditorProps,
+} from '@monaco-editor/react';
 import { IconAlertCircle } from '@tabler/icons-react';
+import { useCallback, useMemo } from 'react';
+import { useParams } from 'react-router';
+import { format } from 'sql-formatter';
+import { getLanguage } from '../features/sqlRunner/store/sqlRunnerSlice';
+import {
+    getLightdashMonacoTheme,
+    getMonacoLanguage,
+    MONACO_DEFAULT_OPTIONS,
+    registerMonacoLanguage,
+} from '../features/sqlRunner/utils/monaco';
 import { useCompiledSql } from '../hooks/useCompiledSql';
+import { useProject } from '../hooks/useProject';
+
+const MONACO_READ_ONLY: EditorProps['options'] = {
+    ...MONACO_DEFAULT_OPTIONS,
+    readOnly: true,
+};
 
 export const RenderedSql = () => {
+    const theme = useMantineTheme();
+    const { projectUuid } = useParams<{ projectUuid: string }>();
+    const { data: project } = useProject(projectUuid);
+    const language = useMemo(
+        () => getMonacoLanguage(project?.warehouseConnection?.type),
+        [project],
+    );
     const { data, error, isInitialLoading } = useCompiledSql();
+
+    const beforeMount: BeforeMount = useCallback(
+        (monaco) => {
+            registerMonacoLanguage(monaco, language);
+            monaco.editor.defineTheme('lightdash-light', {
+                base: 'vs',
+                inherit: true,
+                ...getLightdashMonacoTheme('light'),
+            });
+            monaco.editor.defineTheme('lightdash-dark', {
+                base: 'vs-dark',
+                inherit: true,
+                ...getLightdashMonacoTheme('dark'),
+            });
+        },
+        [language],
+    );
+
+    const formattedSql = useMemo(() => {
+        if (!data?.query) return '';
+        try {
+            return format(data.query, {
+                language: getLanguage(project?.warehouseConnection?.type),
+            });
+        } catch (e) {
+            console.error(
+                'Error rendering SQL:',
+                e instanceof Error ? e.message : 'Unknown error occurred',
+            );
+            return data.query;
+        }
+    }, [data?.query, project?.warehouseConnection?.type]);
 
     if (isInitialLoading) {
         return (
             <Stack my="xs" align="center">
                 <Loader size="lg" color="gray" mt="xs" />
-                <Title order={4} fw={500} color="gray.7">
+                <Title order={4} fw={500} color="ldGray.7">
                     Compiling SQL
                 </Title>
             </Stack>
@@ -53,8 +111,17 @@ export const RenderedSql = () => {
     }
 
     return (
-        <Prism m="sm" language="sql" withLineNumbers>
-            {data || ''}
-        </Prism>
+        <Editor
+            loading={<Loader color="gray" size="xs" />}
+            language={language}
+            beforeMount={beforeMount}
+            value={formattedSql}
+            options={MONACO_READ_ONLY}
+            theme={
+                theme.colorScheme === 'dark'
+                    ? 'lightdash-dark'
+                    : 'lightdash-light'
+            }
+        />
     );
 };

@@ -1,8 +1,9 @@
-import { findLast } from 'lodash';
+import findLast from 'lodash/findLast';
 import { v4 as uuidv4 } from 'uuid';
 import type {
     ConditionalFormattingRowFields,
     ConditionalFormattingWithCompareTarget,
+    ConditionalRuleLabel,
     ItemsMap,
 } from '..';
 import {
@@ -16,12 +17,9 @@ import {
     type ConditionalFormattingConfigWithSingleColor,
     type ConditionalFormattingMinMax,
     type ConditionalFormattingMinMaxMap,
-    type ConditionalFormattingWithConditionalOperator,
+    type ConditionalFormattingWithFilterOperator,
 } from '../types/conditionalFormatting';
-import {
-    ConditionalOperator,
-    type ConditionalRuleLabels,
-} from '../types/conditionalRule';
+import { LightdashError, NotImplementedError } from '../types/errors';
 import {
     CustomFormatType,
     Format,
@@ -30,28 +28,28 @@ import {
     isTableCalculation,
     type FilterableItem,
 } from '../types/field';
-import { type FieldTarget } from '../types/filter';
+import { FilterOperator, type FieldTarget } from '../types/filter';
 import assertUnreachable from './assertUnreachable';
 import { getItemId, isNumericItem, isStringDimension } from './item';
 
 export const createConditionalFormattingRuleWithValues =
-    (): ConditionalFormattingWithConditionalOperator => ({
+    (): ConditionalFormattingWithFilterOperator => ({
         id: uuidv4(),
-        operator: ConditionalOperator.EQUALS,
+        operator: FilterOperator.EQUALS,
         values: [],
     });
 
 export const createConditionalFormattingRuleWithCompareTarget =
     (): ConditionalFormattingWithCompareTarget => ({
         id: uuidv4(),
-        operator: ConditionalOperator.EQUALS,
+        operator: FilterOperator.EQUALS,
         compareTarget: null,
     });
 
 export const createConditionalFormattingRuleWithCompareTargetValues =
     (): ConditionalFormattingWithCompareTarget => ({
         id: uuidv4(),
-        operator: ConditionalOperator.EQUALS,
+        operator: FilterOperator.EQUALS,
         compareTarget: null,
         values: [],
     });
@@ -73,7 +71,6 @@ export const createConditionalFormattingConfigWithColorRange = (
     color: {
         start: '#ffffff',
         end: defaultColor,
-        steps: 5,
     },
     rule: {
         min: 0,
@@ -110,6 +107,17 @@ export const getMinMaxFromMinMaxMap = (
     min: Math.min(...Object.values(minMaxMap).map((m) => m.min)),
     max: Math.max(...Object.values(minMaxMap).map((m) => m.max)),
 });
+
+export class ConditionalFormattingError extends LightdashError {
+    constructor(message: string) {
+        super({
+            message,
+            name: 'ConditionalFormattingError',
+            statusCode: 400,
+            data: {},
+        });
+    }
+}
 
 export const hasMatchingConditionalRules = (
     field: ItemsMap[string],
@@ -170,11 +178,11 @@ export const hasMatchingConditionalRules = (
                 isConditionalFormattingWithValues(rule);
 
             switch (rule.operator) {
-                case ConditionalOperator.NULL:
-                    return convertedValue === null;
-                case ConditionalOperator.NOT_NULL:
-                    return convertedValue !== null;
-                case ConditionalOperator.EQUALS:
+                case FilterOperator.NULL:
+                    return value === null;
+                case FilterOperator.NOT_NULL:
+                    return value !== null;
+                case FilterOperator.EQUALS:
                     if (shouldCompareFieldToValue) {
                         return rule.values.some((v) => convertedValue === v);
                     }
@@ -189,8 +197,8 @@ export const hasMatchingConditionalRules = (
                         );
                     }
 
-                    throw new Error('Not implemented');
-                case ConditionalOperator.NOT_EQUALS:
+                    throw new NotImplementedError();
+                case FilterOperator.NOT_EQUALS:
                     if (shouldCompareFieldToValue) {
                         return rule.values.some((v) => convertedValue !== v);
                     }
@@ -205,8 +213,8 @@ export const hasMatchingConditionalRules = (
                         );
                     }
 
-                    throw new Error('Not implemented');
-                case ConditionalOperator.LESS_THAN:
+                    throw new NotImplementedError();
+                case FilterOperator.LESS_THAN:
                     if (shouldCompareFieldToValue) {
                         return rule.values.some(
                             (v) =>
@@ -237,8 +245,8 @@ export const hasMatchingConditionalRules = (
                         );
                     }
 
-                    throw new Error('Not implemented');
-                case ConditionalOperator.GREATER_THAN:
+                    throw new NotImplementedError();
+                case FilterOperator.GREATER_THAN:
                     if (shouldCompareFieldToValue) {
                         return rule.values.some(
                             (v) =>
@@ -269,10 +277,10 @@ export const hasMatchingConditionalRules = (
                         );
                     }
 
-                    throw new Error('Not implemented');
-                case ConditionalOperator.STARTS_WITH:
-                case ConditionalOperator.ENDS_WITH:
-                case ConditionalOperator.INCLUDE:
+                    throw new NotImplementedError();
+                case FilterOperator.STARTS_WITH:
+                case FilterOperator.ENDS_WITH:
+                case FilterOperator.INCLUDE:
                     if (shouldCompareFieldToValue) {
                         return rule.values.some(
                             (v) =>
@@ -303,18 +311,172 @@ export const hasMatchingConditionalRules = (
                         );
                     }
 
-                    throw new Error('Not implemented');
-                case ConditionalOperator.IN_BETWEEN:
-                case ConditionalOperator.NOT_IN_BETWEEN:
-                case ConditionalOperator.NOT_INCLUDE:
-                case ConditionalOperator.LESS_THAN_OR_EQUAL:
-                case ConditionalOperator.GREATER_THAN_OR_EQUAL:
-                case ConditionalOperator.IN_THE_PAST:
-                case ConditionalOperator.NOT_IN_THE_PAST:
-                case ConditionalOperator.IN_THE_NEXT:
-                case ConditionalOperator.IN_THE_CURRENT:
-                case ConditionalOperator.NOT_IN_THE_CURRENT:
-                    throw new Error('Not implemented');
+                    throw new NotImplementedError();
+                case FilterOperator.IN_BETWEEN:
+                    if (isStringDimension(field)) {
+                        throw new ConditionalFormattingError(
+                            `String dimensions are not supported for conditional formatting with ${rule.operator}`,
+                        );
+                    }
+
+                    if (shouldCompareFieldToValue) {
+                        if (typeof convertedValue !== 'number') {
+                            throw new ConditionalFormattingError(
+                                `Conditional formatting with ${rule.operator} requires a numeric value`,
+                            );
+                        }
+
+                        const ruleValues = rule.values;
+
+                        if (
+                            ruleValues.length !== 2 ||
+                            typeof ruleValues[0] !== 'number' ||
+                            typeof ruleValues[1] !== 'number'
+                        ) {
+                            return false;
+                        }
+
+                        return (
+                            convertedValue >= ruleValues[0] &&
+                            convertedValue <= ruleValues[1]
+                        );
+                    }
+
+                    if (shouldCompareFieldToTarget) {
+                        throw new ConditionalFormattingError(
+                            `Conditional formatting with ${rule.operator} does not support compare targets`,
+                        );
+                    }
+
+                    if (shouldCompareTargetToValue) {
+                        throw new ConditionalFormattingError(
+                            `Conditional formatting with ${rule.operator} does not support target values`,
+                        );
+                    }
+
+                    // should never happen
+                    return false;
+
+                case FilterOperator.NOT_IN_BETWEEN:
+                    if (isStringDimension(field)) {
+                        throw new ConditionalFormattingError(
+                            `String dimensions are not supported for conditional formatting with ${rule.operator}`,
+                        );
+                    }
+
+                    if (shouldCompareFieldToValue) {
+                        if (typeof convertedValue !== 'number') {
+                            throw new ConditionalFormattingError(
+                                `Conditional formatting with ${rule.operator} requires a numeric value`,
+                            );
+                        }
+
+                        const ruleValues = rule.values;
+
+                        if (
+                            ruleValues.length !== 2 ||
+                            typeof ruleValues[0] !== 'number' ||
+                            typeof ruleValues[1] !== 'number'
+                        ) {
+                            return false;
+                        }
+
+                        return (
+                            convertedValue < ruleValues[0] ||
+                            convertedValue > ruleValues[1]
+                        );
+                    }
+
+                    if (shouldCompareTargetToValue) {
+                        throw new ConditionalFormattingError(
+                            `Conditional formatting with ${rule.operator} does not support target values`,
+                        );
+                    }
+
+                    if (shouldCompareFieldToTarget) {
+                        throw new ConditionalFormattingError(
+                            `Conditional formatting with ${rule.operator} does not support compare targets`,
+                        );
+                    }
+
+                    // should never happen
+                    return false;
+
+                case FilterOperator.LESS_THAN_OR_EQUAL:
+                    if (shouldCompareFieldToValue) {
+                        return rule.values.some(
+                            (v) =>
+                                isNumericItem(field) &&
+                                typeof v === 'number' &&
+                                typeof convertedValue === 'number' &&
+                                convertedValue <= v,
+                        );
+                    }
+
+                    if (shouldCompareFieldToTarget) {
+                        return (
+                            isNumericItem(field) &&
+                            isNumericItem(compareField) &&
+                            typeof convertedCompareValue === 'number' &&
+                            typeof convertedValue === 'number' &&
+                            convertedValue <= convertedCompareValue
+                        );
+                    }
+
+                    if (shouldCompareTargetToValue) {
+                        return rule.values.some(
+                            (v) =>
+                                isNumericItem(compareField) &&
+                                typeof v === 'number' &&
+                                typeof convertedCompareValue === 'number' &&
+                                convertedCompareValue <= v,
+                        );
+                    }
+
+                    throw new NotImplementedError();
+
+                case FilterOperator.GREATER_THAN_OR_EQUAL:
+                    if (shouldCompareFieldToValue) {
+                        return rule.values.some(
+                            (v) =>
+                                isNumericItem(field) &&
+                                typeof v === 'number' &&
+                                typeof convertedValue === 'number' &&
+                                convertedValue >= v,
+                        );
+                    }
+
+                    if (shouldCompareFieldToTarget) {
+                        return (
+                            isNumericItem(field) &&
+                            isNumericItem(compareField) &&
+                            typeof convertedCompareValue === 'number' &&
+                            typeof convertedValue === 'number' &&
+                            convertedValue >= convertedCompareValue
+                        );
+                    }
+
+                    if (shouldCompareTargetToValue) {
+                        return rule.values.some(
+                            (v) =>
+                                isNumericItem(compareField) &&
+                                typeof v === 'number' &&
+                                typeof convertedCompareValue === 'number' &&
+                                convertedCompareValue >= v,
+                        );
+                    }
+
+                    throw new NotImplementedError();
+
+                case FilterOperator.NOT_INCLUDE:
+                case FilterOperator.IN_THE_PAST:
+                case FilterOperator.NOT_IN_THE_PAST:
+                case FilterOperator.IN_THE_NEXT:
+                case FilterOperator.IN_THE_CURRENT:
+                case FilterOperator.NOT_IN_THE_CURRENT:
+                    throw new NotImplementedError(
+                        `Conditional formatting with ${rule.operator} is not implemented`,
+                    );
                 default:
                     return assertUnreachable(
                         rule.operator,
@@ -389,9 +551,9 @@ export const getConditionalFormattingDescription = (
     conditionalFormattingConfig: ConditionalFormattingConfig | undefined,
     rowFields: ConditionalFormattingRowFields,
     getConditionalRuleLabel: (
-        rule: ConditionalFormattingWithConditionalOperator,
+        rule: ConditionalFormattingWithFilterOperator,
         item: FilterableItem,
-    ) => ConditionalRuleLabels,
+    ) => ConditionalRuleLabel,
 ): string | undefined => {
     if (!field || !isFilterableItem(field) || !conditionalFormattingConfig) {
         return undefined;
@@ -421,7 +583,7 @@ export const getConditionalFormattingDescription = (
     ) {
         return conditionalFormattingConfig.rules
             .map<
-                ConditionalRuleLabels & { isComparingTargetToValues?: boolean }
+                ConditionalRuleLabel & { isComparingTargetToValues?: boolean }
             >((r) => {
                 const fieldLabel = getConditionalRuleLabel(r, field);
                 if (isConditionalFormattingWithCompareTarget(r)) {

@@ -1,5 +1,4 @@
 import {
-    FeatureFlags,
     NotificationFrequency,
     SchedulerFormat,
     ThresholdOperator,
@@ -8,6 +7,7 @@ import {
     getMetricsFromItemsMap,
     getTableCalculationsFromItemsMap,
     getTzMinutesOffset,
+    isCreateSchedulerMsTeamsTarget,
     isDashboardScheduler,
     isNumericItem,
     isSchedulerCsvOptions,
@@ -17,8 +17,13 @@ import {
     type CreateSchedulerAndTargetsWithoutIds,
     type CreateSchedulerTarget,
     type Dashboard,
+    type DashboardFilterRule,
     type ItemsMap,
+    type ParameterDefinitions,
+    type ParametersValuesMap,
     type SchedulerAndTargets,
+    type SchedulerCsvOptions,
+    type SchedulerImageOptions,
 } from '@lightdash/common';
 import {
     Anchor,
@@ -29,7 +34,6 @@ import {
     Group,
     HoverCard,
     Input,
-    Loader,
     MultiSelect,
     NumberInput,
     Radio,
@@ -54,25 +58,28 @@ import {
     IconSettings,
 } from '@tabler/icons-react';
 import MDEditor, { commands } from '@uiw/react-md-editor';
-import { debounce, intersection, isEqual } from 'lodash';
+import intersection from 'lodash/intersection';
+import isEqual from 'lodash/isEqual';
 import { useCallback, useMemo, useState, type FC } from 'react';
 import { CronInternalInputs } from '../../../components/ReactHookForm/CronInput';
-import { hasRequiredScopes } from '../../../components/UserSettings/SlackSettingsPanel/utils';
 import FieldSelect from '../../../components/common/FieldSelect';
 import FilterNumberInput from '../../../components/common/Filters/FilterInputs/FilterNumberInput';
 import MantineIcon from '../../../components/common/MantineIcon';
+import { SlackChannelSelect } from '../../../components/common/SlackChannelSelect';
+import { DefaultValue } from '../../../components/common/TagInput/DefaultValue/DefaultValue';
 import { TagInput } from '../../../components/common/TagInput/TagInput';
 import TimeZonePicker from '../../../components/common/TimeZonePicker';
 import { useDashboardQuery } from '../../../hooks/dashboard/useDashboard';
 import useHealth from '../../../hooks/health/useHealth';
-import { useGetSlack, useSlackChannels } from '../../../hooks/slack/useSlack';
+import { useGetSlack } from '../../../hooks/slack/useSlack';
 import { useActiveProjectUuid } from '../../../hooks/useActiveProject';
-import { useFeatureFlagEnabled } from '../../../hooks/useFeatureFlagEnabled';
 import { useProject } from '../../../hooks/useProject';
+import MsTeamsSvg from '../../../svgs/msteams.svg?react';
 import SlackSvg from '../../../svgs/slack.svg?react';
 import { isInvalidCronExpression } from '../../../utils/fieldValidators';
 import SchedulerFilters from './SchedulerFilters';
 import SchedulersModalFooter from './SchedulerModalFooter';
+import SchedulerParameters from './SchedulerParameters';
 import { SchedulerPreview } from './SchedulerPreview';
 import { Limit, Values } from './types';
 
@@ -94,12 +101,15 @@ const DEFAULT_VALUES = {
         limit: Limit.TABLE,
         customLimit: 1,
         withPdf: false,
+        asAttachment: false,
     },
     emailTargets: [] as string[],
     slackTargets: [] as string[],
-    filters: undefined,
+    msTeamsTargets: [] as string[],
+    filters: [] as DashboardFilterRule[],
+    parameters: undefined,
     customViewportWidth: undefined,
-    selectedTabs: undefined,
+    selectedTabs: null,
     thresholds: [],
     includeLinks: true,
 };
@@ -117,8 +127,6 @@ const DEFAULT_VALUES_ALERT = {
     ],
     notificationFrequency: NotificationFrequency.ONCE,
 };
-
-const MAX_SLACK_CHANNELS = 100000;
 
 const thresholdOperatorOptions = [
     { label: 'is greater than', value: ThresholdOperator.GREATER_THAN },
@@ -139,7 +147,7 @@ const getSelectedTabsForDashboardScheduler = (
                       schedulerData.selectedTabs,
                       dashboard?.tabs.map((tab) => tab.uuid),
                   )
-                : undefined, // remove tabs that have been deleted
+                : null, // remove tabs that have been deleted
         }
     );
 };
@@ -162,16 +170,20 @@ const getFormValuesFromScheduler = (schedulerData: SchedulerAndTargets) => {
         if (formOptions.limit === Limit.CUSTOM) {
             formOptions.customLimit = options.limit as number;
         }
+        formOptions.asAttachment = options.asAttachment || false;
     } else if (isSchedulerImageOptions(options)) {
         formOptions.withPdf = options.withPdf || false;
     }
 
     const emailTargets: string[] = [];
     const slackTargets: string[] = [];
+    const msTeamsTargets: string[] = [];
 
     schedulerData.targets.forEach((target) => {
         if (isSlackTarget(target)) {
             slackTargets.push(target.channel);
+        } else if (isCreateSchedulerMsTeamsTarget(target)) {
+            msTeamsTargets.push(target.webhook);
         } else {
             emailTargets.push(target.recipient);
         }
@@ -186,8 +198,10 @@ const getFormValuesFromScheduler = (schedulerData: SchedulerAndTargets) => {
         options: formOptions,
         emailTargets: emailTargets,
         slackTargets: slackTargets,
+        msTeamsTargets: msTeamsTargets,
         ...(isDashboardScheduler(schedulerData) && {
             filters: schedulerData.filters,
+            parameters: schedulerData.parameters,
             customViewportWidth: schedulerData.customViewportWidth,
             selectedTabs: schedulerData.selectedTabs,
         }),
@@ -247,8 +261,65 @@ type Props = {
     confirmText?: string;
     isThresholdAlert?: boolean;
     itemsMap?: ItemsMap;
+    currentParameterValues?: ParametersValuesMap;
+    availableParameters?: ParameterDefinitions;
 };
 
+const validateMsTeamsWebhook = (webhook: string): boolean => {
+    if (webhook.length === 0) return false;
+    if (!webhook.startsWith('https://')) return false;
+    if (/\s/.test(webhook)) return false;
+
+    return true;
+};
+
+type MicrosoftTeamsDestinationProps = {
+    onChange: (val: string[]) => void;
+    msTeamTargets: string[];
+};
+
+const withTooltip = (Component: FC<any>) => {
+    return ({ value, onRemove, ...props }: any) => (
+        <Tooltip label={value} withinPortal multiline w="500px">
+            <Component value={value} onRemove={onRemove} {...props} />
+        </Tooltip>
+    );
+};
+const RenderValueWithTooltip = withTooltip(DefaultValue);
+
+const MicrosoftTeamsDestination: FC<MicrosoftTeamsDestinationProps> = ({
+    onChange,
+    msTeamTargets,
+}) => {
+    return (
+        <Group noWrap mb="sm">
+            <MsTeamsSvg
+                style={{
+                    margin: '5px 2px',
+                    width: '20px',
+                    height: '20px',
+                }}
+            />
+            <Box w="100%">
+                <TagInput
+                    sx={{
+                        span: {
+                            maxWidth: '280px',
+                        },
+                    }}
+                    clearable
+                    placeholder="Enter Microsoft Teams webhook URLs"
+                    value={msTeamTargets}
+                    allowDuplicates={false}
+                    splitChars={[',', ' ']}
+                    validationFunction={validateMsTeamsWebhook}
+                    onChange={onChange}
+                    valueComponent={RenderValueWithTooltip}
+                />
+            </Box>
+        </Group>
+    );
+};
 const SchedulerForm: FC<Props> = ({
     disabled,
     resource,
@@ -260,20 +331,22 @@ const SchedulerForm: FC<Props> = ({
     confirmText,
     isThresholdAlert,
     itemsMap,
+    currentParameterValues,
+    availableParameters,
 }) => {
     const isDashboard = resource && resource.type === 'dashboard';
-    const isDashboardTabsEnabled = useFeatureFlagEnabled(
-        FeatureFlags.DashboardTabs,
-    );
     const { data: dashboard } = useDashboardQuery(resource?.uuid, {
         enabled: isDashboard,
     });
 
     const isDashboardTabsAvailable =
-        dashboard?.tabs !== undefined && dashboard.tabs.length > 0;
+        dashboard?.tabs !== undefined && dashboard.tabs.length > 1;
 
     const { activeProjectUuid } = useActiveProjectUuid();
     const { data: project } = useProject(activeProjectUuid);
+
+    // Use the explicitly passed parameter values
+    const dashboardParameterValues = currentParameterValues || {};
 
     const form = useForm({
         initialValues:
@@ -292,7 +365,12 @@ const SchedulerForm: FC<Props> = ({
                       ...DEFAULT_VALUES,
                       selectedTabs: isDashboardTabsAvailable
                           ? dashboard?.tabs.map((tab) => tab.uuid)
-                          : undefined,
+                          : null,
+                      parameters:
+                          isDashboard &&
+                          Object.keys(dashboardParameterValues).length > 0
+                              ? dashboardParameterValues
+                              : undefined,
                   },
         validateInputOnBlur: ['options.customLimit'],
 
@@ -308,27 +386,59 @@ const SchedulerForm: FC<Props> = ({
                         : null;
                 },
             },
+            filters: (value: DashboardFilterRule[] | null) => {
+                if (!value) {
+                    // Dashboard filters are null for charts
+                    return null;
+                }
+                const requiredFiltersWithoutValues = value.filter(
+                    (filter) =>
+                        filter.required &&
+                        (!filter.values || filter.values.length === 0),
+                );
+
+                if (requiredFiltersWithoutValues.length > 0) {
+                    return `Required filters must have values`;
+                }
+                return null;
+            },
             cron: (cronExpression) => {
                 return isInvalidCronExpression('Cron expression')(
                     cronExpression,
                 );
             },
+            selectedTabs: (value: string[] | null) => {
+                if (value && value.length === 0) {
+                    return 'Selected tabs should not be empty';
+                }
+                return null;
+            },
         },
 
         transformValues: (values): CreateSchedulerAndTargetsWithoutIds => {
             let options = {};
-            if (values.format === SchedulerFormat.CSV) {
+            if (
+                [SchedulerFormat.CSV, SchedulerFormat.XLSX].includes(
+                    values.format,
+                )
+            ) {
                 options = {
-                    formatted: values.options.formatted,
+                    formatted: values.options.formatted === Values.FORMATTED,
                     limit:
                         values.options.limit === Limit.CUSTOM
                             ? values.options.customLimit
                             : values.options.limit,
-                };
+                    // Only allow attachment for CSV format and if there are email targets
+                    asAttachment:
+                        values.format === SchedulerFormat.CSV &&
+                        values.emailTargets.length > 0
+                            ? values.options.asAttachment
+                            : false,
+                } satisfies SchedulerCsvOptions;
             } else if (values.format === SchedulerFormat.IMAGE) {
                 options = {
                     withPdf: values.options.withPdf,
-                };
+                } satisfies SchedulerImageOptions;
             }
 
             const emailTargets = values.emailTargets.map((email: string) => ({
@@ -340,10 +450,16 @@ const SchedulerForm: FC<Props> = ({
                     channel: channelId,
                 }),
             );
+            const msTeamsTargets = values.msTeamsTargets.map(
+                (webhook: string) => ({
+                    webhook: webhook,
+                }),
+            );
 
             const targets: CreateSchedulerTarget[] = [
                 ...emailTargets,
                 ...slackTargets,
+                ...msTeamsTargets,
             ];
             return {
                 name: values.name,
@@ -355,6 +471,7 @@ const SchedulerForm: FC<Props> = ({
                 targets,
                 ...(resource?.type === 'dashboard' && {
                     filters: values.filters,
+                    parameters: values.parameters,
                     customViewportWidth: values.customViewportWidth,
                     selectedTabs: values.selectedTabs,
                 }),
@@ -380,19 +497,8 @@ const SchedulerForm: FC<Props> = ({
     const [emailValidationError, setEmailValidationError] = useState<
         string | undefined
     >();
-    const [privateChannels, setPrivateChannels] = useState<
-        Array<{
-            label: string;
-            value: string;
-            group: 'Private channels';
-        }>
-    >([]);
 
     const [showFormatting, setShowFormatting] = useState(false);
-
-    const [search, setSearch] = useState('');
-
-    const debounceSetSearch = debounce((val) => setSearch(val), 500);
 
     const numericMetrics = {
         ...getMetricsFromItemsMap(itemsMap ?? {}, isNumericItem),
@@ -405,36 +511,10 @@ const SchedulerForm: FC<Props> = ({
     const slackState = useMemo(() => {
         if (isInitialLoading) return SlackStates.LOADING;
         if (!organizationHasSlack) return SlackStates.NO_SLACK;
-        if (!hasRequiredScopes(slackInstallation))
+        if (!slackInstallation.hasRequiredScopes)
             return SlackStates.MISSING_SCOPES;
         return SlackStates.SUCCESS;
     }, [isInitialLoading, organizationHasSlack, slackInstallation]);
-
-    const slackChannelsQuery = useSlackChannels(search, true, {
-        enabled: organizationHasSlack,
-    });
-
-    const slackChannels = useMemo(() => {
-        return (slackChannelsQuery?.data || [])
-            .map((channel) => {
-                const channelPrefix = channel.name.charAt(0);
-
-                return {
-                    value: channel.id,
-                    label: channel.name,
-                    group:
-                        channelPrefix === '#'
-                            ? 'Channels'
-                            : channelPrefix === '@'
-                            ? 'Users'
-                            : 'Private channels',
-                };
-            })
-            .concat(privateChannels);
-    }, [slackChannelsQuery?.data, privateChannels]);
-
-    let responsiveChannelsSearchEnabled =
-        slackChannels.length >= MAX_SLACK_CHANNELS || search.length > 0; // enable responvive channel search if there are more than MAX_SLACK_CHANNELS defined channels
 
     const handleSendNow = useCallback(() => {
         if (form.isValid()) {
@@ -453,6 +533,11 @@ const SchedulerForm: FC<Props> = ({
     const isThresholdAlertWithNoFields =
         isThresholdAlert && Object.keys(numericMetrics).length === 0;
 
+    const requiredFiltersWithoutValues = (form.values.filters ?? []).filter(
+        (filter) =>
+            filter.required && (!filter.values || filter.values.length === 0),
+    );
+
     const projectDefaultOffsetString = useMemo(() => {
         if (!project) {
             return;
@@ -469,7 +554,22 @@ const SchedulerForm: FC<Props> = ({
                         Setup
                     </Tabs.Tab>
                     {isDashboard && dashboard ? (
-                        <Tabs.Tab value="filters">Filters</Tabs.Tab>
+                        <>
+                            <Tabs.Tab value="filters">
+                                {`Filters ${
+                                    form.values.filters &&
+                                    form.values.filters.length > 0
+                                        ? `(${form.values.filters.length})`
+                                        : ''
+                                }`}
+                                {requiredFiltersWithoutValues.length > 0 && (
+                                    <Text span color="red" ml={4}>
+                                        *
+                                    </Text>
+                                )}
+                            </Tabs.Tab>
+                            <Tabs.Tab value="parameters">Parameters</Tabs.Tab>
+                        </>
                     ) : null}
 
                     {!isThresholdAlert && (
@@ -495,7 +595,7 @@ const SchedulerForm: FC<Props> = ({
                 <Tabs.Panel value="setup" mt="md">
                     <Stack
                         sx={(theme) => ({
-                            backgroundColor: theme.white,
+                            backgroundColor: theme.colors.background[0],
                             paddingRight: theme.spacing.xl,
                         })}
                         spacing="xl"
@@ -625,7 +725,7 @@ const SchedulerForm: FC<Props> = ({
                                             NotificationFrequency.ALWAYS && (
                                             <Text
                                                 size="xs"
-                                                color="gray.6"
+                                                color="ldGray.6"
                                                 fs="italic"
                                             >
                                                 You will be notified at the
@@ -698,6 +798,10 @@ const SchedulerForm: FC<Props> = ({
                                                 value: SchedulerFormat.CSV,
                                             },
                                             {
+                                                label: '.xlsx',
+                                                value: SchedulerFormat.XLSX,
+                                            },
+                                            {
                                                 label: 'Image',
                                                 value: SchedulerFormat.IMAGE,
                                                 disabled: isImageDisabled,
@@ -710,7 +814,7 @@ const SchedulerForm: FC<Props> = ({
                                     {isImageDisabled && (
                                         <Text
                                             size="xs"
-                                            color="gray.6"
+                                            color="ldGray.6"
                                             w="30%"
                                             sx={{ alignSelf: 'start' }}
                                         >
@@ -739,6 +843,39 @@ const SchedulerForm: FC<Props> = ({
                                     />
                                 ) : (
                                     <Stack spacing="xs">
+                                        {form.values.format ===
+                                            SchedulerFormat.CSV && (
+                                            <Tooltip
+                                                label="You must have at least one email target to attach a file to emails"
+                                                position="top"
+                                                withinPortal
+                                                disabled={
+                                                    form.values.emailTargets
+                                                        .length > 0
+                                                }
+                                            >
+                                                <Box
+                                                    display="flex"
+                                                    w="fit-content"
+                                                >
+                                                    <Checkbox
+                                                        label="Attach file to emails"
+                                                        labelPosition="left"
+                                                        {...form.getInputProps(
+                                                            'options.asAttachment',
+                                                            {
+                                                                type: 'checkbox',
+                                                            },
+                                                        )}
+                                                        disabled={
+                                                            form.values
+                                                                .emailTargets
+                                                                .length === 0
+                                                        }
+                                                    />
+                                                </Box>
+                                            </Tooltip>
+                                        )}
                                         <Button
                                             variant="subtle"
                                             compact
@@ -857,68 +994,70 @@ const SchedulerForm: FC<Props> = ({
                             </Stack>
                         )}
 
-                        {isDashboardTabsEnabled &&
-                            isDashboardTabsAvailable &&
-                            !isThresholdAlert && (
-                                <Stack spacing={10}>
-                                    <Input.Label>
-                                        Tabs
-                                        <Tooltip
-                                            withinPortal={true}
-                                            maw={400}
-                                            multiline
-                                            label="Select all tabs to include all tabs in the delivery. If you don't select this option, only selected tab will be included in the delivery."
-                                        >
-                                            <MantineIcon
-                                                icon={IconHelpCircle}
-                                                size="md"
-                                                display="inline"
-                                                color="gray"
-                                                style={{
-                                                    marginLeft: '4px',
-                                                    marginBottom: '-4px',
-                                                }}
-                                            />
-                                        </Tooltip>
-                                    </Input.Label>
-                                    <Checkbox
-                                        size="xs"
-                                        label="Include all tabs"
-                                        labelPosition="right"
-                                        checked={allTabsSelected}
-                                        onChange={(e) => {
-                                            setAllTabsSelected((old) => !old);
+                        {isDashboardTabsAvailable && !isThresholdAlert && (
+                            <Stack spacing={10}>
+                                <Input.Label>
+                                    Tabs
+                                    <Tooltip
+                                        withinPortal={true}
+                                        maw={400}
+                                        multiline
+                                        label="Select all tabs to include all tabs in the delivery. If you don't select this option, only selected tab will be included in the delivery."
+                                    >
+                                        <MantineIcon
+                                            icon={IconHelpCircle}
+                                            size="md"
+                                            display="inline"
+                                            color="gray"
+                                            style={{
+                                                marginLeft: '4px',
+                                                marginBottom: '-4px',
+                                            }}
+                                        />
+                                    </Tooltip>
+                                </Input.Label>
+                                <Checkbox
+                                    size="xs"
+                                    label="Include all tabs"
+                                    labelPosition="right"
+                                    checked={allTabsSelected}
+                                    onChange={(e) => {
+                                        setAllTabsSelected((old) => !old);
+                                        form.setFieldValue(
+                                            'selectedTabs',
+                                            e.target.checked ? null : [],
+                                        );
+                                    }}
+                                />
+                                {!allTabsSelected && (
+                                    <MultiSelect
+                                        placeholder="Select tabs to include in the delivery"
+                                        value={
+                                            form.values.selectedTabs ??
+                                            undefined
+                                        }
+                                        error={
+                                            form.errors.selectedTabs
+                                                ? 'Selected tabs should not be empty'
+                                                : undefined
+                                        }
+                                        data={(dashboard?.tabs || []).map(
+                                            (tab) => ({
+                                                value: tab.uuid,
+                                                label: tab.name,
+                                            }),
+                                        )}
+                                        searchable
+                                        onChange={(val) => {
                                             form.setFieldValue(
                                                 'selectedTabs',
-                                                e.target.checked
-                                                    ? dashboard?.tabs.map(
-                                                          (tab) => tab.uuid,
-                                                      )
-                                                    : [],
+                                                val,
                                             );
                                         }}
                                     />
-                                    {!allTabsSelected && (
-                                        <MultiSelect
-                                            placeholder="Select tabs to include in the delivery"
-                                            value={form.values.selectedTabs}
-                                            data={(dashboard?.tabs || []).map(
-                                                (tab) => ({
-                                                    value: tab.uuid,
-                                                    label: tab.name,
-                                                }),
-                                            )}
-                                            searchable
-                                            onChange={(val) => {
-                                                form.setFieldValue(
-                                                    'selectedTabs',
-                                                    val,
-                                                );
-                                            }}
-                                        />
-                                    )}
-                                </Stack>
-                            )}
+                                )}
+                            </Stack>
+                        )}
 
                         <Input.Wrapper label="Destinations">
                             <Stack mt="sm">
@@ -926,7 +1065,7 @@ const SchedulerForm: FC<Props> = ({
                                     <MantineIcon
                                         icon={IconMail}
                                         size="xl"
-                                        color="gray.7"
+                                        color="ldGray.7"
                                     />
                                     <HoverCard
                                         disabled={!isAddEmailDisabled}
@@ -998,7 +1137,14 @@ const SchedulerForm: FC<Props> = ({
                                         </HoverCard.Dropdown>
                                     </HoverCard>
                                 </Group>
-                                <Stack spacing="xs" mb="sm">
+                                <Stack
+                                    spacing="xs"
+                                    mb={
+                                        health.data?.hasMicrosoftTeams
+                                            ? '0'
+                                            : 'sm'
+                                    }
+                                >
                                     <Group noWrap>
                                         <SlackSvg
                                             style={{
@@ -1015,54 +1161,17 @@ const SchedulerForm: FC<Props> = ({
                                         >
                                             <HoverCard.Target>
                                                 <Box w="100%">
-                                                    <MultiSelect
+                                                    <SlackChannelSelect
+                                                        multiple
+                                                        size="sm"
                                                         placeholder="Search slack channels"
-                                                        data={slackChannels}
-                                                        searchable
-                                                        creatable
-                                                        limit={500}
-                                                        withinPortal
                                                         value={
                                                             form.values
                                                                 .slackTargets
                                                         }
-                                                        rightSection={
-                                                            slackChannelsQuery?.isInitialLoading ?? (
-                                                                <Loader size="sm" />
-                                                            )
-                                                        }
                                                         disabled={
                                                             isAddSlackDisabled
                                                         }
-                                                        getCreateLabel={(
-                                                            query,
-                                                        ) =>
-                                                            `Send to private channel #${query}`
-                                                        }
-                                                        onCreate={(newItem) => {
-                                                            setPrivateChannels(
-                                                                (current) => [
-                                                                    ...current,
-                                                                    {
-                                                                        label: newItem,
-                                                                        value: newItem,
-                                                                        group: 'Private channels',
-                                                                    },
-                                                                ],
-                                                            );
-                                                            return newItem;
-                                                        }}
-                                                        onSearchChange={(
-                                                            val,
-                                                        ) => {
-                                                            if (
-                                                                responsiveChannelsSearchEnabled
-                                                            ) {
-                                                                debounceSetSearch(
-                                                                    val,
-                                                                );
-                                                            }
-                                                        }}
                                                         onChange={(val) => {
                                                             form.setFieldValue(
                                                                 'slackTargets',
@@ -1080,7 +1189,11 @@ const SchedulerForm: FC<Props> = ({
                                         </HoverCard>
                                     </Group>
                                     {!isAddSlackDisabled && (
-                                        <Text size="xs" color="gray.6" ml="3xl">
+                                        <Text
+                                            size="xs"
+                                            color="ldGray.6"
+                                            ml="3xl"
+                                        >
                                             If delivering to a private Slack
                                             channel, please type the name of the
                                             channel in the input box exactly as
@@ -1090,21 +1203,64 @@ const SchedulerForm: FC<Props> = ({
                                         </Text>
                                     )}
                                 </Stack>
+                                {health.data?.hasMicrosoftTeams && (
+                                    <MicrosoftTeamsDestination
+                                        msTeamTargets={
+                                            form.values.msTeamsTargets
+                                        }
+                                        onChange={(val: string[]) => {
+                                            form.setFieldValue(
+                                                'msTeamsTargets',
+                                                val,
+                                            );
+                                        }}
+                                    />
+                                )}
                             </Stack>
                         </Input.Wrapper>
                     </Stack>
                 </Tabs.Panel>
 
                 {isDashboard && dashboard ? (
-                    <Tabs.Panel value="filters" p="md">
-                        <SchedulerFilters
-                            dashboard={dashboard}
-                            schedulerFilters={form.values.filters}
-                            onChange={(schedulerFilters) => {
-                                form.setFieldValue('filters', schedulerFilters);
-                            }}
-                        />
-                    </Tabs.Panel>
+                    <>
+                        <Tabs.Panel value="filters" p="md">
+                            <SchedulerFilters
+                                dashboard={dashboard}
+                                draftFilters={form.values.filters}
+                                isEditMode={savedSchedulerData !== undefined}
+                                savedFilters={
+                                    savedSchedulerData &&
+                                    'filters' in savedSchedulerData
+                                        ? savedSchedulerData.filters
+                                        : []
+                                }
+                                onChange={(schedulerFilters) => {
+                                    form.setFieldValue(
+                                        'filters',
+                                        schedulerFilters,
+                                    );
+                                }}
+                            />
+                        </Tabs.Panel>
+
+                        <Tabs.Panel value="parameters" p="md">
+                            <SchedulerParameters
+                                dashboard={dashboard}
+                                currentParameterValues={currentParameterValues}
+                                schedulerParameterValues={
+                                    form.values.parameters
+                                }
+                                availableParameters={availableParameters}
+                                isLoading={!!loading}
+                                onChange={(schedulerParameters) => {
+                                    form.setFieldValue(
+                                        'parameters',
+                                        schedulerParameters,
+                                    );
+                                }}
+                            />
+                        </Tabs.Panel>
+                    </>
                 ) : null}
 
                 <Tabs.Panel value="customization">
@@ -1130,7 +1286,7 @@ const SchedulerForm: FC<Props> = ({
                             >
                                 <MantineIcon
                                     icon={IconInfoCircle}
-                                    color="gray.6"
+                                    color="ldGray.6"
                                 />
                             </Tooltip>
                         </Group>
@@ -1175,11 +1331,21 @@ const SchedulerForm: FC<Props> = ({
 
             <SchedulersModalFooter
                 confirmText={confirmText}
-                disableConfirm={isThresholdAlertWithNoFields}
+                disableConfirm={
+                    isThresholdAlertWithNoFields ||
+                    requiredFiltersWithoutValues.length > 0
+                }
+                disabledMessage={
+                    requiredFiltersWithoutValues.length > 0
+                        ? 'Some required filters are missing values'
+                        : undefined
+                }
                 onBack={onBack}
                 canSendNow={Boolean(
-                    form.values.slackTargets.length ||
-                        form.values.emailTargets.length,
+                    (form.values.slackTargets.length ||
+                        form.values.emailTargets.length ||
+                        form.values.msTeamsTargets.length) &&
+                        requiredFiltersWithoutValues.length === 0,
                 )}
                 onSendNow={isThresholdAlert ? undefined : handleSendNow}
                 loading={loading}

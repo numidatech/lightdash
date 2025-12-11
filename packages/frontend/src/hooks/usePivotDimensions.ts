@@ -1,31 +1,36 @@
-import { type ApiQueryResults } from '@lightdash/common';
-import { useMemo, useState } from 'react';
+import { type MetricQuery } from '@lightdash/common';
+import { useCallback, useMemo, type SetStateAction } from 'react';
 
 const usePivotDimensions = (
-    initialPivotDimensions: string[] | undefined,
-    resultsData: ApiQueryResults | undefined,
+    pivotDimensions: string[] | undefined,
+    metricQuery: MetricQuery | undefined,
+    onPivotDimensionsChange?: (value: string[] | undefined) => void,
 ) => {
-    const [dirtyPivotDimensions, setPivotDimensions] = useState(
-        initialPivotDimensions,
-    );
-
     const validPivotDimensions = useMemo(() => {
-        if (resultsData) {
-            const availableDimensions = resultsData.metricQuery.dimensions;
+        if (metricQuery) {
+            const availableDimensions = metricQuery.dimensions;
 
             if (
-                dirtyPivotDimensions &&
-                dirtyPivotDimensions.some((key) =>
-                    availableDimensions.includes(key),
-                )
+                pivotDimensions &&
+                pivotDimensions.some((key) => availableDimensions.includes(key))
             ) {
-                return dirtyPivotDimensions.filter((key) =>
+                return pivotDimensions.filter((key) =>
                     availableDimensions.includes(key),
                 );
             }
             return undefined;
         }
-    }, [resultsData, dirtyPivotDimensions]);
+    }, [metricQuery, pivotDimensions]);
+
+    const setPivotDimensions = useCallback(
+        (value: SetStateAction<string[] | undefined>) => {
+            // Handle both direct values and updater functions
+            const nextValue =
+                typeof value === 'function' ? value(pivotDimensions) : value;
+            onPivotDimensionsChange?.(nextValue);
+        },
+        [onPivotDimensionsChange, pivotDimensions],
+    );
 
     return {
         validPivotDimensions,

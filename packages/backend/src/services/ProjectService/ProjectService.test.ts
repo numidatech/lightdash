@@ -1,39 +1,49 @@
 import {
-    ConditionalOperator,
     defineUserAbility,
+    FilterOperator,
     NotFoundError,
     OrganizationMemberRole,
     ParameterError,
     SessionUser,
 } from '@lightdash/common';
 import { analyticsMock } from '../../analytics/LightdashAnalytics.mock';
-import { S3Client } from '../../clients/Aws/s3';
 import { S3CacheClient } from '../../clients/Aws/S3CacheClient';
+import { S3Client } from '../../clients/Aws/S3Client';
 import EmailClient from '../../clients/EmailClient/EmailClient';
 import { lightdashConfigMock } from '../../config/lightdashConfig.mock';
+import { type LightdashConfig } from '../../config/parseConfig';
 import { AnalyticsModel } from '../../models/AnalyticsModel';
 import type { CatalogModel } from '../../models/CatalogModel/CatalogModel';
 import { ContentModel } from '../../models/ContentModel/ContentModel';
 import { DashboardModel } from '../../models/DashboardModel/DashboardModel';
 import { DownloadFileModel } from '../../models/DownloadFileModel';
 import { EmailModel } from '../../models/EmailModel';
+import { FeatureFlagModel } from '../../models/FeatureFlagModel/FeatureFlagModel';
 import { GroupsModel } from '../../models/GroupsModel';
 import { JobModel } from '../../models/JobModel/JobModel';
 import { OnboardingModel } from '../../models/OnboardingModel/OnboardingModel';
+import { OrganizationWarehouseCredentialsModel } from '../../models/OrganizationWarehouseCredentialsModel';
+import { ProjectCompileLogModel } from '../../models/ProjectCompileLogModel';
 import { ProjectModel } from '../../models/ProjectModel/ProjectModel';
+import { ProjectParametersModel } from '../../models/ProjectParametersModel';
 import { SavedChartModel } from '../../models/SavedChartModel';
 import { SpaceModel } from '../../models/SpaceModel';
 import { SshKeyPairModel } from '../../models/SshKeyPairModel';
 import type { TagsModel } from '../../models/TagsModel';
 import { UserAttributesModel } from '../../models/UserAttributesModel';
+import { UserModel } from '../../models/UserModel';
 import { UserWarehouseCredentialsModel } from '../../models/UserWarehouseCredentials/UserWarehouseCredentialsModel';
 import { WarehouseAvailableTablesModel } from '../../models/WarehouseAvailableTablesModel/WarehouseAvailableTablesModel';
-import { METRIC_QUERY, warehouseClientMock } from '../../queryBuilder.mock';
 import { SchedulerClient } from '../../scheduler/SchedulerClient';
 import { EncryptionUtil } from '../../utils/EncryptionUtil/EncryptionUtil';
+import {
+    METRIC_QUERY,
+    warehouseClientMock,
+} from '../../utils/QueryBuilder/MetricQueryBuilder.mock';
 import { ProjectService } from './ProjectService';
 import {
     allExplores,
+    buildAccount,
     defaultProject,
     expectedAllExploreSummary,
     expectedAllExploreSummaryWithoutErrors,
@@ -42,6 +52,8 @@ import {
     expectedCatalog,
     expectedExploreSummaryFilteredByName,
     expectedExploreSummaryFilteredByTags,
+    exploreToSummaryWithAttributes,
+    exploreWithRequiredAttributes,
     job,
     lightdashConfigWithNoSMTP,
     metricQueryMock,
@@ -49,12 +61,14 @@ import {
     projectWithSensitiveFields,
     resultsWith1Row,
     resultsWith501Rows,
+    sessionAccount,
     spacesWithSavedCharts,
     tablesConfiguration,
     tablesConfigurationWithNames,
     tablesConfigurationWithTags,
     user,
     validExplore,
+    virtualExplore,
 } from './ProjectService.mock';
 
 jest.mock('@lightdash/warehouses', () => ({
@@ -72,6 +86,9 @@ const projectModel = {
     updateTablesConfiguration: jest.fn(),
     getExploreFromCache: jest.fn(async () => validExplore),
     findExploresFromCache: jest.fn(async () => allExplores),
+    getAllExploreSummaries: jest.fn(async () =>
+        allExplores.map(exploreToSummaryWithAttributes),
+    ),
     lockProcess: jest.fn((projectUuid, fun) => fun()),
     getWarehouseCredentialsForProject: jest.fn(
         async () => warehouseClientMock.credentials,
@@ -102,10 +119,9 @@ const userAttributesModel = {
     getAttributeValuesForOrgMember: jest.fn(async () => ({})),
 };
 
-describe('ProjectService', () => {
-    const { projectUuid } = defaultProject;
-    const service = new ProjectService({
-        lightdashConfig: lightdashConfigMock,
+const getMockedProjectService = (lightdashConfig: LightdashConfig) =>
+    new ProjectService({
+        lightdashConfig,
         analytics: analyticsMock,
         projectModel: projectModel as unknown as ProjectModel,
         onboardingModel: onboardingModel as unknown as OnboardingModel,
@@ -136,7 +152,25 @@ describe('ProjectService', () => {
         catalogModel: {} as CatalogModel,
         contentModel: {} as ContentModel,
         encryptionUtil: {} as EncryptionUtil,
+        userModel: {} as UserModel,
+        featureFlagModel: {} as FeatureFlagModel,
+        projectParametersModel: {
+            find: jest.fn(async () => []),
+        } as unknown as ProjectParametersModel,
+        organizationWarehouseCredentialsModel:
+            {} as unknown as OrganizationWarehouseCredentialsModel,
+        projectCompileLogModel: {} as ProjectCompileLogModel,
     });
+
+const account = buildAccount({
+    accountType: 'session',
+    userType: 'registered',
+});
+
+describe('ProjectService', () => {
+    const { projectUuid } = defaultProject;
+    const service = getMockedProjectService(lightdashConfigMock);
+
     afterEach(() => {
         jest.clearAllMocks();
     });
@@ -158,7 +192,10 @@ describe('ProjectService', () => {
         expect(results).toEqual(expectedCatalog);
     });
     test('should get tables configuration', async () => {
-        const result = await service.getTablesConfiguration(user, projectUuid);
+        const result = await service.getTablesConfiguration(
+            account,
+            projectUuid,
+        );
         expect(result).toEqual(tablesConfiguration);
     });
     test('should update tables configuration', async () => {
@@ -179,7 +216,7 @@ describe('ProjectService', () => {
     describe('runExploreQuery', () => {
         test('should get results with 1 row', async () => {
             const result = await service.runExploreQuery(
-                user,
+                sessionAccount,
                 metricQueryMock,
                 projectUuid,
                 'valid_explore',
@@ -198,7 +235,7 @@ describe('ProjectService', () => {
             }));
 
             const result = await service.runExploreQuery(
-                user,
+                sessionAccount,
                 metricQueryMock,
                 projectUuid,
                 'valid_explore',
@@ -210,7 +247,7 @@ describe('ProjectService', () => {
     describe('getAllExploresSummary', () => {
         test('should get all explores summary without filtering', async () => {
             const result = await service.getAllExploresSummary(
-                user,
+                account,
                 projectUuid,
                 false,
             );
@@ -218,7 +255,7 @@ describe('ProjectService', () => {
         });
         test('should get all explores summary with filtering', async () => {
             const result = await service.getAllExploresSummary(
-                user,
+                account,
                 projectUuid,
                 true,
             );
@@ -229,7 +266,7 @@ describe('ProjectService', () => {
                 projectModel.getTablesConfiguration as jest.Mock
             ).mockImplementationOnce(async () => tablesConfigurationWithTags);
             const result = await service.getAllExploresSummary(
-                user,
+                account,
                 projectUuid,
                 true,
             );
@@ -240,7 +277,7 @@ describe('ProjectService', () => {
                 projectModel.getTablesConfiguration as jest.Mock
             ).mockImplementationOnce(async () => tablesConfigurationWithNames);
             const result = await service.getAllExploresSummary(
-                user,
+                account,
                 projectUuid,
                 true,
             );
@@ -248,12 +285,134 @@ describe('ProjectService', () => {
         });
         test('should get all explores summary that do not have errors', async () => {
             const result = await service.getAllExploresSummary(
-                user,
+                account,
                 projectUuid,
                 false,
                 false,
             );
             expect(result).toEqual(expectedAllExploreSummaryWithoutErrors);
+        });
+
+        test('should include virtual explores when filtered by tags even if they do not match', async () => {
+            const exploresWithVirtual = [...allExplores, virtualExplore];
+            (
+                projectModel.getAllExploreSummaries as jest.Mock
+            ).mockImplementationOnce(async () =>
+                exploresWithVirtual.map(exploreToSummaryWithAttributes),
+            );
+            (
+                projectModel.getTablesConfiguration as jest.Mock
+            ).mockImplementationOnce(async () => ({
+                tableSelection: {
+                    type: 'WITH_TAGS',
+                    value: ['non_existent_tag'], // Tag that doesn't match any explore
+                },
+            }));
+
+            const result = await service.getAllExploresSummary(
+                account,
+                projectUuid,
+                true,
+            );
+
+            // Should only include virtual explore since no other explores have the tag
+            expect(result).toHaveLength(1);
+            expect(result[0].name).toEqual('virtual_explore');
+            expect(result[0].type).toEqual('virtual');
+        });
+
+        test('should include virtual explores when filtered by names even if they do not match', async () => {
+            const exploresWithVirtual = [...allExplores, virtualExplore];
+            (
+                projectModel.getAllExploreSummaries as jest.Mock
+            ).mockImplementationOnce(async () =>
+                exploresWithVirtual.map(exploreToSummaryWithAttributes),
+            );
+            (
+                projectModel.getTablesConfiguration as jest.Mock
+            ).mockImplementationOnce(async () => ({
+                tableSelection: {
+                    type: 'WITH_NAMES',
+                    value: ['non_existent_explore'], // Name that doesn't match any explore
+                },
+            }));
+
+            const result = await service.getAllExploresSummary(
+                account,
+                projectUuid,
+                true,
+            );
+
+            // Should only include virtual explore since no other explores match the name
+            expect(result).toHaveLength(1);
+            expect(result[0].name).toEqual('virtual_explore');
+            expect(result[0].type).toEqual('virtual');
+        });
+
+        test('should exclude explores when user does not have required attributes', async () => {
+            const exploresWithRequiredAttrs = [
+                validExplore,
+                exploreWithRequiredAttributes,
+            ];
+            (
+                projectModel.getAllExploreSummaries as jest.Mock
+            ).mockImplementationOnce(async () =>
+                exploresWithRequiredAttrs.map(exploreToSummaryWithAttributes),
+            );
+
+            // Mock user attributes to NOT have is_admin: 'true'
+            (
+                userAttributesModel.getAttributeValuesForOrgMember as jest.Mock
+            ).mockImplementationOnce(async () => ({
+                is_admin: 'false',
+            }));
+
+            const result = await service.getAllExploresSummary(
+                account,
+                projectUuid,
+                false,
+            );
+
+            // Should only include validExplore, not exploreWithRequiredAttributes
+            expect(result).toHaveLength(1);
+            expect(result[0].name).toEqual('valid_explore');
+            expect(
+                result.find(
+                    (e) => e.name === 'explore_with_required_attributes',
+                ),
+            ).toBeUndefined();
+        });
+
+        test('should include explores when user has required attributes', async () => {
+            const exploresWithRequiredAttrs = [
+                validExplore,
+                exploreWithRequiredAttributes,
+            ];
+            (
+                projectModel.getAllExploreSummaries as jest.Mock
+            ).mockImplementationOnce(async () =>
+                exploresWithRequiredAttrs.map(exploreToSummaryWithAttributes),
+            );
+
+            // Mock user attributes to have is_admin: 'true'
+            (
+                userAttributesModel.getAttributeValuesForOrgMember as jest.Mock
+            ).mockImplementationOnce(async () => ({
+                is_admin: 'true',
+            }));
+
+            const result = await service.getAllExploresSummary(
+                account,
+                projectUuid,
+                false,
+            );
+
+            // Should include both explores
+            expect(result).toHaveLength(2);
+            expect(result.map((e) => e.name)).toContain('valid_explore');
+            expect(result.map((e) => e.name)).toContain(
+                'explore_with_required_attributes',
+            );
         });
     });
     describe('getJobStatus', () => {
@@ -371,9 +530,9 @@ describe('ProjectService', () => {
             expect(replaceWhitespace(runQueryMock.mock.calls[0][0])).toEqual(
                 replaceWhitespace(`SELECT AS "a_dim1"
                                    FROM test.table AS "a"
-                                   WHERE (( LOWER() LIKE LOWER('%%') ))
+                                   WHERE (( true ) AND ( () IS NOT NULL ))
                                    GROUP BY 1
-                                   ORDER BY "a_dim1" 
+                                   ORDER BY "a_dim1"
                                    LIMIT 10`),
             );
         });
@@ -399,7 +558,7 @@ describe('ProjectService', () => {
                     and: [
                         {
                             id: 'valid',
-                            operator: ConditionalOperator.EQUALS,
+                            operator: FilterOperator.EQUALS,
                             values: ['test'],
                             target: {
                                 fieldId: 'a_dim1',
@@ -407,7 +566,7 @@ describe('ProjectService', () => {
                         },
                         {
                             id: 'valid_joined',
-                            operator: ConditionalOperator.EQUALS,
+                            operator: FilterOperator.EQUALS,
                             values: ['test'],
                             target: {
                                 fieldId: 'b_dim1',
@@ -415,7 +574,7 @@ describe('ProjectService', () => {
                         },
                         {
                             id: 'invalid',
-                            operator: ConditionalOperator.EQUALS,
+                            operator: FilterOperator.EQUALS,
                             values: ['test'],
                             target: {
                                 fieldId: 'c_dim1',
@@ -426,12 +585,12 @@ describe('ProjectService', () => {
             );
             expect(runQueryMock).toHaveBeenCalledTimes(1);
             expect(replaceWhitespace(runQueryMock.mock.calls[0][0])).toEqual(
-                replaceWhitespace(`SELECT AS "a_dim1" 
-                                        FROM test.table AS "a" 
-                                        LEFT OUTER JOIN public.b AS "b" ON ("a".dim1) = ("b".dim1) 
-                                        WHERE (( LOWER() LIKE LOWER('%%') ) AND ( () IN ('test') ) AND ( () IN ('test') )) 
-                                        GROUP BY 1 
-                                        ORDER BY "a_dim1" 
+                replaceWhitespace(`SELECT AS "a_dim1"
+                                        FROM test.table AS "a"
+                                        LEFT OUTER JOIN public.b AS "b" ON ("a".dim1) = ("b".dim1)
+                                        WHERE (( true ) AND ( () IS NOT NULL ) AND ( () IN ('test') ) AND ( () IN ('test') ))
+                                        GROUP BY 1
+                                        ORDER BY "a_dim1"
                                         LIMIT 10`),
             );
         });

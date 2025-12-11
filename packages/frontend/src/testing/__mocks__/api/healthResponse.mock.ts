@@ -37,6 +37,7 @@ export default function mockHealthResponse(
         staticIp: '',
         posthog: undefined,
         query: {
+            maxPageSize: 2500,
             maxLimit: 1000000,
             defaultLimit: 500,
             csvCellsLimit: 100,
@@ -44,8 +45,10 @@ export default function mockHealthResponse(
         pivotTable: {
             maxColumnLimit: 100,
         },
-        customVisualizationsEnabled: true,
         hasSlack: false,
+        slack: {
+            multiAgentChannelEnabled: false,
+        },
         auth: {
             disablePasswordAuthentication: false,
             google: {
@@ -53,6 +56,7 @@ export default function mockHealthResponse(
                 oauth2ClientId: '',
                 loginPath: '/login/google',
                 enabled: false,
+                enableGCloudADC: false,
             },
             okta: {
                 loginPath: '/login/okta',
@@ -73,12 +77,38 @@ export default function mockHealthResponse(
             pat: {
                 maxExpirationTimeInDays: undefined,
             },
+            snowflake: {
+                enabled: false,
+            },
+            databricks: {
+                enabled: false,
+            },
         },
         hasEmailClient: false,
         hasHeadlessBrowser: false,
         hasExtendedUsageAnalytics: false,
         hasGithub: false,
+        hasGitlab: false,
         hasCacheAutocompleResults: false,
+        hasMicrosoftTeams: false,
+        appearance: {
+            overrideColorPalette: undefined,
+            overrideColorPaletteName: undefined,
+        },
+        isServiceAccountEnabled: false,
+        isOrganizationWarehouseCredentialsEnabled: false,
+        isCustomRolesEnabled: false,
+        embedding: {
+            enabled: false,
+            events: undefined,
+        },
+        ai: {
+            analyticsProjectUuid: undefined,
+            analyticsDashboardUuid: undefined,
+        },
+        echarts6: {
+            enabled: false,
+        },
         ...overrides,
     };
 }

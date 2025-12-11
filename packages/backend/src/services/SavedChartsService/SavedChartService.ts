@@ -1,5 +1,9 @@
 import { subject } from '@casl/ability';
 import {
+    AbilityAction,
+    Account,
+    AnonymousAccount,
+    BulkActionable,
     ChartHistory,
     ChartSummary,
     ChartType,
@@ -9,6 +13,7 @@ import {
     CreateSchedulerAndTargetsWithoutIds,
     ExploreType,
     ForbiddenError,
+    NotFoundError,
     ParameterError,
     SavedChart,
     SavedChartDAO,
@@ -16,6 +21,7 @@ import {
     SchedulerFormat,
     SessionUser,
     SpaceShare,
+    SpaceSummary,
     TogglePinnedItemInfo,
     UpdateMultipleSavedChart,
     UpdateSavedChart,
@@ -30,6 +36,7 @@ import {
     isConditionalFormattingConfigWithColorRange,
     isConditionalFormattingConfigWithSingleColor,
     isCustomSqlDimension,
+    isJwtUser,
     isUserWithOrg,
     isValidFrequency,
     isValidTimezone,
@@ -38,6 +45,7 @@ import {
     type ExploreError,
 } from '@lightdash/common';
 import cronstrue from 'cronstrue';
+import { Knex } from 'knex';
 import {
     ConditionalFormattingRuleSavedEvent,
     CreateSavedChartVersionEvent,
@@ -57,6 +65,7 @@ import { SchedulerModel } from '../../models/SchedulerModel';
 import { SpaceModel } from '../../models/SpaceModel';
 import { SchedulerClient } from '../../scheduler/SchedulerClient';
 import { BaseService } from '../BaseService';
+import { PermissionsService } from '../PermissionsService/PermissionsService';
 import { hasViewAccessToSpace } from '../SpaceService/SpaceService';
 
 type SavedChartServiceArguments = {
@@ -71,9 +80,13 @@ type SavedChartServiceArguments = {
     slackClient: SlackClient;
     dashboardModel: DashboardModel;
     catalogModel: CatalogModel;
+    permissionsService: PermissionsService;
 };
 
-export class SavedChartService extends BaseService {
+export class SavedChartService
+    extends BaseService
+    implements BulkActionable<Knex>
+{
     private readonly analytics: LightdashAnalytics;
 
     private readonly projectModel: ProjectModel;
@@ -96,6 +109,8 @@ export class SavedChartService extends BaseService {
 
     private readonly catalogModel: CatalogModel;
 
+    private readonly permissionsService: PermissionsService;
+
     constructor(args: SavedChartServiceArguments) {
         super();
         this.analytics = args.analytics;
@@ -109,6 +124,7 @@ export class SavedChartService extends BaseService {
         this.slackClient = args.slackClient;
         this.dashboardModel = args.dashboardModel;
         this.catalogModel = args.catalogModel;
+        this.permissionsService = args.permissionsService;
     }
 
     private async checkUpdateAccess(
@@ -268,8 +284,46 @@ export class SavedChartService extends BaseService {
                                   ? 'default'
                                   : 'custom',
                           showLegend: echartsConfig?.legend?.show !== false,
+                          hasCustomTooltip:
+                              (echartsConfig?.tooltip || '').length > 0,
                       }
                     : undefined,
+            treemap:
+                savedChart.chartConfig.type === ChartType.TREEMAP
+                    ? {
+                          visibleMin: savedChart.chartConfig.config?.visibleMin,
+                          leafDepth: savedChart.chartConfig.config?.leafDepth,
+                          dimensionCount:
+                              savedChart.chartConfig.config?.groupFieldIds
+                                  ?.length || 0,
+                          startColor: savedChart.chartConfig.config?.startColor,
+                          endColor: savedChart.chartConfig.config?.endColor,
+                          useDynamicColors:
+                              savedChart.chartConfig.config?.useDynamicColors,
+                          startColorThreshold:
+                              savedChart.chartConfig.config
+                                  ?.startColorThreshold,
+                          endColorThreshold:
+                              savedChart.chartConfig.config?.endColorThreshold,
+                      }
+                    : undefined,
+            custom:
+                savedChart.chartConfig.type === ChartType.CUSTOM
+                    ? {
+                          size: JSON.stringify(
+                              savedChart.chartConfig.config?.spec || {},
+                          ).length,
+                          type:
+                              typeof savedChart.chartConfig.config?.spec
+                                  ?.mark === 'object'
+                                  ? JSON.stringify(
+                                        savedChart.chartConfig.config?.spec
+                                            ?.mark,
+                                    )
+                                  : `${savedChart.chartConfig.config?.spec?.mark}`,
+                      }
+                    : undefined,
+            parametersCount: Object.keys(savedChart.parameters || {}).length,
             ...countCustomDimensionsInMetricQuery(savedChart.metricQuery),
         };
     }
@@ -721,18 +775,33 @@ export class SavedChartService extends BaseService {
         return this.analyticsModel.getChartViewStats(savedChartUuid);
     }
 
-    async get(savedChartUuid: string, user: SessionUser): Promise<SavedChart> {
-        const savedChart = await this.savedChartModel.get(savedChartUuid);
-        const space = await this.spaceModel.getSpaceSummary(
-            savedChart.spaceUuid,
-        );
-        const access = await this.spaceModel.getUserSpaceAccess(
-            user.userUuid,
-            savedChart.spaceUuid,
-        );
+    private async checkPermissions(
+        account: Account,
+        space: Omit<SpaceSummary, 'userAccess'>,
+        savedChart: SavedChartDAO,
+    ): Promise<SpaceShare[]> {
+        let access;
+        if (isJwtUser(account)) {
+            await this.permissionsService.checkEmbedPermissions(
+                account,
+                savedChart.uuid,
+            );
+            // We pass this access everytime, but we only define the ability
+            // rule for this chart only if the JWT is type: 'chart'.
+            // Dashboards won't have `access` defined in their abilityRules,
+            // so this CASL check will pass for them.
+            // TODO: Get all chartUuids for a given dashboard in the middleware.
+            //       https://linear.app/lightdash/issue/CENG-110/front-load-available-charts-for-dashboard-requests
+            access = [{ chartUuid: savedChart.uuid }];
+        } else {
+            access = await this.spaceModel.getUserSpaceAccess(
+                account.user.id,
+                savedChart.spaceUuid,
+            );
+        }
 
         if (
-            user.ability.cannot(
+            account.user.ability.cannot(
                 'view',
                 subject('SavedChart', {
                     ...savedChart,
@@ -746,18 +815,33 @@ export class SavedChartService extends BaseService {
             );
         }
 
-        await this.analyticsModel.addChartViewEvent(
-            savedChartUuid,
-            user.userUuid,
+        return isJwtUser(account) ? [] : (access as SpaceShare[]);
+    }
+
+    async get(
+        savedChartUuidOrSlug: string,
+        account: Account,
+    ): Promise<SavedChart> {
+        const savedChart = await this.savedChartModel.get(savedChartUuidOrSlug);
+        const space = await this.spaceModel.getSpaceSummary(
+            savedChart.spaceUuid,
         );
 
-        this.analytics.track({
+        const access = await this.checkPermissions(account, space, savedChart);
+
+        await this.analyticsModel.addChartViewEvent(
+            savedChart.uuid,
+            account.isRegisteredUser() ? account.user.id : null,
+        );
+
+        this.analytics.trackAccount(account, {
             event: 'saved_chart.view',
-            userId: user.userUuid,
             properties: {
                 savedChartId: savedChart.uuid,
                 organizationId: savedChart.organizationUuid,
                 projectId: savedChart.projectUuid,
+                parametersCount: Object.keys(savedChart.parameters || {})
+                    .length,
             },
         });
 
@@ -788,7 +872,7 @@ export class SavedChartService extends BaseService {
                 savedChart.spaceUuid,
             );
         } else if (savedChart.dashboardUuid) {
-            const dashboard = await this.dashboardModel.getById(
+            const dashboard = await this.dashboardModel.getByIdOrSlug(
                 savedChart.dashboardUuid,
             );
             const space = await this.spaceModel.getSpaceSummary(
@@ -1058,6 +1142,11 @@ export class SavedChartService extends BaseService {
 
         await this.schedulerClient.generateDailyJobsForScheduler(
             scheduler,
+            {
+                organizationUuid,
+                projectUuid,
+                userUuid: user.userUuid,
+            },
             defaultTimezone,
         );
 
@@ -1209,6 +1298,151 @@ export class SavedChartService extends BaseService {
                 `Error updating chart field usage for chart ${newChartVersion.uuid}`,
                 error,
             );
+        }
+    }
+
+    async hasAccess(
+        action: AbilityAction,
+        actor: {
+            user: SessionUser;
+            projectUuid: string;
+        },
+        resource:
+            | {
+                  savedChartUuid: null;
+                  spaceUuid: string;
+              }
+            | {
+                  savedChartUuid: string;
+                  spaceUuid?: string;
+              },
+    ): Promise<SpaceShare[]> {
+        let { spaceUuid } = resource;
+
+        if (resource.savedChartUuid !== null) {
+            const savedChart = await this.savedChartModel.getSummary(
+                resource.savedChartUuid,
+            );
+
+            if (!savedChart) {
+                throw new NotFoundError('Chart not found');
+            }
+
+            if (savedChart.dashboardUuid) {
+                const dashboard = await this.dashboardModel.getByIdOrSlug(
+                    savedChart.dashboardUuid,
+                );
+                spaceUuid = dashboard.spaceUuid;
+            } else {
+                spaceUuid = savedChart.spaceUuid;
+            }
+        }
+
+        if (!spaceUuid) {
+            throw new NotFoundError('Space is required');
+        }
+
+        const space = await this.spaceModel.getSpaceSummary(spaceUuid);
+        const spaceAccess = await this.spaceModel.getUserSpaceAccess(
+            actor.user.userUuid,
+            spaceUuid,
+        );
+
+        const hasPermission = actor.user.ability.can(
+            action,
+            subject('SavedChart', {
+                organizationUuid: space.organizationUuid,
+                projectUuid: actor.projectUuid,
+                isPrivate: space.isPrivate,
+                access: spaceAccess,
+            }),
+        );
+
+        if (!hasPermission) {
+            throw new ForbiddenError(
+                `You don't have access to ${action} this Chart`,
+            );
+        }
+
+        if (resource.spaceUuid && spaceUuid !== resource.spaceUuid) {
+            const newSpace = await this.spaceModel.getSpaceSummary(
+                resource.spaceUuid,
+            );
+            const newSpaceAccess = await this.spaceModel.getUserSpaceAccess(
+                actor.user.userUuid,
+                resource.spaceUuid,
+            );
+
+            const hasPermissionInNewSpace = actor.user.ability.can(
+                action,
+                subject('SavedChart', {
+                    organizationUuid: newSpace.organizationUuid,
+                    projectUuid: actor.projectUuid,
+                    isPrivate: newSpace.isPrivate,
+                    access: newSpaceAccess,
+                }),
+            );
+
+            if (!hasPermissionInNewSpace) {
+                throw new ForbiddenError(
+                    `You don't have access to ${action} this Chart in the new space`,
+                );
+            }
+        }
+
+        return spaceAccess;
+    }
+
+    async moveToSpace(
+        user: SessionUser,
+        {
+            projectUuid,
+            itemUuid: savedChartUuid,
+            targetSpaceUuid,
+        }: {
+            projectUuid: string;
+            itemUuid: string;
+            targetSpaceUuid: string | null;
+        },
+        {
+            tx,
+            checkForAccess = true,
+            trackEvent = true,
+        }: {
+            tx?: Knex;
+            checkForAccess?: boolean;
+            trackEvent?: boolean;
+        } = {},
+    ): Promise<void> {
+        if (!targetSpaceUuid) {
+            throw new ParameterError(
+                'You cannot move a chart outside of a space',
+            );
+        }
+
+        if (checkForAccess) {
+            await this.hasAccess(
+                'update',
+                { user, projectUuid },
+                { savedChartUuid },
+            );
+        }
+
+        await this.savedChartModel.moveToSpace(
+            { projectUuid, itemUuid: savedChartUuid, targetSpaceUuid },
+            { tx },
+        );
+
+        if (trackEvent) {
+            this.analytics.track({
+                event: 'saved_chart.moved',
+                userId: user.userUuid,
+                properties: {
+                    projectId: projectUuid,
+                    savedChartId: savedChartUuid,
+                    newSpaceId: targetSpaceUuid,
+                },
+            });
         }
     }
 }

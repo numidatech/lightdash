@@ -92,6 +92,7 @@ const SingleSeriesConfiguration: FC<Props> = ({
                         <ColorSelector
                             color={getSeriesColor(series)}
                             swatches={colorPalette}
+                            withAlpha
                             onColorChange={(color) => {
                                 updateSingleSeries({
                                     ...series,
@@ -151,14 +152,14 @@ const SingleSeriesConfiguration: FC<Props> = ({
                             }}
                         >
                             <MantineIcon
-                                icon={series.hidden ? IconEye : IconEyeOff}
+                                icon={series.hidden ? IconEyeOff : IconEye}
                             />
                         </ActionIcon>
                     )}
                     {isCollapsable && (
                         <ActionIcon onClick={toggleIsOpen}>
                             <MantineIcon
-                                color="gray.7"
+                                color="ldGray.7"
                                 icon={isOpen ? IconChevronUp : IconChevronDown}
                             />
                         </ActionIcon>
@@ -237,14 +238,12 @@ const SingleSeriesConfiguration: FC<Props> = ({
                         type === CartesianSeriesType.AREA) && (
                         <Group spacing="xs">
                             <Checkbox
-                                checked={series.showSymbol ?? true}
+                                checked={Boolean(series.showSymbol)}
                                 label="Show symbol"
                                 onChange={() => {
                                     updateSingleSeries({
                                         ...series,
-                                        showSymbol: !(
-                                            series.showSymbol ?? true
-                                        ),
+                                        showSymbol: !Boolean(series.showSymbol),
                                     });
                                 }}
                             />

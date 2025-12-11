@@ -7,6 +7,7 @@ import {
     ApiSuccessEmpty,
     MetricQuery,
     PivotConfig,
+    type ParametersValuesMap,
 } from '@lightdash/common';
 import {
     Body,
@@ -23,6 +24,7 @@ import {
     Tags,
 } from '@tsoa/runtime';
 import express from 'express';
+import { deprecatedDownloadCsvRoute } from '../middlewares/deprecation';
 import {
     allowApiKeyAuthentication,
     isAuthenticated,
@@ -70,7 +72,7 @@ export class ExploreController extends BaseController {
         const results: ApiExploresResults = await this.services
             .getProjectService()
             .getAllExploresSummary(
-                req.user!,
+                req.account!,
                 projectUuid,
                 req.query.filtered === 'true',
             );
@@ -94,7 +96,7 @@ export class ExploreController extends BaseController {
         this.setStatus(200);
         const results = await this.services
             .getProjectService()
-            .getExplore(req.user!, projectUuid, exploreId, undefined, false);
+            .getExplore(req.account!, projectUuid, exploreId, undefined, false);
 
         return {
             status: 'ok',
@@ -110,23 +112,34 @@ export class ExploreController extends BaseController {
         @Path() exploreId: string,
         @Path() projectUuid: string,
         @Request() req: express.Request,
-        @Body() body: MetricQuery,
+        // ! TODO: we need to fix this type
+        @Body() body: MetricQuery & { parameters?: ParametersValuesMap },
     ): Promise<{ status: 'ok'; results: ApiCompiledQueryResults }> {
         this.setStatus(200);
 
-        const results = (
-            await this.services
-                .getProjectService()
-                .compileQuery(req.user!, body, projectUuid, exploreId)
-        ).query;
+        const { parameterReferences, query } = await this.services
+            .getProjectService()
+            .compileQuery({
+                account: req.account!,
+                body,
+                projectUuid,
+                exploreName: exploreId,
+            });
 
         return {
             status: 'ok',
-            results,
+            results: {
+                query,
+                parameterReferences,
+            },
         };
     }
 
-    @Middlewares([allowApiKeyAuthentication, isAuthenticated])
+    @Middlewares([
+        allowApiKeyAuthentication,
+        isAuthenticated,
+        deprecatedDownloadCsvRoute,
+    ])
     @SuccessResponse('200', 'Success')
     @Post('{exploreId}/downloadCsv')
     @OperationId('DownloadCsvFromExplore')
@@ -143,7 +156,7 @@ export class ExploreController extends BaseController {
             columnOrder: string[];
             hiddenFields?: string[];
             chartName?: string;
-            pivotColumns?: string[];
+            pivotConfig?: PivotConfig;
         },
     ): Promise<{ status: 'ok'; results: { jobId: string } }> {
         this.setStatus(200);
@@ -154,6 +167,7 @@ export class ExploreController extends BaseController {
             customLabels,
             columnOrder,
             hiddenFields,
+            pivotConfig,
         } = body;
         const metricQuery: MetricQuery = {
             exploreName: body.exploreName,
@@ -168,16 +182,6 @@ export class ExploreController extends BaseController {
             metricOverrides: body.metricOverrides,
         };
 
-        const csvPivotConfig: PivotConfig | undefined =
-            body.pivotColumns !== undefined
-                ? {
-                      pivotDimensions: body.pivotColumns,
-                      metricsAsRows: false,
-                      hiddenMetricFieldIds: body.hiddenFields,
-                      columnOrder: body.columnOrder,
-                  }
-                : undefined;
-
         const { jobId } = await req.services
             .getCsvService()
             .scheduleDownloadCsv(req.user!, {
@@ -189,11 +193,11 @@ export class ExploreController extends BaseController {
                 csvLimit,
                 showTableNames,
                 customLabels,
-                columnOrder,
-                hiddenFields,
                 chartName: body.chartName,
                 fromSavedChart: false,
-                pivotConfig: csvPivotConfig,
+                columnOrder,
+                hiddenFields,
+                pivotConfig,
             });
 
         return {

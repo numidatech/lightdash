@@ -1,8 +1,22 @@
-import { isValidFrequency, validateGithubToken } from '@lightdash/common';
+import { isValidFrequency } from '@lightdash/common';
 
 type FieldValidator<T> = (
     fieldName: string,
 ) => (value: T | undefined) => string | undefined;
+
+export const everyValidator = (
+    field: string,
+    ...validators: FieldValidator<string>[]
+) => {
+    return (input: string) => {
+        for (const validator of validators) {
+            const error = validator(field)(input);
+            if (error) {
+                return error;
+            }
+        }
+    };
+};
 
 export const isUppercase: FieldValidator<string> = (fieldName) => (value) =>
     !value || value === value.toUpperCase()
@@ -16,9 +30,9 @@ export const hasNoWhiteSpaces: FieldValidator<string> =
             : `${fieldName} should not have white spaces`;
 
 export const isGitRepository: FieldValidator<string> = (fieldName) => (value) =>
-    !value || value.match(/.+\/.+/)
+    !value || value.match(/.+\/.+/) || value.match(/^[a-zA-Z0-9.%_-]+$/)
         ? undefined
-        : `${fieldName} should match the pattern "org/project"`;
+        : `${fieldName} should match the pattern "org/project" or "project"`;
 
 export const startWithSlash: FieldValidator<string> = (fieldName) => (value) =>
     !value || value.match(/^\/.*/)
@@ -30,14 +44,6 @@ export const startWithHTTPSProtocol: FieldValidator<string> =
         !value || value.match(/^https:\/\/.*/)
             ? undefined
             : `${fieldName} should start with a "https://"`;
-
-export const isValidGithubToken: FieldValidator<string> =
-    (_fieldName) => (value) => {
-        if (value) {
-            const [_isValid, error] = validateGithubToken(value);
-            return error;
-        }
-    };
 
 // Supports values: "1" "1,2,3" "1-3" "*/5" "*"
 const cronValueRegex = new RegExp(

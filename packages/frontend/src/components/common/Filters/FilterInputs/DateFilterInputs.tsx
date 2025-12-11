@@ -8,7 +8,7 @@ import {
     isFilterRule,
     parseDate,
     timeframeToUnitOfTime,
-    type ConditionalRule,
+    type BaseFilterRule,
     type DateFilterRule,
 } from '@lightdash/common';
 import { Flex, NumberInput, Text } from '@mantine/core';
@@ -23,19 +23,21 @@ import FilterDateRangePicker from './FilterDateRangePicker';
 import FilterDateTimePicker from './FilterDateTimePicker';
 import FilterDateTimeRangePicker from './FilterDateTimeRangePicker';
 import FilterMonthAndYearPicker from './FilterMonthAndYearPicker';
+import FilterQuarterPicker from './FilterQuarterPicker';
 import FilterUnitOfTimeAutoComplete from './FilterUnitOfTimeAutoComplete';
 import FilterWeekPicker from './FilterWeekPicker';
 import FilterYearPicker from './FilterYearPicker';
 
-const DateFilterInputs = <T extends ConditionalRule = DateFilterRule>(
+const DateFilterInputs = <T extends BaseFilterRule = DateFilterRule>(
     props: FilterInputsProps<T>,
 ) => {
     const { field, rule, onChange, popoverProps, disabled, filterType } = props;
     const { startOfWeek } = useFiltersContext();
 
     const isTimestamp =
+        !field ||
         (isCustomSqlDimension(field) ? field.dimensionType : field.type) ===
-        DimensionType.TIMESTAMP;
+            DimensionType.TIMESTAMP;
 
     if (!isFilterRule(rule)) {
         throw new Error('DateFilterInputs expects a FilterRule');
@@ -130,6 +132,28 @@ const DateFilterInputs = <T extends ConditionalRule = DateFilterRule>(
                                         ...rule,
                                         values: [
                                             formatDate(value, TimeFrames.MONTH),
+                                        ],
+                                    });
+                                }}
+                            />
+                        );
+                    case TimeFrames.QUARTER:
+                        const ruleValue = rule.values?.[0];
+                        const parsedValue = ruleValue
+                            ? parseDate(ruleValue, TimeFrames.DAY)
+                            : null;
+                        return (
+                            <FilterQuarterPicker
+                                disabled={disabled}
+                                placeholder={placeholder}
+                                autoFocus={true}
+                                popoverProps={popoverProps}
+                                value={parsedValue}
+                                onChange={(newDate: Date) => {
+                                    onChange({
+                                        ...rule,
+                                        values: [
+                                            formatDate(newDate, TimeFrames.DAY),
                                         ],
                                     });
                                 }}
@@ -297,7 +321,7 @@ const DateFilterInputs = <T extends ConditionalRule = DateFilterRule>(
                     }
                     showOptionsInPlural={false}
                     showCompletedOptions={false}
-                    autoFocus={true}
+                    autoFocus={!rule.settings?.unitOfTime}
                     completed={false}
                     withinPortal={popoverProps?.withinPortal}
                     onDropdownOpen={popoverProps?.onOpen}

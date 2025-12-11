@@ -1,5 +1,6 @@
 import {
     type AdditionalMetric,
+    type AnyType,
     type BigNumberConfig,
     type CartesianChartConfig,
     type ChartConfig,
@@ -11,22 +12,23 @@ import {
     type Dimension,
     type FieldId,
     type FunnelChartConfig,
+    type GaugeChartConfig,
+    type Item,
+    type MapChartConfig,
     type Metric,
     type MetricQuery,
     type MetricType,
+    type ParameterDefinitions,
     type PieChartConfig,
     type ReplaceCustomFields,
     type SavedChart,
-    type SortField,
     type TableCalculation,
     type TableCalculationMetadata,
     type TableChartConfig,
     type TimeZone,
+    type TreemapChartConfig,
 } from '@lightdash/common';
-import {
-    type useChartVersionResultsMutation,
-    type useQueryResults,
-} from '../../hooks/useQueryResults';
+import { type QueryResultsProps } from '../../hooks/useQueryResults';
 
 export enum ExplorerSection {
     FILTERS = 'FILTERS',
@@ -34,38 +36,25 @@ export enum ExplorerSection {
     CUSTOMVISUALIZATION = 'CUSTOMVISUALIZATION',
     RESULTS = 'RESULTS',
     SQL = 'SQL',
-}
-
-interface SwapSortFieldsPayload {
-    sourceIndex: number;
-    destinationIndex: number;
+    PARAMETERS = 'PARAMETERS',
 }
 
 export enum ActionType {
     RESET,
     SET_TABLE_NAME,
-    REMOVE_FIELD,
-    TOGGLE_DIMENSION,
-    TOGGLE_METRIC,
-    TOGGLE_SORT_FIELD,
-    SET_SORT_FIELDS,
-    ADD_SORT_FIELD,
-    REMOVE_SORT_FIELD,
-    MOVE_SORT_FIELDS,
+    SET_FILTERS,
     SET_ROW_LIMIT,
     SET_TIME_ZONE,
-    SET_FILTERS,
     SET_COLUMN_ORDER,
     ADD_TABLE_CALCULATION,
     UPDATE_TABLE_CALCULATION,
     DELETE_TABLE_CALCULATION,
-    SET_FETCH_RESULTS_FALSE,
     SET_PREVIOUSLY_FETCHED_STATE,
     ADD_ADDITIONAL_METRIC,
     EDIT_ADDITIONAL_METRIC,
     REMOVE_ADDITIONAL_METRIC,
     TOGGLE_ADDITIONAL_METRIC_MODAL,
-    TOGGLE_ADDITIONAL_METRIC_WRITE_BACK_MODAL,
+    TOGGLE_WRITE_BACK_MODAL,
     SET_PIVOT_FIELDS,
     SET_CHART_TYPE,
     SET_CHART_CONFIG,
@@ -77,50 +66,35 @@ export enum ActionType {
     TOGGLE_FORMAT_MODAL,
     UPDATE_METRIC_FORMAT,
     REPLACE_FIELDS,
+    SET_PARAMETER_REFERENCES,
 }
 
+export type ChartConfigCache<T = AnyType> = {
+    chartConfig: T;
+    pivotConfig?: { columns: string[] };
+};
+
 export type ConfigCacheMap = {
-    [ChartType.PIE]: PieChartConfig['config'];
-    [ChartType.FUNNEL]: FunnelChartConfig['config'];
-    [ChartType.BIG_NUMBER]: BigNumberConfig['config'];
-    [ChartType.TABLE]: TableChartConfig['config'];
-    [ChartType.CARTESIAN]: CartesianChartConfig['config'];
-    [ChartType.CUSTOM]: CustomVisConfig['config'];
+    [ChartType.PIE]: ChartConfigCache<PieChartConfig['config']>;
+    [ChartType.FUNNEL]: ChartConfigCache<FunnelChartConfig['config']>;
+    [ChartType.BIG_NUMBER]: ChartConfigCache<BigNumberConfig['config']>;
+    [ChartType.TABLE]: ChartConfigCache<TableChartConfig['config']>;
+    [ChartType.CARTESIAN]: ChartConfigCache<CartesianChartConfig['config']>;
+    [ChartType.TREEMAP]: ChartConfigCache<TreemapChartConfig['config']>;
+    [ChartType.GAUGE]: ChartConfigCache<GaugeChartConfig['config']>;
+    [ChartType.MAP]: ChartConfigCache<MapChartConfig['config']>;
+    [ChartType.CUSTOM]: ChartConfigCache<CustomVisConfig['config']>;
 };
 
 export type Action =
     | { type: ActionType.RESET; payload: ExplorerReduceState }
-    | { type: ActionType.SET_FETCH_RESULTS_FALSE }
     | {
           type: ActionType.SET_PREVIOUSLY_FETCHED_STATE;
           payload: MetricQuery;
       }
     | { type: ActionType.SET_TABLE_NAME; payload: string }
+    | { type: ActionType.SET_FILTERS; payload: MetricQuery['filters'] }
     | { type: ActionType.TOGGLE_EXPANDED_SECTION; payload: ExplorerSection }
-    | {
-          type:
-              | ActionType.REMOVE_FIELD
-              | ActionType.TOGGLE_DIMENSION
-              | ActionType.TOGGLE_METRIC
-              | ActionType.TOGGLE_SORT_FIELD;
-          payload: FieldId;
-      }
-    | {
-          type: ActionType.SET_SORT_FIELDS;
-          payload: SortField[];
-      }
-    | {
-          type: ActionType.ADD_SORT_FIELD;
-          payload: SortField;
-      }
-    | {
-          type: ActionType.REMOVE_SORT_FIELD;
-          payload: FieldId;
-      }
-    | {
-          type: ActionType.MOVE_SORT_FIELDS;
-          payload: SwapSortFieldsPayload;
-      }
     | {
           type: ActionType.SET_ROW_LIMIT;
           payload: number;
@@ -128,10 +102,6 @@ export type Action =
     | {
           type: ActionType.SET_TIME_ZONE;
           payload: TimeZone;
-      }
-    | {
-          type: ActionType.SET_FILTERS;
-          payload: MetricQuery['filters'];
       }
     | {
           type: ActionType.ADD_TABLE_CALCULATION;
@@ -172,11 +142,8 @@ export type Action =
           >;
       }
     | {
-          type: ActionType.TOGGLE_ADDITIONAL_METRIC_WRITE_BACK_MODAL;
-          payload?: Omit<
-              ExplorerReduceState['modals']['additionalMetricWriteBack'],
-              'isOpen'
-          >;
+          type: ActionType.TOGGLE_WRITE_BACK_MODAL;
+          payload?: Omit<ExplorerReduceState['modals']['writeBack'], 'isOpen'>;
       }
     | {
           type: ActionType.SET_PIVOT_FIELDS;
@@ -231,17 +198,32 @@ export type Action =
           payload: {
               fieldsToReplace: ReplaceCustomFields[string];
           };
+      }
+    | {
+          type: ActionType.SET_PARAMETER_REFERENCES;
+          payload: string[] | null;
       };
 
 export interface ExplorerReduceState {
-    shouldFetchResults: boolean;
     expandedSections: ExplorerSection[];
     metadata?: {
         // Temporary state that tracks changes to `table calculations` - keeps track of new name and previous name to ensure these get updated correctly when making changes to the layout & config of a chart
         tableCalculations?: TableCalculationMetadata[];
     };
+    isVisualizationConfigOpen?: boolean;
+    isMinimal?: boolean;
+    isEditMode?: boolean;
     unsavedChartVersion: CreateSavedChartVersion;
     previouslyFetchedState?: MetricQuery;
+
+    cachedChartConfigs: Partial<ConfigCacheMap>;
+    /**
+     * The parameters that are referenced in the query.
+     * If null, this means we can't calculate the missing parameters, so we can't run the query.
+     * If empty array, this means we know the missing parameters, but they are all optional, so we can run the query.
+     */
+    parameterReferences: string[] | null;
+    parameterDefinitions: ParameterDefinitions;
     modals: {
         format: {
             isOpen: boolean;
@@ -253,101 +235,38 @@ export interface ExplorerReduceState {
             item?: Dimension | AdditionalMetric | CustomDimension;
             type?: MetricType;
         };
-        additionalMetricWriteBack: {
-            isOpen: boolean;
-            items?: AdditionalMetric[];
-            multiple?: boolean;
-        };
         customDimension: {
             isOpen: boolean;
             isEditing?: boolean;
             table?: string;
             item?: Dimension | CustomDimension;
         };
+        writeBack: {
+            isOpen: boolean;
+            items?: CustomDimension[] | AdditionalMetric[];
+        };
+        itemDetail: {
+            isOpen: boolean;
+            itemType?: 'field' | 'table' | 'group';
+            label?: string;
+            description?: string;
+            fieldItem?: Item | AdditionalMetric;
+        };
     };
-}
 
-export interface ExplorerState extends ExplorerReduceState {
-    activeFields: Set<FieldId>;
-    isValidQuery: boolean;
-    hasUnsavedChanges: boolean;
-    isEditMode: boolean;
-    savedChart: SavedChart | undefined;
-}
-
-export interface ExplorerContextType {
-    state: ExplorerState;
-    queryResults: ReturnType<
-        typeof useQueryResults | typeof useChartVersionResultsMutation
-    >;
-    actions: {
-        clearExplore: () => void;
-        clearQuery: () => void;
-        reset: () => void;
-        setTableName: (tableName: string) => void;
-        removeActiveField: (fieldId: FieldId) => void;
-        toggleActiveField: (fieldId: FieldId, isDimension: boolean) => void;
-        toggleSortField: (fieldId: FieldId) => void;
-        setSortFields: (sortFields: SortField[]) => void;
-        addSortField: (
-            fieldId: FieldId,
-            options?: { descending: boolean },
-        ) => void;
-        removeSortField: (fieldId: FieldId) => void;
-        moveSortFields: (sourceIndex: number, destinationIndex: number) => void;
-        setRowLimit: (limit: number) => void;
-        setTimeZone: (timezone: TimeZone) => void;
-        setFilters: (
-            filters: MetricQuery['filters'],
-            syncPristineState: boolean,
-        ) => void;
-        addAdditionalMetric: (metric: AdditionalMetric) => void;
-        editAdditionalMetric: (
-            metric: AdditionalMetric,
-            previousMetricName: string,
-        ) => void;
-        removeAdditionalMetric: (key: FieldId) => void;
-        toggleAdditionalMetricModal: (
-            additionalMetricModalData?: Omit<
-                ExplorerReduceState['modals']['additionalMetric'],
-                'isOpen'
-            >,
-        ) => void;
-        toggleAdditionalMetricWriteBackModal: (
-            additionalMetricWriteBackModalData?: Omit<
-                ExplorerReduceState['modals']['additionalMetricWriteBack'],
-                'isOpen'
-            >,
-        ) => void;
-        setColumnOrder: (order: string[]) => void;
-        addTableCalculation: (tableCalculation: TableCalculation) => void;
-        updateTableCalculation: (
-            oldName: string,
-            tableCalculation: TableCalculation,
-        ) => void;
-        deleteTableCalculation: (name: string) => void;
-        setPivotFields: (fields: FieldId[] | undefined) => void;
-        setChartType: (chartType: ChartType) => void;
-        setChartConfig: (chartConfig: ChartConfig) => void;
-        fetchResults: () => void;
-        toggleExpandedSection: (section: ExplorerSection) => void;
-        addCustomDimension: (customDimension: CustomDimension) => void;
-        editCustomDimension: (
-            customDimension: CustomDimension,
-            previousCustomDimensionId: string,
-        ) => void;
-        removeCustomDimension: (key: FieldId) => void;
-        toggleCustomDimensionModal: (
-            additionalMetricModalData?: Omit<
-                ExplorerReduceState['modals']['customDimension'],
-                'isOpen'
-            >,
-        ) => void;
-        toggleFormatModal: (args?: { metric: Metric }) => void;
-        updateMetricFormat: (args: {
-            metric: Metric;
-            formatOptions: CustomFormat | undefined;
-        }) => void;
-        replaceFields: (fieldsToReplace: ReplaceCustomFields[string]) => void;
+    // Query execution state - manages TanStack Query arguments and history
+    queryExecution: {
+        validQueryArgs: QueryResultsProps | null;
+        unpivotedQueryArgs: QueryResultsProps | null;
+        queryUuidHistory: string[];
+        unpivotedQueryUuidHistory: string[];
+        // Flag to trigger a query execution from components (works regardless of auto-fetch setting)
+        pendingFetch: boolean;
+        // Complete column order including PoP columns (derived from query results)
+        // This is synced when query results arrive with popMetadata
+        completeColumnOrder: string[];
     };
+    fromDashboard?: string;
+    isExploreFromHere?: boolean;
+    savedChart?: SavedChart;
 }

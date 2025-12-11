@@ -2,6 +2,7 @@ import Ajv from 'ajv';
 import betterAjvErrors from 'better-ajv-errors';
 import {
     isMap,
+    isScalar,
     isSeq,
     parseDocument,
     YAMLSeq,
@@ -10,17 +11,34 @@ import {
 } from 'yaml';
 import { parseAllReferences } from '../../compiler/exploreCompiler';
 import lightdashDbtYamlSchema from '../../schemas/json/lightdash-dbt-2.0.json';
-import { type DeepPartialNullable } from '../../types/deepPartial';
 import { ParseError } from '../../types/errors';
-import { type CustomSqlDimension } from '../../types/field';
+import {
+    defaultSql,
+    isCustomSqlDimension,
+    type CustomBinDimension,
+    type CustomDimension,
+    type CustomSqlDimension,
+} from '../../types/field';
 import { type AdditionalMetric } from '../../types/metricQuery';
+import {
+    isDbtVersion110OrHigher,
+    type SupportedDbtVersions,
+} from '../../types/projects';
+import {
+    type WarehouseClient,
+    type WarehouseSqlBuilder,
+} from '../../types/warehouse';
 import {
     type YamlColumn,
     type YamlModel,
     type YamlSchema,
 } from '../../types/yamlSchema';
-import { convertCustomDimensionToDbt } from '../../utils/convertCustomDimensionsToYaml';
+import {
+    convertCustomBinDimensionToDbt,
+    convertCustomSqlDimensionToDbt,
+} from '../../utils/convertCustomDimensionsToYaml';
 import { convertCustomMetricToDbt } from '../../utils/convertCustomMetricsToYaml';
+
 /**
  * Class to edit dbt schema files(YAML)
  * Methods can be chained and the final schema can be obtained as a string.
@@ -31,9 +49,19 @@ import { convertCustomMetricToDbt } from '../../utils/convertCustomMetricsToYaml
 export default class DbtSchemaEditor {
     private readonly doc: Document;
 
-    constructor(doc: string = '') {
+    private readonly dbtVersion?: SupportedDbtVersions;
+
+    constructor(
+        doc: string = '',
+        filename: string = '',
+        dbtVersion?: SupportedDbtVersions,
+    ) {
         this.doc = parseDocument(doc);
-        const ajvCompiler = new Ajv({ coerceTypes: true });
+        this.dbtVersion = dbtVersion;
+        const ajvCompiler = new Ajv({
+            coerceTypes: true,
+            allowUnionTypes: true,
+        });
         const validate = ajvCompiler.compile<YamlSchema>(
             lightdashDbtYamlSchema,
         );
@@ -45,8 +73,12 @@ export default class DbtSchemaEditor {
                 validate.errors || [],
                 { indent: 2 },
             );
-            throw new ParseError(`Invalid schema file: ${errors}`);
+            throw new ParseError(`Invalid schema file: ${filename}\n${errors}`);
         }
+    }
+
+    isDbtVersion110OrHigher(): boolean {
+        return isDbtVersion110OrHigher(this.dbtVersion);
     }
 
     findModelByName(name: string) {
@@ -196,24 +228,98 @@ export default class DbtSchemaEditor {
                     `Column ${metric.baseDimensionName} not found in model ${metric.table}`,
                 );
             }
-            column.setIn(
-                ['meta', 'metrics', metric.name],
-                convertCustomMetricToDbt(metric),
-            );
+
+            // For dbt >= 1.10, meta should be inside config
+            if (isDbtVersion110OrHigher(this.dbtVersion)) {
+                column.setIn(
+                    ['config', 'meta', 'metrics', metric.name],
+                    convertCustomMetricToDbt(metric),
+                );
+            } else {
+                column.setIn(
+                    ['meta', 'metrics', metric.name],
+                    convertCustomMetricToDbt(metric),
+                );
+            }
         });
         return this;
     }
 
     addCustomDimensions(
-        customDimensionsToAdd: CustomSqlDimension[],
+        customDimensionsToAdd: CustomDimension[],
+        warehouseClient: WarehouseClient,
     ): DbtSchemaEditor {
         customDimensionsToAdd.forEach((dimension) => {
-            this.addCustomDimension(dimension);
+            this.addCustomDimension(dimension, warehouseClient);
         });
         return this;
     }
 
-    addCustomDimension(customDimension: CustomSqlDimension): DbtSchemaEditor {
+    addCustomDimension(
+        customDimension: CustomDimension,
+        warehouseClient: WarehouseClient,
+    ): DbtSchemaEditor {
+        if (isCustomSqlDimension(customDimension)) {
+            this.addCustomSqlDimension(customDimension);
+        } else {
+            this.addCustomBinDimension(customDimension, warehouseClient);
+        }
+        return this;
+    }
+
+    private addCustomBinDimension(
+        customDimension: CustomBinDimension,
+        warehouseSqlBuilder: WarehouseSqlBuilder,
+    ): DbtSchemaEditor {
+        // Extract base dimension name from custom dimension id. Eg: `table_a_dim_a` -> `dim_a`
+        const baseDimensionName = customDimension.dimensionId.replace(
+            `${customDimension.table}_`,
+            '',
+        );
+        const column = this.findColumnByName(
+            customDimension.table,
+            baseDimensionName,
+        );
+        if (!column) {
+            throw new Error(
+                `Column ${baseDimensionName} not found in model ${customDimension.table}`,
+            );
+        }
+
+        // Generate base dimension SQL
+        let baseDimensionSql = defaultSql(baseDimensionName);
+        // Use base dimension custom SQL if exists
+        const columnSql = column.getIn(['meta', 'dimension', 'sql']);
+        if (isScalar(columnSql) && typeof columnSql.value === 'string') {
+            baseDimensionSql = columnSql.value;
+        }
+
+        // For dbt >= 1.10, meta should be inside config
+        if (isDbtVersion110OrHigher(this.dbtVersion)) {
+            column.setIn(
+                ['config', 'meta', 'additional_dimensions', customDimension.id],
+                convertCustomBinDimensionToDbt({
+                    customDimension,
+                    baseDimensionSql,
+                    warehouseSqlBuilder,
+                }),
+            );
+        } else {
+            column.setIn(
+                ['meta', 'additional_dimensions', customDimension.id],
+                convertCustomBinDimensionToDbt({
+                    customDimension,
+                    baseDimensionSql,
+                    warehouseSqlBuilder,
+                }),
+            );
+        }
+        return this;
+    }
+
+    private addCustomSqlDimension(
+        customDimension: CustomSqlDimension,
+    ): DbtSchemaEditor {
         const model = this.findModelByName(customDimension.table);
         if (!model) {
             throw new Error(`Model ${customDimension.table} not found`);
@@ -240,27 +346,29 @@ export default class DbtSchemaEditor {
         }
 
         const additionalDimension =
-            convertCustomDimensionToDbt(customDimension);
+            convertCustomSqlDimensionToDbt(customDimension);
 
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call
-        const index = model
-            .getIn(['columns'])
-            // @ts-expect-error
-            ?.items.findIndex(
-                // @ts-expect-error
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call
-                (item) => item.get('name') === firstRefFromSameTable,
-            );
-
-        model.setIn(
-            [
-                'columns',
-                index,
-                'additional_dimensions',
-                additionalDimension.name,
-            ],
-            additionalDimension,
+        const column = this.findColumnByName(
+            customDimension.table,
+            firstRefFromSameTable,
         );
+        if (!column) {
+            throw new Error(
+                `Column ${firstRefFromSameTable} not found in model ${customDimension.table}`,
+            );
+        }
+        // For dbt >= 1.10, meta should be inside config
+        if (isDbtVersion110OrHigher(this.dbtVersion)) {
+            column.setIn(
+                ['config', 'meta', 'additional_dimensions', customDimension.id],
+                additionalDimension,
+            );
+        } else {
+            column.setIn(
+                ['meta', 'additional_dimensions', customDimension.id],
+                additionalDimension,
+            );
+        }
         return this;
     }
 
@@ -287,9 +395,10 @@ export default class DbtSchemaEditor {
     }: {
         modelName: string;
         columnName: string;
-        properties?: DeepPartialNullable<YamlColumn>;
+        properties?: Record<string, unknown>;
     }) {
         const column = this.getColumnByName(modelName, columnName);
+
         // Update schema properties recursively if value is an object
         function applyUpdates(path: string[], value: unknown) {
             if (value === undefined) {

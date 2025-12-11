@@ -29,7 +29,7 @@ import {
     IconUsers,
     type Icon as TablerIconType,
 } from '@tabler/icons-react';
-import { chunk } from 'lodash';
+import chunk from 'lodash/chunk';
 import { forwardRef, useCallback, useMemo, useState, type FC } from 'react';
 import useToaster from '../../../hooks/toaster/useToaster';
 import {
@@ -52,6 +52,7 @@ export interface ShareSpaceUserListProps {
     space: Space;
     sessionUser: LightdashUser | undefined;
     projectUuid: string;
+    disabled?: boolean;
 }
 
 const UserAccessSelectItem = forwardRef<HTMLDivElement, AccessOption>(
@@ -112,7 +113,7 @@ const ListCollapse: FC<React.PropsWithChildren<ListCollapseProps>> = ({
                 position="apart"
                 spacing="sm"
                 noWrap
-                bg={hovered || isOpen ? theme.colors.gray[0] : undefined}
+                bg={hovered || isOpen ? theme.colors.ldGray[0] : undefined}
                 sx={{ cursor: 'pointer' }}
                 onClick={toggle}
             >
@@ -122,7 +123,7 @@ const ListCollapse: FC<React.PropsWithChildren<ListCollapseProps>> = ({
                     </Avatar>
                     <Text fw={600} fz="sm">
                         {label}{' '}
-                        <Text fw={400} span c="gray.6">
+                        <Text fw={400} span c="ldGray.6">
                             ({accessCount})
                         </Text>
                     </Text>
@@ -149,6 +150,7 @@ type UserAccessListProps = {
         currentUserAccess: SpaceShare,
     ) => void;
     pageSize?: number;
+    disabled?: boolean;
 };
 const UserAccessList: FC<UserAccessListProps> = ({
     isPrivate,
@@ -156,6 +158,7 @@ const UserAccessList: FC<UserAccessListProps> = ({
     sessionUser,
     onAccessChange,
     pageSize,
+    disabled = false,
 }) => {
     const [page, setPage] = useState(1);
 
@@ -233,7 +236,7 @@ const UserAccessList: FC<UserAccessListProps> = ({
                                     sharedUser.email,
                                 )}
                                 {isSessionUser ? (
-                                    <Text fw={400} span c="gray.6">
+                                    <Text fw={400} span c="ldGray.6">
                                         {' '}
                                         (you)
                                     </Text>
@@ -246,7 +249,7 @@ const UserAccessList: FC<UserAccessListProps> = ({
                                 ProjectMemberRole.ADMIN) ? (
                             <Badge
                                 size="xs"
-                                color="gray.6"
+                                color="ldGray.6"
                                 radius="xs"
                                 mr={'xs'}
                             >
@@ -300,6 +303,7 @@ const UserAccessList: FC<UserAccessListProps> = ({
                                             />
                                         ) : null
                                     }
+                                    disabled={disabled}
                                 />
                             </Tooltip>
                         )}
@@ -322,6 +326,7 @@ const UserAccessList: FC<UserAccessListProps> = ({
 };
 
 type GroupAccessListProps = {
+    disabled?: boolean;
     isPrivate: boolean;
     groupsAccess: SpaceGroup[];
     onAccessChange: (
@@ -331,6 +336,7 @@ type GroupAccessListProps = {
     pageSize?: number;
 };
 const GroupsAccessList: FC<GroupAccessListProps> = ({
+    disabled = false,
     isPrivate,
     onAccessChange,
     groupsAccess,
@@ -421,6 +427,7 @@ const GroupsAccessList: FC<GroupAccessListProps> = ({
                                     );
                                 }
                             }}
+                            disabled={disabled}
                         />
                     </Group>
                 );
@@ -450,6 +457,7 @@ export const ShareSpaceUserList: FC<ShareSpaceUserListProps> = ({
     space,
     projectUuid,
     sessionUser,
+    disabled = false,
 }) => {
     const { showToastError } = useToaster();
     const { mutate: unshareSpaceMutation } = useDeleteSpaceShareMutation(
@@ -604,7 +612,7 @@ export const ShareSpaceUserList: FC<ShareSpaceUserListProps> = ({
         <Stack spacing={'xs'}>
             {(accessByType.organisation.length > 0 ||
                 accessByType.project.length > 0) && (
-                <Text fw={400} span c="gray.6">
+                <Text fw={400} span c="ldGray.6">
                     Inherited access
                 </Text>
             )}
@@ -619,6 +627,7 @@ export const ShareSpaceUserList: FC<ShareSpaceUserListProps> = ({
                         accessList={accessByType.organisation}
                         sessionUser={sessionUser}
                         onAccessChange={handleAccessChange}
+                        disabled={disabled}
                     />
                 </ListCollapse>
             )}
@@ -633,15 +642,17 @@ export const ShareSpaceUserList: FC<ShareSpaceUserListProps> = ({
                         accessList={accessByType.project}
                         sessionUser={sessionUser}
                         onAccessChange={handleAccessChange}
+                        disabled={disabled}
                     />
                 </ListCollapse>
             )}
             {space.access.length > 0 && (
                 <>
-                    <Text fw={400} span c="gray.6">
+                    <Text fw={400} span c="ldGray.6">
                         Group access
                     </Text>
                     <GroupsAccessList
+                        disabled={disabled}
                         isPrivate={space.isPrivate}
                         groupsAccess={space.groupsAccess}
                         onAccessChange={handleGroupAccessChange}
@@ -651,7 +662,7 @@ export const ShareSpaceUserList: FC<ShareSpaceUserListProps> = ({
             )}
             {accessByType.direct.length > 0 && (
                 <>
-                    <Text fw={400} span c="gray.6">
+                    <Text fw={400} span c="ldGray.6">
                         User access
                     </Text>
                     <UserAccessList
@@ -660,6 +671,7 @@ export const ShareSpaceUserList: FC<ShareSpaceUserListProps> = ({
                         sessionUser={sessionUser}
                         onAccessChange={handleAccessChange}
                         pageSize={5}
+                        disabled={disabled}
                     />
                 </>
             )}

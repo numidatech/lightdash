@@ -11,6 +11,8 @@ import {
     MetricFilterRule,
     MetricOverrides,
     MetricType,
+    PeriodOverPeriodComparison,
+    TableCalculationTemplate,
     TableCalculationType,
 } from '@lightdash/common';
 import { Knex } from 'knex';
@@ -92,8 +94,10 @@ export type DbSavedChartVersion = {
     saved_query_id: number;
     chart_config: ChartConfig['config'] | null;
     pivot_dimensions: string[] | null;
+    parameters: AnyType | null; // JSONB
     updated_by_user_uuid: string | null;
     timezone: string | null;
+    period_over_period_config: PeriodOverPeriodComparison | null; // JSONB
 };
 
 export type SavedChartVersionsTable = Knex.CompositeTableType<
@@ -111,8 +115,10 @@ export type CreateDbSavedChartVersion = Pick<
     | 'chart_type'
     | 'pivot_dimensions'
     | 'chart_config'
+    | 'parameters'
     | 'updated_by_user_uuid'
     | 'timezone'
+    | 'period_over_period_config'
 >;
 
 type DbSavedChartVersionField = {
@@ -139,12 +145,17 @@ type DbSavedChartVersionSort = {
     saved_queries_version_id: number;
     field_name: string;
     descending: boolean;
+    nulls_first: boolean | null;
     order: number;
 };
 
 export type CreateDbSavedChartVersionSort = Pick<
     DbSavedChartVersionSort,
-    'saved_queries_version_id' | 'field_name' | 'descending' | 'order'
+    | 'saved_queries_version_id'
+    | 'field_name'
+    | 'descending'
+    | 'nulls_first'
+    | 'order'
 >;
 
 export const SavedChartVersionSortsTableName = 'saved_queries_version_sorts';
@@ -164,6 +175,7 @@ export type DbSavedChartTableCalculation = {
     saved_queries_version_id: number;
     format?: CustomFormat;
     type?: TableCalculationType;
+    template?: TableCalculationTemplate;
 };
 
 export type DbSavedChartTableCalculationInsert = Omit<

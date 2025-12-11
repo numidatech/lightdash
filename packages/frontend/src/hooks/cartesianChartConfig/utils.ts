@@ -4,12 +4,16 @@ import {
     getItemId,
     getSeriesId,
     isDimension,
-    type ApiQueryResults,
     type CartesianSeriesType,
     type ItemsMap,
+    type ResultColumns,
     type Series,
 } from '@lightdash/common';
-import { getPivotedData } from '../plottedData/getPlottedData';
+import {
+    getPivotedData,
+    getPivotedDataFromPivotDetails,
+} from '../plottedData/getPlottedData';
+import type { InfiniteQueryResults } from '../useQueryResults';
 
 export type GetExpectedSeriesMapArgs = {
     defaultSmooth?: boolean;
@@ -17,12 +21,13 @@ export type GetExpectedSeriesMapArgs = {
     defaultCartesianType: CartesianSeriesType;
     defaultAreaStyle: Series['areaStyle'];
     isStacked: boolean;
-    resultsData: ApiQueryResults;
+    resultsData: InfiniteQueryResults;
     pivotKeys: string[] | undefined;
     yFields: string[];
     xField: string;
     availableDimensions: string[];
     defaultLabel?: Series['label'];
+    itemsMap: ItemsMap | undefined;
 };
 
 export const getExpectedSeriesMap = ({
@@ -37,6 +42,7 @@ export const getExpectedSeriesMap = ({
     xField,
     availableDimensions,
     defaultLabel,
+    itemsMap,
 }: GetExpectedSeriesMapArgs) => {
     let expectedSeriesMap: Record<string, Series>;
 
@@ -49,12 +55,19 @@ export const getExpectedSeriesMap = ({
         label: defaultLabel,
     };
     if (pivotKeys && pivotKeys.length > 0) {
-        const { rowKeyMap } = getPivotedData(
-            resultsData.rows,
-            pivotKeys,
-            yFields.filter((yField) => !availableDimensions.includes(yField)),
-            yFields.filter((yField) => availableDimensions.includes(yField)),
-        );
+        // Use new pivoted data format if available
+        const { rowKeyMap } = resultsData.pivotDetails
+            ? getPivotedDataFromPivotDetails(resultsData, itemsMap)
+            : getPivotedData(
+                  resultsData.rows,
+                  pivotKeys,
+                  yFields.filter(
+                      (yField) => !availableDimensions.includes(yField),
+                  ),
+                  yFields.filter((yField) =>
+                      availableDimensions.includes(yField),
+                  ),
+              );
 
         expectedSeriesMap = Object.values(rowKeyMap).reduce<
             Record<string, Series>
@@ -112,11 +125,14 @@ export const getExpectedSeriesMap = ({
 type MergeExistingAndExpectedSeriesArgs = {
     expectedSeriesMap: Record<string, Series>;
     existingSeries: Series[];
+    /** ResultColumns from API response - contains popMetadata for PoP fields */
+    resultsColumns?: ResultColumns;
 };
 
 export const mergeExistingAndExpectedSeries = ({
     expectedSeriesMap,
     existingSeries,
+    resultsColumns,
 }: MergeExistingAndExpectedSeriesArgs) => {
     const { existingValidSeries, existingValidSeriesIds } =
         existingSeries.reduce<{
@@ -169,16 +185,57 @@ export const mergeExistingAndExpectedSeries = ({
             if (existingValidSeriesIds.includes(expectedSeriesId)) {
                 return [...acc];
             }
+
+            // For PoP fields, inherit chart properties from the base field's series
+            let seriesToAdd = expectedSeries;
+            const yRefField = expectedSeries.encode.yRef.field;
+            const popMetadata = yRefField
+                ? resultsColumns?.[yRefField]?.popMetadata
+                : undefined;
+
+            if (popMetadata) {
+                // Use baseFieldId from popMetadata
+                const { baseFieldId } = popMetadata;
+                const baseSeries = acc.find(
+                    (series) => series.encode.yRef.field === baseFieldId,
+                );
+                if (baseSeries) {
+                    seriesToAdd = {
+                        ...expectedSeries,
+                        type: baseSeries.type,
+                        areaStyle: baseSeries.areaStyle,
+                        smooth: baseSeries.smooth,
+                        showSymbol: baseSeries.showSymbol,
+                        yAxisIndex: baseSeries.yAxisIndex,
+                    };
+                }
+            }
+
             // Add series to the end of its group
             if (
-                expectedSeries.encode.yRef.pivotValues &&
-                expectedSeries.encode.yRef.pivotValues.length > 0
+                seriesToAdd.encode.yRef.pivotValues &&
+                seriesToAdd.encode.yRef.pivotValues.length > 0
             ) {
+                // Find a series with the same field to inherit properties like yAxisIndex
+                const seriesInSameGroup = acc.find(
+                    (series) =>
+                        seriesToAdd.encode.yRef.field ===
+                        series.encode.yRef.field,
+                );
+
+                // Inherit yAxisIndex from existing series with same field
+                const seriesWithInheritedProps = seriesInSameGroup
+                    ? {
+                          ...seriesToAdd,
+                          yAxisIndex: seriesInSameGroup.yAxisIndex,
+                      }
+                    : seriesToAdd;
+
                 const lastSeriesInGroupIndex = acc
                     .reverse()
                     .findIndex(
                         (series) =>
-                            expectedSeries.encode.yRef.field ===
+                            seriesToAdd.encode.yRef.field ===
                             series.encode.yRef.field,
                     );
                 if (lastSeriesInGroupIndex >= 0) {
@@ -186,15 +243,15 @@ export const mergeExistingAndExpectedSeries = ({
                         // part of the array before the specified index
                         ...acc.slice(0, lastSeriesInGroupIndex),
                         // inserted item
-                        expectedSeries,
+                        seriesWithInheritedProps,
                         // part of the array after the specified index
                         ...acc.slice(lastSeriesInGroupIndex),
                     ].reverse();
                 }
-                return [...acc.reverse(), expectedSeries];
+                return [...acc.reverse(), seriesWithInheritedProps];
             }
             // Add series to the end
-            return [...acc, expectedSeries];
+            return [...acc, seriesToAdd];
         },
         existingValidSeries,
     );

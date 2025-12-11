@@ -14,6 +14,7 @@ export enum DbtProjectType {
     BITBUCKET = 'bitbucket',
     AZURE_DEVOPS = 'azure_devops',
     NONE = 'none',
+    MANIFEST = 'manifest',
 }
 
 export enum WarehouseTypes {
@@ -23,11 +24,7 @@ export enum WarehouseTypes {
     SNOWFLAKE = 'snowflake',
     DATABRICKS = 'databricks',
     TRINO = 'trino',
-}
-
-export enum SemanticLayerType {
-    DBT = 'DBT',
-    CUBE = 'CUBE',
+    CLICKHOUSE = 'clickhouse',
 }
 
 export type SshTunnelConfiguration = {
@@ -39,6 +36,11 @@ export type SshTunnelConfiguration = {
     sshTunnelPrivateKey?: string;
 };
 
+export enum BigqueryAuthenticationType {
+    SSO = 'sso',
+    PRIVATE_KEY = 'private_key',
+    ADC = 'adc', // Application Default Credentials
+}
 export type CreateBigqueryCredentials = {
     type: WarehouseTypes.BIGQUERY;
     project: string;
@@ -46,7 +48,8 @@ export type CreateBigqueryCredentials = {
     threads?: number;
     timeoutSeconds: number | undefined;
     priority: 'interactive' | 'batch' | undefined;
-    keyfileContents: Record<string, string>;
+    authenticationType?: BigqueryAuthenticationType;
+    keyfileContents: Record<string, string>; // used for both sso and private key
     requireUserCredentials?: boolean;
     retries: number | undefined;
     location: string | undefined;
@@ -65,6 +68,10 @@ export const sensitiveCredentialsFieldNames = [
     'sslcert',
     'sslkey',
     'sslrootcert',
+    'token',
+    'refreshToken',
+    'oauthClientId',
+    'oauthClientSecret',
 ] as const;
 export type SensitiveCredentialsFieldNames =
     typeof sensitiveCredentialsFieldNames[number];
@@ -72,6 +79,13 @@ export type BigqueryCredentials = Omit<
     CreateBigqueryCredentials,
     SensitiveCredentialsFieldNames
 >;
+
+export enum DatabricksAuthenticationType {
+    PERSONAL_ACCESS_TOKEN = 'personal_access_token',
+    OAUTH_M2M = 'oauth_m2m',
+    OAUTH_U2M = 'oauth_u2m',
+}
+
 export type CreateDatabricksCredentials = {
     type: WarehouseTypes.DATABRICKS;
     catalog?: string;
@@ -79,7 +93,12 @@ export type CreateDatabricksCredentials = {
     database: string;
     serverHostName: string;
     httpPath: string;
-    personalAccessToken: string;
+    authenticationType?: DatabricksAuthenticationType;
+    personalAccessToken?: string; // Optional when using OAuth
+    refreshToken?: string; // Refresh token for OAuth, used to generate a new access token
+    token?: string; // Access token for OAuth, has a low expiry time (1 hour)
+    oauthClientId?: string; // OAuth M2M client ID (Service Principal)
+    oauthClientSecret?: string; // OAuth M2M client secret (Service Principal)
     requireUserCredentials?: boolean;
     startOfWeek?: WeekDay | null;
     compute?: Array<{
@@ -133,10 +152,27 @@ export type CreateTrinoCredentials = {
     dbname: string;
     schema: string;
     http_scheme: string;
+    source?: string;
     startOfWeek?: WeekDay | null;
 };
 export type TrinoCredentials = Omit<
     CreateTrinoCredentials,
+    SensitiveCredentialsFieldNames
+>;
+export type CreateClickhouseCredentials = {
+    type: WarehouseTypes.CLICKHOUSE;
+    host: string;
+    user: string;
+    password: string;
+    requireUserCredentials?: boolean;
+    port: number;
+    schema: string;
+    secure?: boolean;
+    startOfWeek?: WeekDay | null;
+    timeoutSeconds?: number;
+};
+export type ClickhouseCredentials = Omit<
+    CreateClickhouseCredentials,
     SensitiveCredentialsFieldNames
 >;
 export type CreateRedshiftCredentials = SshTunnelConfiguration & {
@@ -159,6 +195,15 @@ export type RedshiftCredentials = Omit<
     CreateRedshiftCredentials,
     SensitiveCredentialsFieldNames
 >;
+
+// TODO use enum instead
+export enum SnowflakeAuthenticationType {
+    PASSWORD = 'password',
+    PRIVATE_KEY = 'private_key',
+    SSO = 'sso',
+    EXTERNAL_BROWSER = 'external_browser',
+}
+
 export type CreateSnowflakeCredentials = {
     type: WarehouseTypes.SNOWFLAKE;
     account: string;
@@ -167,6 +212,9 @@ export type CreateSnowflakeCredentials = {
     requireUserCredentials?: boolean;
     privateKey?: string;
     privateKeyPass?: string;
+    authenticationType?: SnowflakeAuthenticationType;
+    refreshToken?: string; // Refresh token for sso, this is used to generate a new access token
+    token?: string; // Access token for sso, this has a low expiry time
     role?: string;
     database: string;
     warehouse: string;
@@ -177,7 +225,9 @@ export type CreateSnowflakeCredentials = {
     accessUrl?: string;
     startOfWeek?: WeekDay | null;
     quotedIdentifiersIgnoreCase?: boolean;
-    override?: string;
+    disableTimestampConversion?: boolean; // Disable timestamp conversion to UTC - only disable if all timestamp values are already in UTC
+    override?: boolean;
+    organizationWarehouseCredentialsUuid?: string;
 };
 export type SnowflakeCredentials = Omit<
     CreateSnowflakeCredentials,
@@ -189,18 +239,85 @@ export type CreateWarehouseCredentials =
     | CreatePostgresCredentials
     | CreateSnowflakeCredentials
     | CreateDatabricksCredentials
-    | CreateTrinoCredentials;
+    | CreateTrinoCredentials
+    | CreateClickhouseCredentials;
 export type WarehouseCredentials =
     | SnowflakeCredentials
     | RedshiftCredentials
     | PostgresCredentials
     | BigqueryCredentials
     | DatabricksCredentials
-    | TrinoCredentials;
+    | TrinoCredentials
+    | ClickhouseCredentials;
 
 export type CreatePostgresLikeCredentials =
     | CreateRedshiftCredentials
     | CreatePostgresCredentials;
+
+export const maybeOverrideWarehouseConnection = <
+    T extends WarehouseCredentials,
+>(
+    connection: T,
+    overrides: { schema?: string },
+): T => {
+    const isBigquery = connection.type === WarehouseTypes.BIGQUERY;
+    const overridesSchema = isBigquery
+        ? { dataset: overrides.schema }
+        : { schema: overrides.schema };
+    return {
+        ...connection,
+        ...(overrides.schema ? overridesSchema : undefined),
+    };
+};
+
+/**
+ * Merges new warehouse credentials with base credentials, preserving advanced settings
+ * like requireUserCredentials from the base credentials.
+ *
+ * This is useful when creating preview projects where we want to use new connection details
+ * (like from dbt profiles) but preserve advanced configuration from the parent project.
+ */
+export const mergeWarehouseCredentials = <T extends CreateWarehouseCredentials>(
+    baseCredentials: T,
+    newCredentials: T,
+): T => {
+    // If types don't match, return newCredentials as-is (can't merge different warehouse types)
+    if (baseCredentials.type !== newCredentials.type) {
+        return newCredentials;
+    }
+
+    // Edge case: if the warehouse is snowflake but with a different warehouse, return newCredentials as-is
+    // This is to avoid enforcing requireUserCredentials on a different snowflake warehouse that might not have SSO enabled or different roles
+    if (
+        baseCredentials.type === WarehouseTypes.SNOWFLAKE &&
+        newCredentials.type === WarehouseTypes.SNOWFLAKE &&
+        baseCredentials.warehouse !== newCredentials.warehouse
+    ) {
+        return newCredentials;
+    }
+
+    // Only add non sensitive fields from base credentials to avoid conflicts with authentication methods
+    const keysToExclude = [
+        ...sensitiveCredentialsFieldNames,
+        'authenticationType',
+    ];
+    const filteredBaseCredentials = Object.fromEntries(
+        Object.entries(baseCredentials).filter(
+            ([key]) =>
+                !keysToExclude.includes(key as SensitiveCredentialsFieldNames),
+        ),
+    );
+    // We will use new credentials for connection, this might contain new authentication method
+    // do not include all baseCredentials here, to avoid conflicts on authentication (that will cause a mix of serviceaccounts/sso/passwords)
+    const merged = {
+        ...filteredBaseCredentials, // We copy most of the base config from the parent project, including advanced settings
+        ...newCredentials,
+        // Keep requireUserCredentials from base credentials, since this is a security setting and should not be overridden
+        requireUserCredentials: baseCredentials.requireUserCredentials,
+    };
+
+    return merged as T;
+};
 
 export interface DbtProjectConfigBase {
     type: DbtProjectType;
@@ -218,11 +335,27 @@ export enum SupportedDbtVersions {
     V1_7 = 'v1.7',
     V1_8 = 'v1.8',
     V1_9 = 'v1.9',
+    V1_10 = 'v1.10',
 }
 
 // Make it an enum to avoid TSOA errors
 export enum DbtVersionOptionLatest {
     LATEST = 'latest',
+}
+
+export function isDbtVersion110OrHigher(
+    version: SupportedDbtVersions | undefined,
+): boolean {
+    if (!version) {
+        return false;
+    }
+    // Get all enum values as an array in order
+    const versions = Object.values(SupportedDbtVersions);
+    const v110Index = versions.indexOf(SupportedDbtVersions.V1_10);
+    const currentIndex = versions.indexOf(version);
+
+    // If the current version is at or after v1.10 in the enum order
+    return currentIndex >= v110Index;
 }
 
 export type DbtVersionOption = SupportedDbtVersions | DbtVersionOptionLatest;
@@ -244,6 +377,12 @@ export interface DbtNoneProjectConfig extends DbtProjectCompilerBase {
     type: DbtProjectType.NONE;
 
     hideRefreshButton?: boolean;
+}
+
+export interface DbtManifestProjectConfig extends DbtProjectConfigBase {
+    type: DbtProjectType.MANIFEST;
+    manifest: string;
+    hideRefreshButton: boolean;
 }
 
 export interface DbtLocalProjectConfig extends DbtProjectCompilerBase {
@@ -307,28 +446,55 @@ export type DbtProjectConfig =
     | DbtBitBucketProjectConfig
     | DbtGitlabProjectConfig
     | DbtAzureDevOpsProjectConfig
-    | DbtNoneProjectConfig;
+    | DbtNoneProjectConfig
+    | DbtManifestProjectConfig;
 
-export type DbtSemanticLayerConnection = {
-    type: SemanticLayerType.DBT;
-    environmentId: string;
-    domain: string;
-    token: string;
+export const isGitProjectType = (
+    connection: DbtProjectConfig,
+): connection is
+    | DbtGithubProjectConfig
+    | DbtBitBucketProjectConfig
+    | DbtGitlabProjectConfig =>
+    [
+        DbtProjectType.GITHUB,
+        DbtProjectType.GITLAB,
+        DbtProjectType.BITBUCKET,
+    ].includes(connection.type);
+
+const isRemoteType = (
+    connection: DbtProjectConfig,
+): connection is DbtLocalProjectConfig | DbtCloudIDEProjectConfig =>
+    [DbtProjectType.DBT, DbtProjectType.DBT_CLOUD_IDE].includes(
+        connection.type,
+    );
+
+export const maybeOverrideDbtConnection = <T extends DbtProjectConfig>(
+    connection: T,
+    overrides: {
+        branch?: string;
+        environment?: DbtProjectEnvironmentVariable[];
+        manifest?: string;
+    },
+): T => {
+    // If manifest is provided, create a MANIFEST connection type
+    if (overrides.manifest) {
+        return {
+            type: DbtProjectType.MANIFEST,
+            manifest: overrides.manifest,
+            hideRefreshButton: true,
+        } as T;
+    }
+
+    return {
+        ...connection,
+        ...(isGitProjectType(connection) && overrides.branch
+            ? { branch: overrides.branch }
+            : undefined),
+        ...(!isRemoteType(connection) && overrides.environment
+            ? { environment: overrides.environment }
+            : undefined),
+    };
 };
-
-export type CubeSemanticLayerConnection = {
-    type: SemanticLayerType.CUBE;
-    domain: string;
-    token: string;
-};
-
-export type SemanticLayerConnection =
-    | DbtSemanticLayerConnection
-    | CubeSemanticLayerConnection;
-
-export type SemanticLayerConnectionUpdate =
-    | (Partial<DbtSemanticLayerConnection> & { type: SemanticLayerType.DBT })
-    | (Partial<CubeSemanticLayerConnection> & { type: SemanticLayerType.CUBE });
 
 export type Project = {
     organizationUuid: string;
@@ -340,9 +506,9 @@ export type Project = {
     pinnedListUuid?: string;
     upstreamProjectUuid?: string;
     dbtVersion: DbtVersionOption;
-    semanticLayerConnection?: SemanticLayerConnection;
     schedulerTimezone: string;
     createdByUserUuid: string | null;
+    organizationWarehouseCredentialsUuid?: string;
 };
 
 export type ProjectSummary = Pick<
@@ -373,6 +539,7 @@ export type PreviewContentMapping = {
     dashboardVersions: IdContentMapping[];
     savedSql: IdContentMapping[];
     savedSqlVersions: IdContentMapping[];
+    aiAgents: IdContentMapping[];
 };
 
 export type UpdateSchedulerSettings = {

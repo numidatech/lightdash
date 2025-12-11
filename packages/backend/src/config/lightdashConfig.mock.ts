@@ -1,4 +1,8 @@
-import { LightdashMode, OrganizationMemberRole } from '@lightdash/common';
+import {
+    ALL_TASK_NAMES,
+    LightdashMode,
+    OrganizationMemberRole,
+} from '@lightdash/common';
 import { LightdashConfig } from './parseConfig';
 
 export const lightdashConfigMock: LightdashConfig = {
@@ -19,6 +23,7 @@ export const lightdashConfigMock: LightdashConfig = {
             oauth2ClientSecret: undefined,
             callbackPath: '',
             googleDriveApiKey: undefined,
+            enableGCloudADC: false,
             enabled: false,
         },
         okta: {
@@ -64,6 +69,22 @@ export const lightdashConfigMock: LightdashConfig = {
             x509PublicKeyCert: undefined,
             x509PublicKeyCertPath: undefined,
         },
+        snowflake: {
+            loginPath: '/login/snowflake',
+            callbackPath: '/oauth/redirect/snowflake',
+            authorizationEndpoint: undefined,
+            tokenEndpoint: undefined,
+            clientId: undefined,
+            clientSecret: undefined,
+        },
+        databricks: {
+            loginPath: '/login/databricks',
+            callbackPath: '/oauth/redirect/databricks',
+            authorizationEndpoint: undefined,
+            tokenEndpoint: undefined,
+            clientId: undefined,
+            clientSecret: undefined,
+        },
     },
     lightdashCloudInstance: 'test-instance',
     k8s: {
@@ -77,7 +98,6 @@ export const lightdashConfigMock: LightdashConfig = {
         path: '/metrics',
     },
     chart: { versionHistory: { daysLimit: 0 } },
-    customVisualizations: { enabled: false },
     database: {
         connectionUri: undefined,
         maxConnections: undefined,
@@ -90,7 +110,7 @@ export const lightdashConfigMock: LightdashConfig = {
     pylon: {
         appId: '',
     },
-    lightdashSecret: '',
+    lightdashSecret: 'look away this is a secret',
     logging: {
         level: 'debug',
         format: 'pretty',
@@ -104,17 +124,41 @@ export const lightdashConfigMock: LightdashConfig = {
     maxPayloadSize: '',
     pivotTable: { maxColumnLimit: 0 },
     posthog: undefined,
-    resultsCache: {
+    s3: {
+        endpoint: 'mock_endpoint',
+        bucket: 'mock_bucket',
+        region: 'mock_region',
+    },
+    results: {
         cacheStateTimeSeconds: 0,
-        resultsEnabled: false,
+        cacheEnabled: false,
         autocompleteEnabled: false,
-        s3: {},
+        s3: {
+            endpoint: 'mock_endpoint',
+            bucket: 'mock_bucket',
+            region: 'mock_region',
+        },
     },
     rudder: {
         writeKey: '',
         dataPlaneUrl: '',
     },
-    scheduler: { concurrency: 0, enabled: false, jobTimeout: 0 },
+    scheduler: {
+        concurrency: 0,
+        enabled: false,
+        jobTimeout: 0,
+        tasks: ALL_TASK_NAMES,
+        queryHistory: {
+            cleanup: {
+                enabled: true,
+                retentionDays: 30,
+                batchSize: 1000,
+                delayMs: 100,
+                maxBatches: 100,
+                schedule: '0 2 * * *',
+            },
+        },
+    },
     secureCookies: false,
     sentry: {
         backend: {
@@ -148,18 +192,41 @@ export const lightdashConfigMock: LightdashConfig = {
     smtp: undefined,
     siteUrl: 'https://test.lightdash.cloud',
     query: {
+        maxPageSize: 2500,
         maxLimit: 5000,
         defaultLimit: 500,
         csvCellsLimit: 100000,
         timezone: undefined,
+        useSqlPivotResults: false,
     },
     ai: {
         copilot: {
             enabled: false,
+            debugLoggingEnabled: false,
+            maxQueryLimit: 10000,
+            telemetryEnabled: false,
+            requiresFeatureFlag: false,
+            askAiButtonEnabled: false,
+            embeddingEnabled: true,
+            defaultProvider: 'openai',
+            providers: {
+                openai: {
+                    apiKey: 'mock_api_key',
+                    modelName: 'gpt-4.1-2025-04-14',
+                    embeddingModelName: 'text-embedding-3-small',
+                },
+            },
+            verifiedAnswerSimilarityThreshold: 0.6,
+            defaultEmbeddingModelProvider: 'openai',
         },
     },
     embedding: {
         enabled: false,
+        allowAll: {
+            dashboards: false,
+            charts: false,
+        },
+        events: undefined,
     },
     scim: {
         enabled: false,
@@ -179,10 +246,41 @@ export const lightdashConfigMock: LightdashConfig = {
         appName: 'lightdash-app-dev',
         redirectDomain: 'test',
     },
+    gitlab: {
+        clientId: undefined,
+        clientSecret: undefined,
+        redirectDomain: 'test',
+    },
     headlessBrowser: {
         internalLightdashHost: 'https://test.lightdash.cloud',
+        browserEndpoint: 'ws://headless-browser:3000',
     },
     contentAsCode: {
         maxDownloads: 100,
+    },
+    appearance: {},
+    microsoftTeams: {
+        enabled: false,
+    },
+    serviceAccount: {
+        enabled: false,
+    },
+    organizationWarehouseCredentials: {
+        enabled: false,
+    },
+    googleCloudPlatform: {
+        projectId: 'test-project-id',
+    },
+    mcp: {
+        enabled: true,
+    },
+    customRoles: {
+        enabled: false,
+    },
+    dashboardComments: {
+        enabled: true,
+    },
+    echarts6: {
+        enabled: false,
     },
 };

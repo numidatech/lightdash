@@ -1,4 +1,8 @@
-import { type Explore, type MetricQuery } from '@lightdash/common';
+import {
+    type Explore,
+    type MetricQuery,
+    type ParametersValuesMap,
+} from '@lightdash/common';
 import { createContext } from 'react';
 import { type DrillDownConfig, type UnderlyingDataConfig } from './types';
 
@@ -6,6 +10,7 @@ export type MetricQueryDataContext = {
     tableName: string;
     explore: Explore | undefined;
     metricQuery?: MetricQuery;
+    parameters?: ParametersValuesMap;
 
     underlyingDataConfig: UnderlyingDataConfig | undefined;
     isUnderlyingDataModalOpen: boolean;
@@ -16,6 +21,7 @@ export type MetricQueryDataContext = {
     isDrillDownModalOpen: boolean;
     openDrillDownModal: (config: DrillDownConfig) => void;
     closeDrillDownModal: () => void;
+    queryUuid?: string;
 };
 
 export const Context = createContext<MetricQueryDataContext | undefined>(

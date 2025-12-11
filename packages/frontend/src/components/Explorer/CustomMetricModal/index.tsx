@@ -26,12 +26,18 @@ import {
     Title,
 } from '@mantine/core';
 import { useForm } from '@mantine/form';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import { type ValueOf } from 'type-fest';
 import { v4 as uuidv4 } from 'uuid';
+import {
+    explorerActions,
+    selectAdditionalMetrics,
+    selectTableName,
+    useExplorerDispatch,
+    useExplorerSelector,
+} from '../../../features/explorer/store';
 import useToaster from '../../../hooks/toaster/useToaster';
 import { useExplore } from '../../../hooks/useExplore';
-import useExplorerContext from '../../../providers/Explorer/useExplorerContext';
 import FiltersProvider from '../../common/Filters/FiltersProvider';
 import { FormatForm } from '../FormatForm';
 import { FilterForm, type MetricFilterRuleWithFieldId } from './FilterForm';
@@ -42,32 +48,30 @@ import {
     prepareCustomMetricData,
 } from './utils';
 
-export const CustomMetricModal = () => {
+export const CustomMetricModal = memo(() => {
     const {
         isOpen,
         isEditing,
         item,
         type: customMetricType,
-    } = useExplorerContext((context) => context.state.modals.additionalMetric);
+    } = useExplorerSelector((state) => state.explorer.modals.additionalMetric);
 
-    const toggleModal = useExplorerContext(
-        (context) => context.actions.toggleAdditionalMetricModal,
-    );
-
-    const { showToastSuccess } = useToaster();
-    const addAdditionalMetric = useExplorerContext(
-        (context) => context.actions.addAdditionalMetric,
-    );
-    const editAdditionalMetric = useExplorerContext(
-        (context) => context.actions.editAdditionalMetric,
-    );
-    const tableName = useExplorerContext(
-        (context) => context.state.unsavedChartVersion.tableName,
-    );
+    const dispatch = useExplorerDispatch();
+    const additionalMetrics = useExplorerSelector(selectAdditionalMetrics);
+    const tableName = useExplorerSelector(selectTableName);
 
     const { data: exploreData } = useExplore(tableName);
 
+    const { showToastSuccess } = useToaster();
+
     let dimensionToCheck: Dimension | undefined;
+
+    const { projectUuid, fieldsMap, startOfWeek } = useDataForFiltersProvider();
+
+    const dimensionsMap = useMemo(
+        () => getFilterableDimensionsFromItemsMap(fieldsMap),
+        [fieldsMap],
+    );
 
     if (isDimension(item)) {
         dimensionToCheck = item;
@@ -77,19 +81,16 @@ export const CustomMetricModal = () => {
             exploreData?.tables[item.table]?.dimensions[item.baseDimensionName];
     }
 
-    const canApplyFormatting =
-        dimensionToCheck &&
-        customMetricType &&
-        canApplyFormattingToCustomMetric(dimensionToCheck, customMetricType);
-
-    const additionalMetrics = useExplorerContext(
-        (context) =>
-            context.state.unsavedChartVersion.metricQuery.additionalMetrics,
+    const canApplyFormatting = useMemo(
+        () =>
+            dimensionToCheck &&
+            customMetricType &&
+            canApplyFormattingToCustomMetric(
+                dimensionToCheck,
+                customMetricType,
+            ),
+        [dimensionToCheck, customMetricType],
     );
-
-    const { projectUuid, fieldsMap, startOfWeek } = useDataForFiltersProvider();
-
-    const dimensionsMap = getFilterableDimensionsFromItemsMap(fieldsMap);
 
     const form = useForm<
         Pick<AdditionalMetric, 'percentile'> & {
@@ -202,7 +203,10 @@ export const CustomMetricModal = () => {
                     setFieldValue('percentile', item.percentile);
 
                 if (item.formatOptions) {
-                    setFieldValue('format', item.formatOptions);
+                    setFieldValue('format', {
+                        // This spread is intentional to avoid @mantine/form mutating the enum object `item.formatOptions.type`
+                        ...item.formatOptions,
+                    });
                 }
             }
         },
@@ -211,8 +215,8 @@ export const CustomMetricModal = () => {
 
     const handleClose = useCallback(() => {
         form.reset();
-        toggleModal();
-    }, [form, toggleModal]);
+        dispatch(explorerActions.toggleAdditionalMetricModal());
+    }, [form, dispatch]);
 
     const handleOnSubmit = form.onSubmit(
         ({ customMetricLabel, percentile, format }) => {
@@ -230,31 +234,34 @@ export const CustomMetricModal = () => {
             });
 
             if (isEditing && isAdditionalMetric(item)) {
-                editAdditionalMetric(
-                    {
-                        ...item,
-                        ...data,
-                    },
-                    getItemId(item),
+                dispatch(
+                    explorerActions.editAdditionalMetric({
+                        additionalMetric: { ...item, ...data },
+                        previousAdditionalMetricName: getItemId(item),
+                    }),
                 );
                 showToastSuccess({
                     title: 'Custom metric edited successfully',
                 });
             } else if (isDimension(item) && form.values.customMetricLabel) {
-                addAdditionalMetric({
-                    uuid: uuidv4(),
-                    baseDimensionName: item.name,
-                    ...data,
-                });
+                dispatch(
+                    explorerActions.addAdditionalMetric({
+                        uuid: uuidv4(),
+                        baseDimensionName: item.name,
+                        ...data,
+                    }),
+                );
                 showToastSuccess({
                     title: 'Custom metric added successfully',
                 });
             } else if (isCustomDimension(item)) {
-                addAdditionalMetric({
-                    uuid: uuidv4(),
-                    // Do not add baseDimensionName to avoid invalid validation errors in queryBuilder
-                    ...data,
-                });
+                dispatch(
+                    explorerActions.addAdditionalMetric({
+                        uuid: uuidv4(),
+                        // Do not add baseDimensionName to avoid invalid validation errors in queryBuilder
+                        ...data,
+                    }),
+                );
                 showToastSuccess({
                     title: 'Custom metric added successfully',
                 });
@@ -284,6 +291,10 @@ export const CustomMetricModal = () => {
         path: keyof CustomFormat,
         value: ValueOf<CustomFormat>,
     ) => form.setFieldValue(`format.${path}`, value);
+
+    if (!isOpen) {
+        return null;
+    }
 
     return item ? (
         <Modal
@@ -343,7 +354,12 @@ export const CustomMetricModal = () => {
                                             ? `(${customMetricFiltersWithIds.length}) `
                                             : ' '}
                                     </Text>
-                                    <Text span fz="xs" color="gray.5" fw={400}>
+                                    <Text
+                                        span
+                                        fz="xs"
+                                        color="ldGray.5"
+                                        fw={400}
+                                    >
                                         (optional)
                                     </Text>
                                 </Text>
@@ -386,4 +402,4 @@ export const CustomMetricModal = () => {
             </form>
         </Modal>
     ) : null;
-};
+});

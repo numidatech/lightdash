@@ -1,6 +1,12 @@
-import { DimensionType } from '../../types/field';
+import { type AnyType } from '../../types/any';
+import { DimensionType, TableCalculationType } from '../../types/field';
+import { type PivotConfiguration } from '../../types/pivot';
 import { type RawResultRow } from '../../types/results';
-import { ChartKind } from '../../types/savedCharts';
+import {
+    ChartKind,
+    type PivotReference,
+    type Series,
+} from '../../types/savedCharts';
 import { type CartesianChartDisplay } from '../CartesianChartDataModel';
 
 export enum VizAggregationOptions {
@@ -28,6 +34,9 @@ export const vizAggregationOptions = [
 
 export const VIZ_DEFAULT_AGGREGATION = VizAggregationOptions.COUNT;
 
+/**
+ * @deprecated Use type ResultColumn
+ */
 export type VizColumn = {
     reference: string;
     type?: DimensionType;
@@ -43,14 +52,32 @@ export enum AxisSide {
     RIGHT,
 }
 
-export function getColumnAxisType(column: VizColumn): VizIndexType {
-    switch (column.type) {
+export enum StackType {
+    NONE = 'none',
+    NORMAL = 'stack',
+    PERCENT = 'stack100',
+}
+
+export function getColumnAxisType(dimensionType: DimensionType): VizIndexType {
+    switch (dimensionType) {
         case DimensionType.DATE:
         case DimensionType.TIMESTAMP:
             return VizIndexType.TIME;
         case DimensionType.BOOLEAN:
         case DimensionType.NUMBER:
         case DimensionType.STRING:
+        default:
+            return VizIndexType.CATEGORY;
+    }
+}
+
+export function getTableCalculationAxisType(
+    tableCalculationType: TableCalculationType,
+): VizIndexType {
+    switch (tableCalculationType) {
+        case TableCalculationType.DATE:
+        case TableCalculationType.TIMESTAMP:
+            return VizIndexType.TIME;
         default:
             return VizIndexType.CATEGORY;
     }
@@ -92,9 +119,7 @@ export type VizTableDisplay = {
     // On vis column config, visible, label and frozen, at least seem like display options
 };
 
-export type PivotIndexColum =
-    | { reference: string; type: VizIndexType }
-    | undefined;
+export type PivotIndexColum = { reference: string; type: VizIndexType };
 
 export type PivotValuesColumn = {
     referenceField: string;
@@ -102,16 +127,20 @@ export type PivotValuesColumn = {
     aggregation: VizAggregationOptions;
     pivotValues: {
         referenceField: string;
-        value: string;
+        value: unknown;
+        formatted?: string;
     }[];
+    columnIndex?: number;
 };
 
 export type PivotChartData = {
+    queryUuid: string | undefined;
     fileUrl: string | undefined;
     results: RawResultRow[];
-    indexColumn: PivotIndexColum;
+    indexColumn: PivotConfiguration['indexColumn'] | undefined;
     valuesColumns: PivotValuesColumn[];
     columns: VizColumn[];
+    columnCount: number | undefined;
 };
 
 // TODO: This type is used by both the cartesian and pie chart data models,
@@ -133,6 +162,7 @@ export type PivotChartLayout = {
     }[];
     groupBy: { reference: string }[] | undefined;
     sortBy?: VizSortBy[];
+    stack?: boolean | StackType; // StackType enum or boolean for backward compatibility
 };
 
 export const isPivotChartLayout = (
@@ -171,6 +201,12 @@ export type VizColumnConfig = {
     frozen: boolean;
     order?: number;
     aggregation?: VizAggregationOptions;
+    displayStyle?: 'text' | 'bar';
+    barConfig?: {
+        min?: number; // Default: auto-calculate from column
+        max?: number; // Default: auto-calculate from column
+        color?: string; // Default: '#5470c6'
+    };
 };
 
 export type VizColumnsConfig = { [key: string]: VizColumnConfig };
@@ -270,4 +306,108 @@ export type VizTableHeaderSortConfig = {
     [fieldName: string]: {
         direction: SortByDirection | undefined;
     };
+};
+
+export type EChartsSeries = {
+    type: Series['type'];
+    connectNulls: boolean;
+    stack?: string;
+    stackLabel?: {
+        show?: boolean;
+    };
+    name?: string;
+    color?: string;
+    yAxisIndex?: number;
+    xAxisIndex?: number;
+    encode?: {
+        x: string;
+        y: string;
+        tooltip: string[];
+        seriesName: string;
+        yRef?: PivotReference;
+        xRef?: PivotReference;
+    };
+    dimensions?: Array<{ name: string; displayName: string }>;
+    emphasis?: {
+        focus?: string;
+    };
+    areaStyle?: AnyType;
+    pivotReference?: PivotReference;
+    label?: {
+        show?: boolean;
+        fontSize?: number;
+        fontWeight?: string;
+        position?: 'left' | 'top' | 'right' | 'bottom' | 'inside';
+        formatter?: (param: { data: Record<string, unknown> }) => string;
+    };
+    labelLayout?: {
+        hideOverlap?: boolean;
+    };
+    tooltip?: {
+        show?: boolean;
+        valueFormatter?: (value: unknown) => string;
+    };
+    data?: unknown[];
+    showSymbol?: boolean;
+    symbolSize?: number;
+    markLine?: Record<string, unknown>;
+    itemStyle?: {
+        borderRadius?: number | number[];
+        color?: string;
+        opacity?: number;
+    };
+    lineStyle?: {
+        type?: 'solid' | 'dashed' | 'dotted';
+        width?: number;
+        color?: string;
+        opacity?: number;
+    };
+    // Metadata for period-over-period comparison series
+    periodOverPeriodMetadata?: {
+        siblingSeriesIndex: number;
+        periodOffset: number;
+        granularity: string;
+        /** The field ID of the base metric this PoP series compares against */
+        baseFieldId: string;
+    };
+};
+
+/**
+ * SQL Runner specific EChart series type
+ * Extends EChartsSeries but with key differences:
+ * - type can be a string (from user config) not just CartesianSeriesType
+ * - connectNulls is optional
+ * - encode structure is simpler (just x and y, not tooltip/seriesName)
+ * - dimensions is a tuple not an array of objects
+ * - label formatter has different signature
+ * - tooltip valueFormatter is more specific (number not unknown)
+ * - adds barCategoryGap for bar charts
+ * - excludes pivotReference and markLine
+ */
+export type SqlRunnerEChartsSeries = Omit<
+    EChartsSeries,
+    | 'type'
+    | 'connectNulls'
+    | 'encode'
+    | 'dimensions'
+    | 'label'
+    | 'tooltip'
+    | 'pivotReference'
+    | 'markLine'
+> & {
+    type: string;
+    connectNulls?: boolean;
+    encode?: {
+        x: string | undefined;
+        y: string;
+    };
+    dimensions?: [string | undefined, string];
+    label?: {
+        show?: boolean;
+        fontSize?: number;
+        fontWeight?: string;
+        position?: string;
+        formatter?: (params: AnyType) => string;
+    };
+    barCategoryGap?: string;
 };

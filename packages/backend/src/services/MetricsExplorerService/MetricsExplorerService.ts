@@ -33,6 +33,7 @@ import {
     type TimeDimensionConfig,
 } from '@lightdash/common';
 import { v4 as uuidv4 } from 'uuid';
+import { fromSession } from '../../auth/account';
 import type { LightdashConfig } from '../../config/parseConfig';
 import { measureTime } from '../../logging/measureTime';
 import { CatalogModel } from '../../models/CatalogModel/CatalogModel';
@@ -117,7 +118,7 @@ export class MetricsExplorerService<
 
         const { rows, fields } =
             await this.projectService.runMetricExplorerQuery(
-                user,
+                fromSession(user),
                 projectUuid,
                 exploreName,
                 adjustedMetricQuery,
@@ -206,14 +207,19 @@ export class MetricsExplorerService<
                     ],
                 },
             },
-            sorts: [{ fieldId: dimensionFieldId, descending: false }],
+            sorts: [
+                {
+                    fieldId: dimensionFieldId,
+                    descending: false,
+                },
+            ],
             tableCalculations: [],
             limit: this.maxQueryLimit,
         };
 
         const { rows, fields } =
             await this.projectService.runMetricExplorerQuery(
-                user,
+                fromSession(user),
                 projectUuid,
                 sourceMetricExploreName,
                 metricQuery,
@@ -243,7 +249,7 @@ export class MetricsExplorerService<
         timeDimensionOverride: TimeDimensionConfig | undefined,
         filter: FilterRule | undefined,
     ): Promise<MetricsExplorerQueryResults> {
-        return measureTime(
+        const { result } = await measureTime(
             () =>
                 this._runMetricExplorerQuery(
                     user,
@@ -265,6 +271,8 @@ export class MetricsExplorerService<
                 timeDimensionOverride,
             },
         );
+
+        return result;
     }
 
     private async _getTopNSegments(
@@ -282,13 +290,18 @@ export class MetricsExplorerService<
             ...metricQuery,
             exploreName,
             dimensions: [segmentDimension],
-            sorts: [{ fieldId: metricQuery.metrics[0], descending: true }],
+            sorts: [
+                {
+                    fieldId: metricQuery.metrics[0],
+                    descending: true,
+                },
+            ],
             limit: MAX_SEGMENT_DIMENSION_UNIQUE_VALUES,
             tableCalculations: [],
         };
 
         const { rows } = await this.projectService.runMetricExplorerQuery(
-            user,
+            fromSession(user),
             projectUuid,
             exploreName,
             getSegmentsMetricQuery,
@@ -377,7 +390,12 @@ export class MetricsExplorerService<
                     and: dateFilters,
                 },
             },
-            sorts: [{ fieldId: timeDimension, descending: false }],
+            sorts: [
+                {
+                    fieldId: timeDimension,
+                    descending: false,
+                },
+            ],
             tableCalculations: [],
             limit: this.maxQueryLimit,
         };
@@ -410,7 +428,7 @@ export class MetricsExplorerService<
 
         const { rows: currentResults, fields } =
             await this.projectService.runMetricExplorerQuery(
-                user,
+                fromSession(user),
                 projectUuid,
                 exploreName,
                 metricQuery,
@@ -564,11 +582,12 @@ export class MetricsExplorerService<
         exploreName: string,
         metricName: string,
         timeFrame: TimeFrames,
+        granularity: TimeFrames,
         startDate: string,
         endDate: string,
         comparisonType: MetricTotalComparisonType = MetricTotalComparisonType.NONE,
     ): Promise<MetricTotalResults> {
-        return measureTime(
+        const { result } = await measureTime(
             () =>
                 this._getMetricTotal(
                     user,
@@ -576,6 +595,7 @@ export class MetricsExplorerService<
                     exploreName,
                     metricName,
                     timeFrame,
+                    granularity,
                     startDate,
                     endDate,
                     comparisonType,
@@ -587,6 +607,8 @@ export class MetricsExplorerService<
                 comparisonType,
             },
         );
+
+        return result;
     }
 
     private async _getMetricTotal(
@@ -595,6 +617,7 @@ export class MetricsExplorerService<
         exploreName: string,
         metricName: string,
         timeFrame: TimeFrames,
+        granularity: TimeFrames,
         startDate: string,
         endDate: string,
         comparisonType: MetricTotalComparisonType = MetricTotalComparisonType.NONE,
@@ -604,7 +627,7 @@ export class MetricsExplorerService<
             projectUuid,
             exploreName,
             metricName,
-            timeFrame,
+            granularity,
         );
 
         if (!metric.timeDimension) {
@@ -635,7 +658,7 @@ export class MetricsExplorerService<
 
         const { rows: currentRows } =
             await this.projectService.runMetricExplorerQuery(
-                user,
+                fromSession(user),
                 projectUuid,
                 exploreName,
                 metricQuery,
@@ -646,8 +669,8 @@ export class MetricsExplorerService<
 
         if (comparisonType === MetricTotalComparisonType.PREVIOUS_PERIOD) {
             compareDateRange = [
-                getDateCalcUtils(timeFrame).back(dateRange[0]),
-                getDateCalcUtils(timeFrame).back(dateRange[1]),
+                getDateCalcUtils(timeFrame, granularity).back(dateRange[0]),
+                getDateCalcUtils(timeFrame, granularity).back(dateRange[1]),
             ];
 
             const compareMetricQuery = {
@@ -665,7 +688,7 @@ export class MetricsExplorerService<
 
             compareRows = (
                 await this.projectService.runMetricExplorerQuery(
-                    user,
+                    fromSession(user),
                     projectUuid,
                     exploreName,
                     compareMetricQuery,

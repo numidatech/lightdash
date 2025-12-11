@@ -4,58 +4,33 @@ import {
     NotFound,
     PutObjectCommand,
     PutObjectCommandInput,
-    S3,
+    S3ServiceException,
 } from '@aws-sdk/client-s3';
+import {
+    getErrorMessage,
+    MissingConfigError,
+    S3Error,
+} from '@lightdash/common';
 import * as Sentry from '@sentry/node';
 import { LightdashConfig } from '../../config/parseConfig';
 import Logger from '../../logging/logger';
 import { wrapSentryTransaction } from '../../utils';
+import { S3BaseClient } from './S3BaseClient';
 
-type S3CacheClientArguments = {
+export type S3CacheClientArguments = {
     lightdashConfig: LightdashConfig;
 };
 
-export class S3CacheClient {
-    configuration: LightdashConfig['resultsCache']['s3'];
-
-    private readonly s3?: S3;
+export class S3CacheClient extends S3BaseClient {
+    configuration: LightdashConfig['results']['s3'];
 
     constructor({ lightdashConfig }: S3CacheClientArguments) {
-        const endpoint = lightdashConfig.s3?.endpoint;
-        this.configuration = lightdashConfig.resultsCache.s3;
-        const { region, accessKey, secretKey } = this.configuration;
+        super(lightdashConfig.results.s3);
+        this.configuration = lightdashConfig.results.s3;
 
-        if (endpoint && region) {
-            const s3Config = {
-                endpoint,
-                region,
-                apiVersion: '2006-03-01',
-            };
-
-            if (accessKey && secretKey) {
-                Object.assign(s3Config, {
-                    credentials: {
-                        accessKeyId: accessKey,
-                        secretAccessKey: secretKey,
-                    },
-                });
-                Logger.debug(
-                    'Using results cache S3 storage with access key credentials',
-                );
-            } else {
-                Logger.debug(
-                    'Using results cache S3 storage with IAM role credentials',
-                );
-            }
-
-            this.s3 = new S3(s3Config);
-        } else {
-            Logger.debug('Missing results cache S3 bucket configuration');
+        if (this.s3) {
+            Logger.debug('Initialized S3 results cache client');
         }
-    }
-
-    isEnabled(): boolean {
-        return this.s3 !== undefined;
     }
 
     async uploadResults(
@@ -64,10 +39,8 @@ export class S3CacheClient {
         metadata: PutObjectCommandInput['Metadata'],
     ) {
         return wrapSentryTransaction('s3.uploadResults', { key }, async () => {
-            if (!this.configuration.bucket || this.s3 === undefined) {
-                throw new Error(
-                    "Results caching is not enabled or is missing S3 configuration, can't upload results cache",
-                );
+            if (!this.configuration || !this.s3) {
+                throw new MissingConfigError('S3 configuration is not set');
             }
 
             try {
@@ -91,10 +64,31 @@ export class S3CacheClient {
                     ContentType: 'application/json',
                     Metadata: sanitizedMetadata,
                 });
-                const response = await this.s3.send(command);
+                await this.s3.send(command);
             } catch (error) {
-                Logger.error(`Failed to upload results to s3. ${error}`);
-                Sentry.captureException(error);
+                if (error instanceof S3ServiceException) {
+                    Logger.error(
+                        `Failed to upload results to s3. ${error.name} - ${error.message}`,
+                    );
+                } else {
+                    Logger.error(
+                        `Failed to upload results to s3. ${getErrorMessage(
+                            error,
+                        )}`,
+                    );
+                }
+
+                Sentry.captureException(
+                    new S3Error(
+                        `Failed to upload results to s3. ${getErrorMessage(
+                            error,
+                        )}`,
+                        {
+                            key,
+                        },
+                    ),
+                );
+
                 throw error;
             }
         });
@@ -105,14 +99,10 @@ export class S3CacheClient {
             's3.getResultsMetadata',
             { key },
             async () => {
-                if (
-                    this.configuration.bucket === undefined ||
-                    this.s3 === undefined
-                ) {
-                    throw new Error(
-                        "Results caching is not enabled or is missing S3 configuration, can't get results cache metadata",
-                    );
+                if (!this.configuration || !this.s3) {
+                    throw new MissingConfigError('S3 configuration is not set');
                 }
+
                 try {
                     const command = new HeadObjectCommand({
                         Bucket: this.configuration.bucket,
@@ -123,37 +113,72 @@ export class S3CacheClient {
                     if (error instanceof NotFound) {
                         return undefined;
                     }
-                    Logger.error(
-                        `Failed to get results metadata from s3. ${error}`,
+
+                    if (error instanceof S3ServiceException) {
+                        Logger.error(
+                            `Failed to get results metadata from s3. ${error.name} - ${error.message}`,
+                        );
+                    } else {
+                        Logger.error(
+                            `Failed to get results metadata from s3. ${getErrorMessage(
+                                error,
+                            )}`,
+                        );
+                    }
+
+                    Sentry.captureException(
+                        new S3Error(
+                            `Failed to get results metadata from s3. ${getErrorMessage(
+                                error,
+                            )}`,
+                            {
+                                key,
+                            },
+                        ),
                     );
-                    Sentry.captureException(error);
+
                     throw error;
                 }
             },
         );
     }
 
-    async getResults(key: string) {
+    async getResults(key: string, extension: string = 'json') {
         return wrapSentryTransaction('s3.getResults', { key }, async (span) => {
-            if (
-                this.configuration.bucket === undefined ||
-                this.s3 === undefined
-            ) {
-                throw new Error(
-                    "Results caching is not enabled or is missing S3 configuration, can't get results cache",
-                );
+            if (!this.configuration || !this.s3) {
+                throw new MissingConfigError('S3 configuration is not set');
             }
+
             try {
                 const command = new GetObjectCommand({
                     Bucket: this.configuration.bucket,
-                    Key: `${key}.json`,
+                    Key: `${key}.${extension}`,
                 });
                 return await this.s3.send(command);
             } catch (error) {
-                Logger.error(
-                    `Failed to get results metadata from s3. ${error}`,
+                if (error instanceof S3ServiceException) {
+                    Logger.error(
+                        `Failed to get results from s3. ${error.name} - ${error.message}`,
+                    );
+                } else {
+                    Logger.error(
+                        `Failed to get results from s3. ${getErrorMessage(
+                            error,
+                        )}`,
+                    );
+                }
+
+                Sentry.captureException(
+                    new S3Error(
+                        `Failed to get results from s3. ${getErrorMessage(
+                            error,
+                        )}`,
+                        {
+                            key,
+                        },
+                    ),
                 );
-                Sentry.captureException(error);
+
                 throw error;
             }
         });

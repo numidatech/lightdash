@@ -22,6 +22,8 @@ export class CommercialFeatureFlagModel extends FeatureFlagModel {
             [CommercialFeatureFlags.Scim]: this.getScimFlag.bind(this),
             [CommercialFeatureFlags.AiCopilot]:
                 this.getAiCopilotFlag.bind(this),
+            [CommercialFeatureFlags.AgentReasoning]:
+                CommercialFeatureFlagModel.getAgentReasoningFlag.bind(this),
         };
     }
 
@@ -37,6 +39,7 @@ export class CommercialFeatureFlagModel extends FeatureFlagModel {
                       {
                           userUuid: user.userUuid,
                           organizationUuid: user.organizationUuid,
+                          organizationName: user.organizationName,
                       },
                       {
                           throwOnTimeout: false,
@@ -70,10 +73,60 @@ export class CommercialFeatureFlagModel extends FeatureFlagModel {
         };
     }
 
-    private async getAiCopilotFlag({ featureFlagId }: FeatureFlagLogicArgs) {
+    private async getAiCopilotFlag({
+        featureFlagId,
+        user,
+    }: FeatureFlagLogicArgs) {
+        let enabled = false;
+
+        if (
+            this.lightdashConfig.ai.copilot.enabled &&
+            this.lightdashConfig.ai.copilot.requiresFeatureFlag
+        ) {
+            if (!user) {
+                throw new Error(
+                    'User is required to check if AI copilot is enabled',
+                );
+            }
+
+            enabled = await isFeatureFlagEnabled(
+                CommercialFeatureFlags.AiCopilot as AnyType as FeatureFlags,
+                {
+                    userUuid: user.userUuid,
+                    organizationUuid: user.organizationUuid,
+                    organizationName: user.organizationName,
+                },
+            );
+        } else {
+            enabled = this.lightdashConfig.ai.copilot.enabled;
+        }
+
         return {
             id: featureFlagId,
-            enabled: this.lightdashConfig.ai.copilot.enabled,
+            enabled,
+        };
+    }
+
+    private static async getAgentReasoningFlag({
+        user,
+        featureFlagId,
+    }: FeatureFlagLogicArgs) {
+        const enabled = user
+            ? await isFeatureFlagEnabled(
+                  CommercialFeatureFlags.AgentReasoning as AnyType as FeatureFlags,
+                  {
+                      userUuid: user.userUuid,
+                      organizationUuid: user.organizationUuid,
+                      organizationName: user.organizationName,
+                  },
+                  {
+                      throwOnTimeout: false,
+                  },
+              )
+            : false;
+        return {
+            id: featureFlagId,
+            enabled,
         };
     }
 }

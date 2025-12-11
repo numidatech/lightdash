@@ -1,3 +1,4 @@
+import { isHexCodeColor } from '@lightdash/common';
 import {
     ColorSwatch,
     ColorPicker as MantineColorPicker,
@@ -8,7 +9,6 @@ import {
 } from '@mantine/core';
 import { IconHash } from '@tabler/icons-react';
 import { type FC } from 'react';
-import { isHexCodeColor } from '../../utils/colorUtils';
 import MantineIcon from '../common/MantineIcon';
 
 interface Props {
@@ -17,6 +17,7 @@ interface Props {
     swatches: string[];
     onColorChange?: (newColor: string) => void;
     colorSwatchProps?: Omit<ColorSwatchProps, 'color'>;
+    withAlpha?: boolean;
 }
 
 const ColorSelector: FC<Props> = ({
@@ -25,11 +26,12 @@ const ColorSelector: FC<Props> = ({
     swatches,
     onColorChange,
     colorSwatchProps,
+    withAlpha = false,
 }) => {
     const isValidHexColor = color && isHexCodeColor(color);
 
     return (
-        <Popover shadow="md" withArrow disabled={!onColorChange}>
+        <Popover withinPortal shadow="md" withArrow disabled={!onColorChange}>
             <Popover.Target>
                 <ColorSwatch
                     size={20}
@@ -48,12 +50,17 @@ const ColorSelector: FC<Props> = ({
                 <Stack spacing="xs">
                     <MantineColorPicker
                         size="sm"
-                        format="hex"
+                        format={withAlpha ? 'hexa' : 'hex'}
                         swatches={swatches}
                         swatchesPerRow={8}
                         value={color ?? defaultColor}
                         onChange={(newColor) => {
-                            if (onColorChange) {
+                            if (!onColorChange) return;
+
+                            // Only append alpha if the color has <1 opacity
+                            if (withAlpha && newColor.endsWith('ff')) {
+                                onColorChange(newColor.slice(0, 7));
+                            } else {
                                 onColorChange(newColor);
                             }
                         }}
@@ -62,10 +69,12 @@ const ColorSelector: FC<Props> = ({
                     <TextInput
                         size="xs"
                         icon={<MantineIcon icon={IconHash} />}
-                        placeholder="Type in a custom HEX color"
+                        placeholder={`Type in a custom ${
+                            withAlpha ? 'HEXA' : 'HEX'
+                        }  color`}
                         error={
                             color && !isValidHexColor
-                                ? 'Invalid HEX color'
+                                ? `Invalid ${withAlpha ? 'HEXA' : 'HEX'} color`
                                 : undefined
                         }
                         value={(color ?? '').replace('#', '')}

@@ -3,30 +3,39 @@ import { LightdashConfig } from '../config/parseConfig';
 import { type UtilRepository } from '../utils/UtilRepository';
 import { AnalyticsModel } from './AnalyticsModel';
 import { CatalogModel } from './CatalogModel/CatalogModel';
+import { ChangesetModel } from './ChangesetModel';
 import { CommentModel } from './CommentModel/CommentModel';
 import { ContentModel } from './ContentModel/ContentModel';
 import { DashboardModel } from './DashboardModel/DashboardModel';
 import { PersonalAccessTokenModel } from './DashboardModel/PersonalAccessTokenModel';
+import { DownloadAuditModel } from './DownloadAuditModel';
 import { DownloadFileModel } from './DownloadFileModel';
 import { EmailModel } from './EmailModel';
 import { FeatureFlagModel } from './FeatureFlagModel/FeatureFlagModel';
 import { GithubAppInstallationsModel } from './GithubAppInstallations/GithubAppInstallationsModel';
+import { GitlabAppInstallationsModel } from './GitlabAppInstallations/GitlabAppInstallationsModel';
 import { GroupsModel } from './GroupsModel';
 import { InviteLinkModel } from './InviteLinkModel';
 import { JobModel } from './JobModel/JobModel';
+import { McpContextModel } from './McpContextModel';
 import { MigrationModel } from './MigrationModel/MigrationModel';
 import { NotificationsModel } from './NotificationsModel/NotificationsModel';
+import { OAuth2Model } from './OAuth2Model';
 import { OnboardingModel } from './OnboardingModel/OnboardingModel';
 import { OpenIdIdentityModel } from './OpenIdIdentitiesModel';
 import { OrganizationAllowedEmailDomainsModel } from './OrganizationAllowedEmailDomainsModel';
 import { OrganizationMemberProfileModel } from './OrganizationMemberProfileModel';
 import { OrganizationModel } from './OrganizationModel';
+import { OrganizationWarehouseCredentialsModel } from './OrganizationWarehouseCredentialsModel';
 import { PasswordResetLinkModel } from './PasswordResetLinkModel';
 import { PinnedListModel } from './PinnedListModel';
+import { ProjectCompileLogModel } from './ProjectCompileLogModel';
 import { ProjectModel } from './ProjectModel/ProjectModel';
+import { ProjectParametersModel } from './ProjectParametersModel';
+import { QueryHistoryModel } from './QueryHistoryModel/QueryHistoryModel';
 import { ResourceViewItemModel } from './ResourceViewItemModel';
+import { RolesModel } from './RolesModel';
 import { SavedChartModel } from './SavedChartModel';
-import { SavedSemanticViewerChartModel } from './SavedSemanticViewerChartModel';
 import { SavedSqlModel } from './SavedSqlModel';
 import { SchedulerModel } from './SchedulerModel';
 import { SearchModel } from './SearchModel';
@@ -52,23 +61,30 @@ export type ModelManifest = {
     commentModel: CommentModel;
     dashboardModel: DashboardModel;
     downloadFileModel: DownloadFileModel;
+    downloadAuditModel: DownloadAuditModel;
     emailModel: EmailModel;
     githubAppInstallationsModel: GithubAppInstallationsModel;
+    gitlabAppInstallationsModel: GitlabAppInstallationsModel;
     groupsModel: GroupsModel;
     inviteLinkModel: InviteLinkModel;
     jobModel: JobModel;
+    mcpContextModel: McpContextModel;
     migrationModel: MigrationModel;
     notificationsModel: NotificationsModel;
+    oauthModel: OAuth2Model;
     onboardingModel: OnboardingModel;
     openIdIdentityModel: OpenIdIdentityModel;
     organizationAllowedEmailDomainsModel: OrganizationAllowedEmailDomainsModel;
     organizationMemberProfileModel: OrganizationMemberProfileModel;
     organizationModel: OrganizationModel;
+    organizationWarehouseCredentialsModel: OrganizationWarehouseCredentialsModel;
     passwordResetLinkModel: PasswordResetLinkModel;
     personalAccessTokenModel: PersonalAccessTokenModel;
     pinnedListModel: PinnedListModel;
     projectModel: ProjectModel;
+    projectCompileLogModel: ProjectCompileLogModel;
     resourceViewItemModel: ResourceViewItemModel;
+    rolesModel: RolesModel;
     savedChartModel: SavedChartModel;
     schedulerModel: SchedulerModel;
     searchModel: SearchModel;
@@ -84,16 +100,19 @@ export type ModelManifest = {
     validationModel: ValidationModel;
     catalogModel: CatalogModel;
     savedSqlModel: SavedSqlModel;
-    SavedSemanticViewerChartModel: SavedSemanticViewerChartModel;
     contentModel: ContentModel;
     tagsModel: TagsModel;
     featureFlagModel: FeatureFlagModel;
     spotlightTableConfigModel: SpotlightTableConfigModel;
+    queryHistoryModel: QueryHistoryModel;
+    projectParametersModel: ProjectParametersModel;
+    changesetModel: ChangesetModel;
     /** An implementation signature for these models are not available at this stage */
-    aiModel: unknown;
+    aiAgentModel: unknown;
+    aiOrganizationSettingsModel: unknown;
     embedModel: unknown;
     dashboardSummaryModel: unknown;
-    scimOrganizationAccessTokenModel: unknown;
+    serviceAccountModel: unknown;
 };
 
 /**
@@ -218,6 +237,13 @@ export class ModelRepository
         );
     }
 
+    public getDownloadAuditModel(): DownloadAuditModel {
+        return this.getModel(
+            'downloadAuditModel',
+            () => new DownloadAuditModel({ database: this.database }),
+        );
+    }
+
     public getEmailModel(): EmailModel {
         return this.getModel(
             'emailModel',
@@ -230,6 +256,17 @@ export class ModelRepository
             'githubAppInstallationsModel',
             () =>
                 new GithubAppInstallationsModel({
+                    database: this.database,
+                    encryptionUtil: this.utils.getEncryptionUtil(),
+                }),
+        );
+    }
+
+    public getGitlabAppInstallationsModel(): GitlabAppInstallationsModel {
+        return this.getModel(
+            'gitlabAppInstallationsModel',
+            () =>
+                new GitlabAppInstallationsModel({
                     database: this.database,
                     encryptionUtil: this.utils.getEncryptionUtil(),
                 }),
@@ -261,6 +298,13 @@ export class ModelRepository
         );
     }
 
+    public getMcpContextModel(): McpContextModel {
+        return this.getModel(
+            'mcpContextModel',
+            () => new McpContextModel(this.database),
+        );
+    }
+
     public getMigrationModel(): MigrationModel {
         return this.getModel(
             'migrationModel',
@@ -272,6 +316,13 @@ export class ModelRepository
         return this.getModel(
             'notificationsModel',
             () => new NotificationsModel({ database: this.database }),
+        );
+    }
+
+    public getOauthModel(): OAuth2Model {
+        return this.getModel(
+            'oauthModel',
+            () => new OAuth2Model(this.database),
         );
     }
 
@@ -312,7 +363,18 @@ export class ModelRepository
     public getOrganizationModel(): OrganizationModel {
         return this.getModel(
             'organizationModel',
-            () => new OrganizationModel(this.database),
+            () => new OrganizationModel(this.database, this.lightdashConfig),
+        );
+    }
+
+    public getOrganizationWarehouseCredentialsModel(): OrganizationWarehouseCredentialsModel {
+        return this.getModel(
+            'organizationWarehouseCredentialsModel',
+            () =>
+                new OrganizationWarehouseCredentialsModel({
+                    database: this.database,
+                    encryptionUtil: this.utils.getEncryptionUtil(),
+                }),
         );
     }
 
@@ -347,9 +409,17 @@ export class ModelRepository
             () =>
                 new ProjectModel({
                     database: this.database,
+                    changesetModel: this.getChangesetModel(),
                     lightdashConfig: this.lightdashConfig,
                     encryptionUtil: this.utils.getEncryptionUtil(),
                 }),
+        );
+    }
+
+    public getProjectCompileLogModel(): ProjectCompileLogModel {
+        return this.getModel(
+            'projectCompileLogModel',
+            () => new ProjectCompileLogModel({ database: this.database }),
         );
     }
 
@@ -358,6 +428,10 @@ export class ModelRepository
             'resourceViewItemModel',
             () => new ResourceViewItemModel({ database: this.database }),
         );
+    }
+
+    public getRolesModel(): RolesModel {
+        return this.getModel('rolesModel', () => new RolesModel(this.database));
     }
 
     public getSavedChartModel(): SavedChartModel {
@@ -478,20 +552,17 @@ export class ModelRepository
         );
     }
 
+    public getChangesetModel(): ChangesetModel {
+        return this.getModel(
+            'changesetModel',
+            () => new ChangesetModel({ database: this.database }),
+        );
+    }
+
     public getSavedSqlModel(): SavedSqlModel {
         return this.getModel(
             'savedSqlModel',
             () => new SavedSqlModel({ database: this.database }),
-        );
-    }
-
-    public getSavedSemanticViewerChartModel(): SavedSemanticViewerChartModel {
-        return this.getModel(
-            'SavedSemanticViewerChartModel',
-            () =>
-                new SavedSemanticViewerChartModel({
-                    database: this.database,
-                }),
         );
     }
 
@@ -513,8 +584,12 @@ export class ModelRepository
         );
     }
 
-    public getAiModel<ModelImplT>(): ModelImplT {
-        return this.getModel('aiModel');
+    public getAiAgentModel<ModelImplT>(): ModelImplT {
+        return this.getModel('aiAgentModel');
+    }
+
+    public getAiOrganizationSettingsModel<ModelImplT>(): ModelImplT {
+        return this.getModel('aiOrganizationSettingsModel');
     }
 
     public getEmbedModel<ModelImplT>(): ModelImplT {
@@ -532,8 +607,8 @@ export class ModelRepository
         );
     }
 
-    public getScimOrganizationAccessTokenModel<ModelImplT>(): ModelImplT {
-        return this.getModel('scimOrganizationAccessTokenModel');
+    public getServiceAccountModel<ModelImplT>(): ModelImplT {
+        return this.getModel('serviceAccountModel');
     }
 
     public getSpotlightTableConfigModel(): SpotlightTableConfigModel {
@@ -544,6 +619,20 @@ export class ModelRepository
                     database: this.database,
                     lightdashConfig: this.lightdashConfig,
                 }),
+        );
+    }
+
+    public getQueryHistoryModel(): QueryHistoryModel {
+        return this.getModel(
+            'queryHistoryModel',
+            () => new QueryHistoryModel({ database: this.database }),
+        );
+    }
+
+    public getProjectParametersModel(): ProjectParametersModel {
+        return this.getModel(
+            'projectParametersModel',
+            () => new ProjectParametersModel({ database: this.database }),
         );
     }
 

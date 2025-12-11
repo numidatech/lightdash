@@ -66,7 +66,7 @@ export const SingleSeriesConfiguration = ({
                 pl="sm"
                 spacing="xs"
                 sx={(theme) => ({
-                    backgroundColor: theme.colors.gray[0],
+                    backgroundColor: theme.colors.ldGray[0],
                     borderRadius: theme.radius.md,
                     padding: theme.spacing.xs,
                 })}
@@ -92,6 +92,7 @@ export const SingleSeriesConfiguration = ({
                             <Box w="20px">
                                 <ColorSelector
                                     color={color}
+                                    withAlpha
                                     onColorChange={(c) =>
                                         onColorChange(reference, c)
                                     }
@@ -107,7 +108,7 @@ export const SingleSeriesConfiguration = ({
                                 }
                                 sx={(theme) => ({
                                     input: {
-                                        border: `1px solid ${theme.colors.gray[2]}`,
+                                        border: `1px solid ${theme.colors.ldGray[2]}`,
                                     },
                                     flex: 1,
                                     marginLeft: theme.spacing.xs,
@@ -139,7 +140,7 @@ export const SingleSeriesConfiguration = ({
                                     <Group spacing="xs" noWrap>
                                         <MantineIcon
                                             icon={IconAlignLeft}
-                                            color="dark.0"
+                                            color="ldDark.8"
                                         />
                                         <Text>Left</Text>
                                     </Group>
@@ -152,7 +153,7 @@ export const SingleSeriesConfiguration = ({
                                         <Text>Right</Text>
                                         <MantineIcon
                                             icon={IconAlignRight}
-                                            color="dark.0"
+                                            color="ldDark.8"
                                         />
                                     </Group>
                                 ),

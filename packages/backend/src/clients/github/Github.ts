@@ -38,7 +38,9 @@ export const getGithubApp = () => {
     return githubApp;
 };
 
-export const getOctokitRestForUser = (authToken: string) => {
+export const getOctokitRestForUser = (
+    authToken: string,
+): { octokit: OctokitRest; headers: { authorization: string } } => {
     const octokit = new OctokitRest();
     const headers = {
         authorization: `Bearer ${authToken}`,
@@ -49,7 +51,7 @@ export const getOctokitRestForUser = (authToken: string) => {
     };
 };
 
-export const getOctokitRestForApp = (installationId: string) => {
+export const getOctokitRestForApp = (installationId: string): OctokitRest => {
     if (appId === undefined)
         throw new Error('Github integration not configured');
 
@@ -68,7 +70,10 @@ export const getOctokitRestForApp = (installationId: string) => {
  * otherwise use the token as a user
  * The token can be generated using the installation id
  */
-export const getOctokit = (installationId?: string, token?: string) => {
+export const getOctokit = (
+    installationId?: string,
+    token?: string,
+): { octokit: OctokitRest; headers: { authorization: string } | undefined } => {
     if (installationId) {
         return {
             octokit: getOctokitRestForApp(installationId),
@@ -133,12 +138,14 @@ export const getFileContent = async ({
     repo,
     branch,
     token,
+    hostDomain,
 }: {
     fileName: string;
     owner: string;
     repo: string;
     branch: string;
     token: string;
+    hostDomain?: string;
 }) => {
     const { octokit, headers } = getOctokitRestForUser(token);
     try {
@@ -177,13 +184,15 @@ export const createBranch = async ({
     sha,
     branch,
     token,
+    hostDomain,
 }: {
     owner: string;
     repo: string;
     sha: string;
     branch: string;
     token: string;
-}) => {
+    hostDomain?: string;
+}): Promise<Awaited<ReturnType<OctokitRest['rest']['git']['createRef']>>> => {
     const { octokit, headers } = getOctokitRestForUser(token);
 
     try {
@@ -219,7 +228,7 @@ export const updateFile = async ({
     fileName,
     content,
     fileSha,
-    branchName,
+    branch,
     message,
     token,
 }: {
@@ -228,10 +237,14 @@ export const updateFile = async ({
     fileName: string;
     content: string;
     fileSha: string;
-    branchName: string;
+    branch: string;
     message: string;
     token: string;
-}) => {
+}): Promise<
+    Awaited<
+        ReturnType<OctokitRest['rest']['repos']['createOrUpdateFileContents']>
+    >
+> => {
     const { octokit, headers } = getOctokitRestForUser(token);
     try {
         const response = await octokit.rest.repos.createOrUpdateFileContents({
@@ -241,7 +254,7 @@ export const updateFile = async ({
             message,
             content: Buffer.from(content, 'utf-8').toString('base64'),
             sha: fileSha,
-            branch: branchName,
+            branch,
             headers,
             committer: {
                 name: 'Lightdash',
@@ -274,7 +287,11 @@ export const createFile = async ({
     branch: string;
     message: string;
     token: string;
-}) => {
+}): Promise<
+    Awaited<
+        ReturnType<OctokitRest['rest']['repos']['createOrUpdateFileContents']>
+    >
+> => {
     const { octokit, headers } = getOctokitRestForUser(token);
 
     try {
@@ -364,5 +381,31 @@ export const checkFileDoesNotExist = async ({
             return true;
         }
         throw error;
+    }
+};
+
+export const getBranches = async ({
+    owner,
+    repo,
+    installationId,
+    token,
+}: {
+    owner: string;
+    repo: string;
+    installationId?: string;
+    token?: string;
+}) => {
+    const { octokit, headers } = getOctokit(installationId, token);
+
+    try {
+        const branches = await octokit.paginate(octokit.repos.listBranches, {
+            owner,
+            repo,
+            headers,
+        });
+        return branches;
+    } catch (e) {
+        console.error(e);
+        throw new UnexpectedGitError(getErrorMessage(e));
     }
 };

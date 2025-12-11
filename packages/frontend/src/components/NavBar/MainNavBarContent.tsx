@@ -4,6 +4,7 @@ import { Link } from 'react-router';
 import { useHasMetricsInCatalog } from '../../features/metricsCatalog/hooks/useMetricsCatalog';
 import Omnibar from '../../features/omnibar';
 import Logo from '../../svgs/logo-icon.svg?react';
+import { AiAgentsButton } from './AiAgentsButton';
 import BrowseMenu from './BrowseMenu';
 import ExploreMenu from './ExploreMenu';
 import HeadwayMenuItem from './HeadwayMenuItem';
@@ -12,6 +13,7 @@ import { MetricsLink } from './MetricsLink';
 import { NotificationsMenu } from './NotificationsMenu';
 import ProjectSwitcher from './ProjectSwitcher';
 import SettingsMenu from './SettingsMenu';
+import { ThemeSwitcher } from './ThemeSwitcher';
 import UserCredentialsSwitcher from './UserCredentialsSwitcher';
 import UserMenu from './UserMenu';
 
@@ -51,6 +53,7 @@ export const MainNavBarContent: FC<Props> = ({
                             {hasMetrics && (
                                 <MetricsLink projectUuid={activeProjectUuid} />
                             )}
+                            <AiAgentsButton />
                         </Button.Group>
                         <Omnibar projectUuid={activeProjectUuid} />
                     </>
@@ -61,6 +64,8 @@ export const MainNavBarContent: FC<Props> = ({
 
             <Group sx={{ flexShrink: 0 }}>
                 <Button.Group>
+                    <ThemeSwitcher />
+
                     <SettingsMenu />
 
                     {!isLoadingActiveProject && activeProjectUuid && (

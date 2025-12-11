@@ -1,7 +1,9 @@
+import { type ApiErrorDetail } from '@lightdash/common';
 import { useMantineTheme } from '@mantine/core';
 import { type ComponentProps, type FC } from 'react';
 import {
     ExploreEmptyQueryState,
+    ExploreErrorState,
     ExploreIdleState,
     ExploreLoadingState,
 } from '../../Explorer/ResultsCard/ExplorerResultsNonIdealStates';
@@ -21,6 +23,7 @@ type Props = ComponentProps<typeof TableProvider> & {
     $shouldExpand?: boolean;
     $padding?: number;
     'data-testid'?: string;
+    errorDetail?: ApiErrorDetail | null;
 };
 
 const Table: FC<React.PropsWithChildren<Props>> = ({
@@ -34,12 +37,17 @@ const Table: FC<React.PropsWithChildren<Props>> = ({
     minimal = false,
     showSubtotals = true,
     'data-testid': dataTestId,
+    errorDetail,
     ...rest
 }) => {
     const theme = useMantineTheme();
     const LoadingState = loadingState || ExploreLoadingState;
     const IdleState = idleState || ExploreIdleState;
     const EmptyState = emptyState || ExploreEmptyQueryState;
+
+    if (status === 'loading') {
+        return <LoadingState />;
+    }
 
     return (
         <TableProvider {...rest}>
@@ -57,7 +65,9 @@ const Table: FC<React.PropsWithChildren<Props>> = ({
                     showSubtotals={showSubtotals}
                 />
 
-                {status === 'loading' && <LoadingState />}
+                {status === 'error' && (
+                    <ExploreErrorState errorDetail={errorDetail} />
+                )}
                 {status === 'idle' && <IdleState />}
                 {status === 'success' && rest.data.length === 0 && (
                     <EmptyState />

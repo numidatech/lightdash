@@ -13,7 +13,7 @@ import useTracking from '../../providers/Tracking/useTracking';
 import { EventName } from '../../types/Events';
 import FiltersProvider from '../common/Filters/FiltersProvider';
 import ActiveFilters from './ActiveFilters';
-import Filter from './Filter';
+import AddFilterButton from './AddFilterButton';
 
 interface Props {
     isEditMode: boolean;
@@ -28,13 +28,15 @@ const DashboardFilter: FC<Props> = ({ isEditMode, activeTabUuid }) => {
     const project = useProject(projectUuid);
 
     const allFilters = useDashboardContext((c) => c.allFilters);
+    const resetDashboardFilters = useDashboardContext(
+        (c) => c.resetDashboardFilters,
+    );
     const allFilterableFieldsMap = useDashboardContext(
         (c) => c.allFilterableFieldsMap,
     );
     const addDimensionDashboardFilter = useDashboardContext(
         (c) => c.addDimensionDashboardFilter,
     );
-    const hasChartTiles = useDashboardContext((c) => c.hasChartTiles);
 
     const handleSaveNew = useCallback(
         (
@@ -64,8 +66,6 @@ const DashboardFilter: FC<Props> = ({ isEditMode, activeTabUuid }) => {
         setPopoverId(undefined);
     }, []);
 
-    if (!hasChartTiles) return null;
-
     return (
         <FiltersProvider<Record<string, FilterableDimension>>
             projectUuid={projectUuid}
@@ -76,8 +76,7 @@ const DashboardFilter: FC<Props> = ({ isEditMode, activeTabUuid }) => {
             dashboardFilters={allFilters}
         >
             <Flex gap="xs" wrap="wrap" mb="xs">
-                <Filter
-                    isCreatingNew
+                <AddFilterButton
                     isEditMode={isEditMode}
                     openPopoverId={openPopoverId}
                     activeTabUuid={activeTabUuid}
@@ -92,6 +91,7 @@ const DashboardFilter: FC<Props> = ({ isEditMode, activeTabUuid }) => {
                     openPopoverId={openPopoverId}
                     onPopoverOpen={handlePopoverOpen}
                     onPopoverClose={handlePopoverClose}
+                    onResetDashboardFilters={resetDashboardFilters}
                 />
             </Flex>
         </FiltersProvider>

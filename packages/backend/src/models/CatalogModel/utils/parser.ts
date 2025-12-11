@@ -6,6 +6,7 @@ import {
     CompiledDimension,
     CompiledMetric,
     CompiledTable,
+    convertToAiHints,
     Explore,
     getBasicType,
     type Tag,
@@ -15,37 +16,36 @@ import { DbCatalog } from '../../../database/entities/catalog';
 const parseFieldFromMetricOrDimension = (
     table: CompiledTable,
     field: CompiledMetric | CompiledDimension,
-    {
-        catalogSearchUuid,
-        tags,
-        categories,
-        requiredAttributes,
-        chartUsage,
-        icon,
-    }: {
+    catalogArgs: {
+        label: string | null;
+        description: string | null;
         catalogSearchUuid: string;
         tags: string[];
         categories: Pick<Tag, 'tagUuid' | 'color' | 'name' | 'yamlReference'>[];
         requiredAttributes: Record<string, string | string[]> | undefined;
         chartUsage: number | undefined;
         icon: CatalogItemIcon | null;
+        searchRank?: number;
     },
 ): CatalogField => ({
     name: field.name,
-    label: field.label,
-    description: field.description,
+    label: catalogArgs.label ?? '',
+    description: catalogArgs.description ?? '',
     tableLabel: field.tableLabel,
     tableName: table.name,
     tableGroupLabel: table.groupLabel,
     fieldType: field.fieldType,
     basicType: getBasicType(field),
+    fieldValueType: field.type,
     type: CatalogType.Field,
-    requiredAttributes,
-    tags,
-    categories,
-    chartUsage,
-    catalogSearchUuid,
-    icon,
+    aiHints: convertToAiHints(field.aiHint) ?? null,
+    requiredAttributes: catalogArgs.requiredAttributes,
+    tags: catalogArgs.tags,
+    categories: catalogArgs.categories,
+    chartUsage: catalogArgs.chartUsage,
+    catalogSearchUuid: catalogArgs.catalogSearchUuid,
+    icon: catalogArgs.icon,
+    searchRank: catalogArgs.searchRank,
 });
 
 export const parseFieldsFromCompiledTable = (
@@ -57,6 +57,8 @@ export const parseFieldsFromCompiledTable = (
     ].filter((f) => !f.hidden); // Filter out hidden fields from catalog
     return tableFields.map((field) =>
         parseFieldFromMetricOrDimension(table, field, {
+            label: field.label,
+            description: field.description ?? '',
             tags: [],
             categories: [],
             requiredAttributes:
@@ -76,6 +78,7 @@ export const parseCatalog = (
             Tag,
             'tagUuid' | 'name' | 'color' | 'yamlReference'
         >[];
+        search_rank: number;
     },
 ): CatalogTable | CatalogField => {
     const baseTable = dbCatalog.explore.tables[dbCatalog.explore.baseTable];
@@ -84,7 +87,7 @@ export const parseCatalog = (
         return {
             catalogSearchUuid: dbCatalog.catalog_search_uuid,
             name: dbCatalog.name,
-            label: dbCatalog.explore.label,
+            label: dbCatalog.label ?? dbCatalog.explore.label,
             groupLabel: dbCatalog.explore.groupLabel,
             description: dbCatalog.description || undefined,
             type: CatalogType.Table,
@@ -93,12 +96,19 @@ export const parseCatalog = (
             categories: dbCatalog.catalog_tags,
             chartUsage: dbCatalog.chart_usage ?? undefined,
             icon: dbCatalog.icon ?? null,
+            aiHints: convertToAiHints(dbCatalog.explore.aiHint) ?? null,
+            joinedTables: dbCatalog.joined_tables ?? null,
+            searchRank: dbCatalog.search_rank,
         };
     }
 
+    // Find the correct table that contains this field
+    // This is important for fields from joined tables which may not be in the base table
+    const catalogTable = dbCatalog.explore.tables[dbCatalog.table_name];
+
     const dimensionsAndMetrics = [
-        ...Object.values(baseTable.dimensions),
-        ...Object.values(baseTable.metrics),
+        ...Object.values(catalogTable.dimensions),
+        ...Object.values(catalogTable.metrics),
     ];
     // This is the most computationally expensive part of the code
     // Perhaps we should add metadata (requiredAttributes) to the catalog database
@@ -108,15 +118,18 @@ export const parseCatalog = (
     );
     if (!findField) {
         throw new Error(
-            `Field ${dbCatalog.name} not found in explore ${dbCatalog.explore.name}`,
+            `Field ${dbCatalog.name} not found in table ${dbCatalog.table_name} of explore ${dbCatalog.explore.name}`,
         );
     }
-    return parseFieldFromMetricOrDimension(baseTable, findField, {
+    return parseFieldFromMetricOrDimension(catalogTable, findField, {
+        label: dbCatalog.label,
+        description: dbCatalog.description,
         catalogSearchUuid: dbCatalog.catalog_search_uuid,
         tags: dbCatalog.explore.tags,
         categories: dbCatalog.catalog_tags,
         requiredAttributes: dbCatalog.required_attributes ?? undefined,
         chartUsage: dbCatalog.chart_usage ?? 0,
         icon: dbCatalog.icon ?? null,
+        searchRank: dbCatalog.search_rank,
     });
 };

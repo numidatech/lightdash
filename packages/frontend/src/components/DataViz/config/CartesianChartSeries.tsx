@@ -1,6 +1,7 @@
 import {
     ECHARTS_DEFAULT_COLORS,
     friendlyName,
+    StackType,
     type AxisSide,
     type CartesianChartDisplay,
     type ChartKind,
@@ -165,15 +166,34 @@ export const CartesianChartSeries = ({
                                         value: 'Stacked',
                                         label: 'Stacked',
                                     },
+                                    {
+                                        value: '100%',
+                                        label: '100%',
+                                    },
                                 ]}
-                                value={
-                                    currentConfig?.display?.stack
-                                        ? 'Stacked'
-                                        : 'None'
-                                }
+                                value={(() => {
+                                    const stackValue =
+                                        currentConfig?.display?.stack;
+                                    if (stackValue === StackType.PERCENT) {
+                                        return '100%';
+                                    }
+                                    if (
+                                        stackValue === StackType.NORMAL ||
+                                        stackValue === true
+                                    ) {
+                                        return 'Stacked';
+                                    }
+                                    return 'None';
+                                })()}
                                 onChange={(value) =>
                                     dispatch(
-                                        actions.setStacked(value === 'Stacked'),
+                                        actions.setStacked(
+                                            value === 'Stacked'
+                                                ? StackType.NORMAL
+                                                : value === '100%'
+                                                ? StackType.PERCENT
+                                                : StackType.NONE,
+                                        ),
                                     )
                                 }
                             />
@@ -189,15 +209,18 @@ export const CartesianChartSeries = ({
                               variant="contained"
                               sx={(theme) => ({
                                   root: {
-                                      border: `1px solid ${theme.colors.gray[2]}`,
+                                      border: `1px solid ${theme.colors.ldGray[2]}`,
                                   },
                               })}
                           >
                               <Accordion.Item value={referenceField} m={0}>
                                   <Accordion.Control
-                                      sx={{
-                                          backgroundColor: 'white',
-                                      }}
+                                      sx={(theme) => ({
+                                          backgroundColor:
+                                              theme.colorScheme === 'light'
+                                                  ? 'white'
+                                                  : 'transparent',
+                                      })}
                                   >
                                       <Config.Subheading>
                                           {friendlyName(referenceField)}
@@ -205,7 +228,10 @@ export const CartesianChartSeries = ({
                                   </Accordion.Control>
                                   <Accordion.Panel
                                       sx={(theme) => ({
-                                          backgroundColor: 'white',
+                                          backgroundColor:
+                                              theme.colorScheme === 'light'
+                                                  ? 'white'
+                                                  : 'transparent',
                                           borderRadius: theme.radius.sm,
                                       })}
                                   >

@@ -1,14 +1,16 @@
 import {
     type ApiError,
     type Explore,
+    type FieldType,
     type PivotChartData,
     type PivotChartLayout,
+    type PivotConfiguration,
     type PullRequestCreated,
     type QueryExecutionContext,
 } from '..';
 import {
     type AllVizChartConfig,
-    type PivotIndexColum,
+    type SortByDirection,
     type VizAggregationOptions,
     type VizBaseConfig,
     type VizCartesianChartConfig,
@@ -21,27 +23,138 @@ import { type Organization } from './organization';
 import { type Project } from './projects';
 import { type RawResultRow } from './results';
 import { type ChartKind } from './savedCharts';
-import { SchedulerJobStatus } from './scheduler';
+import { SchedulerJobStatus, type TraceTaskBase } from './scheduler';
 import { type SpaceSummary } from './space';
 import { type LightdashUser } from './user';
 
-export type SqlRunnerPayload = {
-    projectUuid: string;
-    userUuid: string;
-    organizationUuid: string | undefined;
+export enum SqlRunnerFieldType {
+    TIME = 'time',
+    NUMBER = 'number',
+    STRING = 'string',
+    BOOLEAN = 'boolean',
+}
+
+enum SqlRunnerTimeGranularity {
+    NANOSECOND = 'NANOSECOND',
+    MICROSECOND = 'MICROSECOND',
+    MILLISECOND = 'MILLISECOND',
+    SECOND = 'SECOND',
+    MINUTE = 'MINUTE',
+    HOUR = 'HOUR',
+    DAY = 'DAY',
+    WEEK = 'WEEK',
+    MONTH = 'MONTH',
+    QUARTER = 'QUARTER',
+    YEAR = 'YEAR',
+}
+
+export type SqlRunnerField = {
+    name: string;
+    label: string;
+    type: SqlRunnerFieldType;
+    kind: FieldType;
+    description?: string;
+    visible: boolean;
+    aggType?: VizAggregationOptions; // TODO: currently not populated, we should get this on the backend
+    availableGranularities: SqlRunnerTimeGranularity[];
+    availableOperators: SqlRunnerFilter['operator'][];
+};
+
+type SqlRunnerTimeDimension = SqlRunnerField & {
+    granularity?: SqlRunnerTimeGranularity;
+};
+
+export type SqlRunnerSortBy = Pick<SqlRunnerField, 'name' | 'kind'> & {
+    direction: SortByDirection;
+};
+
+type SqlRunnerPivot = {
+    on: string[];
+    index: string[];
+    values: string[];
+};
+
+export type SqlRunnerQuery = {
+    dimensions: Pick<SqlRunnerField, 'name'>[];
+    timeDimensions: Pick<SqlRunnerTimeDimension, 'name' | 'granularity'>[];
+    metrics: Pick<SqlRunnerField, 'name'>[];
+    sortBy: SqlRunnerSortBy[];
+    limit?: number;
+    timezone?: string;
+    pivot?: SqlRunnerPivot;
+    filters: SqlRunnerFilter[];
+    sql?: string;
+    customMetrics?: (Pick<SqlRunnerField, 'name' | 'aggType'> & {
+        baseDimension?: string;
+    })[];
+};
+
+export enum SqlRunnerFilterBaseOperator {
+    IS = 'IS',
+    IS_NOT = 'IS_NOT',
+}
+
+export enum SqlRunnerFilterRelativeTimeValue {
+    TODAY = 'TODAY',
+    YESTERDAY = 'YESTERDAY',
+    LAST_7_DAYS = 'LAST_7_DAYS',
+    LAST_30_DAYS = 'LAST_30_DAYS',
+}
+
+export type SqlRunnerFilterBase = {
+    uuid: string;
+    fieldRef: string;
+    fieldKind: FieldType; // This is mostly to help with frontend state and avoiding having to set all the fields in redux to be able to find the kind
+    fieldType: SqlRunnerFieldType;
+};
+
+export type SqlRunnerStringFilter = SqlRunnerFilterBase & {
+    fieldType: SqlRunnerFieldType.STRING;
+    operator: SqlRunnerFilterBaseOperator;
+    values: string[];
+};
+
+export type SqlRunnerExactTimeFilter = SqlRunnerFilterBase & {
+    fieldType: SqlRunnerFieldType.TIME;
+    operator: SqlRunnerFilterBaseOperator;
+    values: { time: string };
+};
+
+export type SqlRunnerRelativeTimeFilter = SqlRunnerFilterBase & {
+    fieldType: SqlRunnerFieldType.TIME;
+    operator: SqlRunnerFilterBaseOperator;
+    values: { relativeTime: SqlRunnerFilterRelativeTimeValue };
+};
+
+export type SqlRunnerTimeFilter =
+    | SqlRunnerExactTimeFilter
+    | SqlRunnerRelativeTimeFilter;
+
+type SqlRunnerFilterTypes = SqlRunnerStringFilter | SqlRunnerTimeFilter;
+
+export type SqlRunnerFilter = SqlRunnerFilterTypes & {
+    and?: SqlRunnerFilter[];
+    or?: SqlRunnerFilter[];
+};
+
+export type SqlRunnerPayload = TraceTaskBase & {
     sqlChartUuid?: string;
     context: QueryExecutionContext;
 } & SqlRunnerBody;
 
-type ApiSqlRunnerPivotQueryPayload = {
+export type ValuesColumn = {
+    reference: string;
+    aggregation: VizAggregationOptions;
+};
+
+export type GroupByColumn = {
+    reference: string;
+};
+
+export type SortBy = PivotChartLayout['sortBy'];
+
+type ApiSqlRunnerPivotQueryPayload = PivotConfiguration & {
     savedSqlUuid?: string;
-    indexColumn: PivotIndexColum;
-    valuesColumns: {
-        reference: string;
-        aggregation: VizAggregationOptions;
-    }[];
-    groupByColumns: { reference: string }[] | undefined;
-    sortBy: PivotChartLayout['sortBy'] | undefined;
 };
 
 export type SqlRunnerPivotQueryPayload = SqlRunnerPayload &
@@ -56,9 +169,6 @@ export type SqlRunnerPivotQueryBody = SqlRunnerBody &
     ApiSqlRunnerPivotQueryPayload;
 
 export type SqlRunnerResults = RawResultRow[];
-
-export const sqlRunnerJob = 'sqlRunner';
-export const sqlRunnerPivotQueryJob = 'sqlRunnerPivotQuery';
 
 type SqlRunnerJobStatusSuccessDetails = {
     fileUrl: string;
@@ -107,7 +217,6 @@ export const isApiSqlRunnerJobErrorResponse = (
     response: ApiSqlRunnerJobStatusResponse['results'] | ApiError,
 ): response is ApiError => response.status === SchedulerJobStatus.ERROR;
 
-// TODO: common type with semantic viewer and should be abstracted
 export type ApiSqlRunnerJobPivotQuerySuccessResponse = {
     results: {
         status: SchedulerJobStatus.COMPLETED;
@@ -156,6 +265,7 @@ export type CreateSqlChart = {
     limit: number;
     config: AllVizChartConfig;
     spaceUuid: string;
+    slug?: string; // Optional: force a specific slug (used by content-as-code)
 };
 
 export type UpdateUnversionedSqlChart = {

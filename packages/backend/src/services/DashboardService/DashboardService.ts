@@ -1,14 +1,20 @@
 import { subject } from '@casl/ability';
 import {
+    AbilityAction,
+    BulkActionable,
     CreateDashboard,
+    CreateDashboardWithCharts,
+    CreateSavedChart,
     CreateSchedulerAndTargetsWithoutIds,
     Dashboard,
     DashboardDAO,
     DashboardTab,
     DashboardTileTypes,
+    DashboardVersionedFields,
     ExploreType,
     ForbiddenError,
     ParameterError,
+    PossibleAbilities,
     SchedulerAndTargets,
     SchedulerFormat,
     SessionUser,
@@ -18,7 +24,7 @@ import {
     generateSlug,
     hasChartsInDashboard,
     isChartScheduler,
-    isChartTile,
+    isDashboardChartTileType,
     isDashboardScheduler,
     isDashboardUnversionedFields,
     isDashboardVersionedFields,
@@ -32,6 +38,7 @@ import {
     type ExploreError,
 } from '@lightdash/common';
 import cronstrue from 'cronstrue';
+import { type Knex } from 'knex';
 import { uniq } from 'lodash';
 import { v4 as uuidv4 } from 'uuid';
 import {
@@ -41,6 +48,8 @@ import {
 } from '../../analytics/LightdashAnalytics';
 import { SlackClient } from '../../clients/Slack/SlackClient';
 import { getSchedulerTargetType } from '../../database/entities/scheduler';
+import { CaslAuditWrapper } from '../../logging/caslAuditWrapper';
+import { logAuditEvent } from '../../logging/winston';
 import { AnalyticsModel } from '../../models/AnalyticsModel';
 import type { CatalogModel } from '../../models/CatalogModel/CatalogModel';
 import { getChartFieldUsageChanges } from '../../models/CatalogModel/utils';
@@ -51,6 +60,7 @@ import { SavedChartModel } from '../../models/SavedChartModel';
 import { SchedulerModel } from '../../models/SchedulerModel';
 import { SpaceModel } from '../../models/SpaceModel';
 import { SchedulerClient } from '../../scheduler/SchedulerClient';
+import { createTwoColumnTiles } from '../../utils/dashboardTileUtils';
 import { BaseService } from '../BaseService';
 import { SavedChartService } from '../SavedChartsService/SavedChartService';
 import { hasDirectAccessToSpace } from '../SpaceService/SpaceService';
@@ -63,13 +73,17 @@ type DashboardServiceArguments = {
     pinnedListModel: PinnedListModel;
     schedulerModel: SchedulerModel;
     savedChartModel: SavedChartModel;
+    savedChartService: SavedChartService;
     schedulerClient: SchedulerClient;
     slackClient: SlackClient;
     projectModel: ProjectModel;
     catalogModel: CatalogModel;
 };
 
-export class DashboardService extends BaseService {
+export class DashboardService
+    extends BaseService
+    implements BulkActionable<Knex>
+{
     analytics: LightdashAnalytics;
 
     dashboardModel: DashboardModel;
@@ -83,6 +97,8 @@ export class DashboardService extends BaseService {
     schedulerModel: SchedulerModel;
 
     savedChartModel: SavedChartModel;
+
+    savedChartService: SavedChartService;
 
     catalogModel: CatalogModel;
 
@@ -100,6 +116,7 @@ export class DashboardService extends BaseService {
         pinnedListModel,
         schedulerModel,
         savedChartModel,
+        savedChartService,
         schedulerClient,
         slackClient,
         projectModel,
@@ -113,6 +130,7 @@ export class DashboardService extends BaseService {
         this.pinnedListModel = pinnedListModel;
         this.schedulerModel = schedulerModel;
         this.savedChartModel = savedChartModel;
+        this.savedChartService = savedChartService;
         this.projectModel = projectModel;
         this.catalogModel = catalogModel;
         this.schedulerClient = schedulerClient;
@@ -145,6 +163,8 @@ export class DashboardService extends BaseService {
             loomTilesCount: dashboard.tiles.filter(
                 ({ type }) => type === DashboardTileTypes.LOOM,
             ).length,
+            tabsCount: dashboard.tabs.length,
+            parametersCount: Object.keys(dashboard.parameters || {}).length,
         };
     }
 
@@ -218,11 +238,13 @@ export class DashboardService extends BaseService {
         });
     }
 
-    async getById(
+    async getByIdOrSlug(
         user: SessionUser,
-        dashboardUuid: string,
+        dashboardUuidOrSlug: string,
     ): Promise<Dashboard> {
-        const dashboardDao = await this.dashboardModel.getById(dashboardUuid);
+        const dashboardDao = await this.dashboardModel.getByIdOrSlug(
+            dashboardUuidOrSlug,
+        );
 
         const space = await this.spaceModel.getSpaceSummary(
             dashboardDao.spaceUuid,
@@ -237,7 +259,12 @@ export class DashboardService extends BaseService {
             access: spaceAccess,
         };
 
-        if (user.ability.cannot('view', subject('Dashboard', dashboard))) {
+        // TODO: normally this would be pre-constructed (perhaps in the Service Repository or on the user object when we create the CASL type)
+        const auditedAbility = new CaslAuditWrapper(user.ability, user, {
+            auditLogger: logAuditEvent,
+        });
+
+        if (auditedAbility.cannot('view', subject('Dashboard', dashboard))) {
             throw new ForbiddenError(
                 "You don't have access to the space this dashboard belongs to",
             );
@@ -255,6 +282,7 @@ export class DashboardService extends BaseService {
                 dashboardId: dashboard.uuid,
                 organizationId: dashboard.organizationUuid,
                 projectId: dashboard.projectUuid,
+                parametersCount: Object.keys(dashboard.parameters || {}).length,
             },
         });
 
@@ -266,7 +294,7 @@ export class DashboardService extends BaseService {
     ): string[] {
         return dashboard.tiles.reduce<string[]>((acc, tile) => {
             if (
-                isChartTile(tile) &&
+                isDashboardChartTileType(tile) &&
                 !!tile.properties.belongsToDashboard &&
                 !!tile.properties.savedChartUuid
             ) {
@@ -353,7 +381,7 @@ export class DashboardService extends BaseService {
             properties: DashboardService.getCreateEventProperties(newDashboard),
         });
 
-        const dashboardDao = await this.dashboardModel.getById(
+        const dashboardDao = await this.dashboardModel.getByIdOrSlug(
             newDashboard.uuid,
         );
 
@@ -370,7 +398,9 @@ export class DashboardService extends BaseService {
         dashboardUuid: string,
         data: DuplicateDashboardParams,
     ): Promise<Dashboard> {
-        const dashboardDao = await this.dashboardModel.getById(dashboardUuid);
+        const dashboardDao = await this.dashboardModel.getByIdOrSlug(
+            dashboardUuid,
+        );
         const space = await this.spaceModel.getSpaceSummary(
             dashboardDao.spaceUuid,
         );
@@ -425,7 +455,7 @@ export class DashboardService extends BaseService {
             const updatedTiles = await Promise.all(
                 newDashboard.tiles.map(async (tile) => {
                     if (
-                        isChartTile(tile) &&
+                        isDashboardChartTileType(tile) &&
                         tile.properties.belongsToDashboard &&
                         tile.properties.savedChartUuid
                     ) {
@@ -543,7 +573,7 @@ export class DashboardService extends BaseService {
             },
         });
 
-        const updatedNewDashboard = await this.dashboardModel.getById(
+        const updatedNewDashboard = await this.dashboardModel.getByIdOrSlug(
             newDashboard.uuid,
         );
 
@@ -556,11 +586,11 @@ export class DashboardService extends BaseService {
 
     async update(
         user: SessionUser,
-        dashboardUuid: string,
+        dashboardUuidOrSlug: string,
         dashboard: UpdateDashboard,
     ): Promise<Dashboard> {
-        const existingDashboardDao = await this.dashboardModel.getById(
-            dashboardUuid,
+        const existingDashboardDao = await this.dashboardModel.getByIdOrSlug(
+            dashboardUuidOrSlug,
         );
 
         const canUpdateDashboardInCurrentSpace = user.ability.can(
@@ -604,7 +634,7 @@ export class DashboardService extends BaseService {
             }
 
             const updatedDashboard = await this.dashboardModel.update(
-                dashboardUuid,
+                existingDashboardDao.uuid,
                 {
                     name: dashboard.name,
                     description: dashboard.description,
@@ -640,32 +670,12 @@ export class DashboardService extends BaseService {
                 new Set(dashboard.tiles.map((t) => t.type)),
             );
 
-            // INFO: this should be removed once we have one semantic layer per project.
-            if (
-                dashboardTileTypes.includes(
-                    DashboardTileTypes.SEMANTIC_VIEWER_CHART,
-                )
-            ) {
-                if (
-                    dashboardTileTypes.includes(DashboardTileTypes.SAVED_CHART)
-                ) {
-                    throw new ParameterError(
-                        'Dashboard cannot have both Semantic Viewer and Lightdash Explore charts',
-                    );
-                }
-
-                if (dashboardTileTypes.includes(DashboardTileTypes.SQL_CHART)) {
-                    throw new ParameterError(
-                        'Dashboard cannot have both Semantic Viewer and Sql charts',
-                    );
-                }
-            }
-
             const updatedDashboard = await this.dashboardModel.addVersion(
-                dashboardUuid,
+                existingDashboardDao.uuid,
                 {
                     tiles: dashboard.tiles,
                     filters: dashboard.filters,
+                    parameters: dashboard.parameters,
                     tabs: dashboard.tabs || [],
                     config: dashboard.config,
                 },
@@ -678,11 +688,14 @@ export class DashboardService extends BaseService {
                 properties:
                     DashboardService.getCreateEventProperties(updatedDashboard),
             });
-            await this.deleteOrphanedChartsInDashboards(user, dashboardUuid);
+            await this.deleteOrphanedChartsInDashboards(
+                user,
+                existingDashboardDao.uuid,
+            );
         }
 
-        const updatedNewDashboard = await this.dashboardModel.getById(
-            dashboardUuid,
+        const updatedNewDashboard = await this.dashboardModel.getByIdOrSlug(
+            existingDashboardDao.uuid,
         );
         const space = await this.spaceModel.getSpaceSummary(
             updatedNewDashboard.spaceUuid,
@@ -703,7 +716,7 @@ export class DashboardService extends BaseService {
         user: SessionUser,
         dashboardUuid: string,
     ): Promise<TogglePinnedItemInfo> {
-        const existingDashboardDao = await this.dashboardModel.getById(
+        const existingDashboardDao = await this.dashboardModel.getByIdOrSlug(
             dashboardUuid,
         );
         const space = await this.spaceModel.getSpaceSummary(
@@ -783,7 +796,7 @@ export class DashboardService extends BaseService {
     ): Promise<Dashboard[]> {
         const userHasAccessToDashboards = await Promise.all(
             dashboards.map(async (dashboardToUpdate) => {
-                const dashboard = await this.dashboardModel.getById(
+                const dashboard = await this.dashboardModel.getByIdOrSlug(
                     dashboardToUpdate.uuid,
                 );
                 const canUpdateDashboardInCurrentSpace = user.ability.can(
@@ -859,7 +872,7 @@ export class DashboardService extends BaseService {
     }
 
     async delete(user: SessionUser, dashboardUuid: string): Promise<void> {
-        const dashboardToDelete = await this.dashboardModel.getById(
+        const dashboardToDelete = await this.dashboardModel.getByIdOrSlug(
             dashboardUuid,
         );
         const { organizationUuid, projectUuid, spaceUuid, tiles } =
@@ -890,7 +903,7 @@ export class DashboardService extends BaseService {
                 await Promise.all(
                     tiles.map(async (tile) => {
                         if (
-                            isChartTile(tile) &&
+                            isDashboardChartTileType(tile) &&
                             tile.properties.belongsToDashboard &&
                             tile.properties.savedChartUuid
                         ) {
@@ -1026,6 +1039,11 @@ export class DashboardService extends BaseService {
 
         await this.schedulerClient.generateDailyJobsForScheduler(
             scheduler,
+            {
+                organizationUuid,
+                projectUuid,
+                userUuid: user.userUuid,
+            },
             defaultTimezone,
         );
         return scheduler;
@@ -1035,7 +1053,9 @@ export class DashboardService extends BaseService {
         user: SessionUser,
         dashboardUuid: string,
     ): Promise<Dashboard> {
-        const dashboardDao = await this.dashboardModel.getById(dashboardUuid);
+        const dashboardDao = await this.dashboardModel.getByIdOrSlug(
+            dashboardUuid,
+        );
         const space = await this.spaceModel.getSpaceSummary(
             dashboardDao.spaceUuid,
         );
@@ -1071,5 +1091,194 @@ export class DashboardService extends BaseService {
             isPrivate: space.isPrivate,
             access: spaceAccess,
         };
+    }
+
+    private async hasAccess(
+        action: AbilityAction,
+        actor: {
+            user: SessionUser;
+            projectUuid: string;
+        },
+        resource: {
+            dashboardUuid: string;
+            spaceUuid?: string;
+        },
+    ) {
+        const dashboard = await this.dashboardModel.getByIdOrSlug(
+            resource.dashboardUuid,
+        );
+        const space = await this.spaceModel.getSpaceSummary(
+            dashboard.spaceUuid,
+        );
+        const spaceAccess = await this.spaceModel.getUserSpaceAccess(
+            actor.user.userUuid,
+            dashboard.spaceUuid,
+        );
+
+        const isActorAllowedToPerformAction = actor.user.ability.can(
+            action,
+            subject('Dashboard', {
+                organizationUuid: actor.user.organizationUuid,
+                projectUuid: actor.projectUuid,
+                isPrivate: space.isPrivate,
+                access: spaceAccess,
+            }),
+        );
+
+        if (!isActorAllowedToPerformAction) {
+            throw new ForbiddenError(
+                `You don't have access to ${action} this dashboard`,
+            );
+        }
+
+        if (resource.spaceUuid && dashboard.spaceUuid !== resource.spaceUuid) {
+            const newSpace = await this.spaceModel.getSpaceSummary(
+                resource.spaceUuid,
+            );
+            const newSpaceAccess = await this.spaceModel.getUserSpaceAccess(
+                actor.user.userUuid,
+                resource.spaceUuid,
+            );
+
+            const isActorAllowedToPerformActionInNewSpace =
+                actor.user.ability.can(
+                    action,
+                    subject('Dashboard', {
+                        organizationUuid: newSpace.organizationUuid,
+                        projectUuid: actor.projectUuid,
+                        isPrivate: newSpace.isPrivate,
+                        access: newSpaceAccess,
+                    }),
+                );
+
+            if (!isActorAllowedToPerformActionInNewSpace) {
+                throw new ForbiddenError(
+                    `You don't have access to ${action} this dashboard in the new space`,
+                );
+            }
+        }
+    }
+
+    async moveToSpace(
+        user: SessionUser,
+        {
+            projectUuid,
+            itemUuid: dashboardUuid,
+            targetSpaceUuid,
+        }: {
+            projectUuid: string;
+            itemUuid: string;
+            targetSpaceUuid: string | null;
+        },
+        {
+            tx,
+            checkForAccess = true,
+            trackEvent = true,
+        }: {
+            tx?: Knex;
+            checkForAccess?: boolean;
+            trackEvent?: boolean;
+        } = {},
+    ) {
+        if (!targetSpaceUuid) {
+            throw new ParameterError(
+                'You cannot move a dashboard outside of a space',
+            );
+        }
+
+        if (checkForAccess) {
+            await this.hasAccess(
+                'update',
+                { user, projectUuid },
+                { dashboardUuid, spaceUuid: targetSpaceUuid },
+            );
+        }
+        await this.dashboardModel.moveToSpace(
+            {
+                projectUuid,
+                itemUuid: dashboardUuid,
+                targetSpaceUuid,
+            },
+            { tx },
+        );
+
+        if (trackEvent) {
+            this.analytics.track({
+                event: 'dashboard.moved',
+                userId: user.userUuid,
+                properties: {
+                    projectId: projectUuid,
+                    dashboardId: dashboardUuid,
+                    targetSpaceId: targetSpaceUuid,
+                },
+            });
+        }
+    }
+
+    async createDashboardWithCharts(
+        user: SessionUser,
+        projectUuid: string,
+        data: CreateDashboardWithCharts,
+    ): Promise<Dashboard> {
+        // 1. Create empty dashboard
+        const emptyDashboard: CreateDashboard = {
+            name: data.name,
+            description: data.description,
+            spaceUuid: data.spaceUuid,
+            tiles: [],
+            tabs: [],
+        };
+
+        // Permissions are checked in the create method
+        const dashboard = await this.create(user, projectUuid, emptyDashboard);
+
+        try {
+            const chartPromises = data.charts.map(
+                (chartData: CreateSavedChart) => {
+                    const chartDataWithDashboard: CreateSavedChart = {
+                        ...chartData,
+                        dashboardUuid: dashboard.uuid,
+                        spaceUuid: undefined,
+                    };
+
+                    return this.savedChartService.create(
+                        user,
+                        projectUuid,
+                        chartDataWithDashboard,
+                    );
+                },
+            );
+
+            const savedCharts = await Promise.all(chartPromises);
+
+            const tiles = createTwoColumnTiles(
+                savedCharts,
+                dashboard.tabs?.[0]?.uuid,
+            );
+
+            const updateFields: DashboardVersionedFields = {
+                filters: {
+                    dimensions: [],
+                    metrics: [],
+                    tableCalculations: [],
+                },
+                tiles,
+                tabs: dashboard.tabs || [],
+            };
+
+            await this.update(user, dashboard.uuid, updateFields);
+
+            return await this.getByIdOrSlug(user, dashboard.uuid);
+        } catch (error) {
+            try {
+                await this.delete(user, dashboard.uuid);
+            } catch (deleteError) {
+                this.logger.error(
+                    'Failed to cleanup dashboard after creation error',
+                    deleteError,
+                );
+            }
+            throw error;
+        }
     }
 }

@@ -1,6 +1,9 @@
 import {
     ChartKind,
+    getFirstIndexColumns,
+    getParameterReferences,
     isVizTableConfig,
+    MAX_SAFE_INTEGER,
     type VizTableConfig,
     type VizTableHeaderSortConfig,
 } from '@lightdash/common';
@@ -19,11 +22,10 @@ import {
 import { useElementSize, useHotkeys } from '@mantine/hooks';
 import { notifications } from '@mantine/notifications';
 import {
+    IconAlertCircle,
     IconChartHistogram,
-    IconCodeCircle,
     IconGripHorizontal,
 } from '@tabler/icons-react';
-import type { EChartsInstance } from 'echarts-for-react';
 import {
     useCallback,
     useEffect,
@@ -49,18 +51,25 @@ import {
 import { ChartDataTable } from '../../../components/DataViz/visualizations/ChartDataTable';
 import ChartView from '../../../components/DataViz/visualizations/ChartView';
 import { Table } from '../../../components/DataViz/visualizations/Table';
+import type { EChartsInstance } from '../../../components/EChartsReactWrapper';
 import RunSqlQueryButton from '../../../components/SqlRunner/RunSqlQueryButton';
 import { useOrganization } from '../../../hooks/organization/useOrganization';
 import useToaster from '../../../hooks/toaster/useToaster';
+import useApp from '../../../providers/App/useApp';
+import { Parameters, useParameters } from '../../parameters';
+import { executeSqlQuery } from '../../queryRunner/executeQuery';
 import { DEFAULT_SQL_LIMIT } from '../constants';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
 import {
+    clearParameterValues,
     EditorTabs,
     selectActiveChartType,
     selectActiveEditorTab,
     selectFetchResultsOnLoad,
     selectLimit,
+    selectParameterValues,
     selectProjectUuid,
+    selectQueryUuid,
     selectResultsTableConfig,
     selectSavedSqlChart,
     selectSql,
@@ -69,11 +78,13 @@ import {
     setActiveEditorTab,
     setEditorHighlightError,
     setSqlLimit,
+    updateParameterValue,
 } from '../store/sqlRunnerSlice';
 import { runSqlQuery } from '../store/thunks';
 import { ChartDownload } from './Download/ChartDownload';
-import { ResultsDownloadFromUrl } from './Download/ResultsDownloadFromUrl';
+import ResultsDownloadButton from './Download/ResultsDownloadButton';
 import { SqlEditor } from './SqlEditor';
+import { SqlEditorPreferencesPopover } from './SqlEditorPreferencesPopover';
 import { SqlQueryHistory } from './SqlQueryHistory';
 
 export const ContentPanel: FC = () => {
@@ -82,6 +93,7 @@ export const ContentPanel: FC = () => {
     const fetchResultsOnLoad = useAppSelector(selectFetchResultsOnLoad);
     const projectUuid = useAppSelector(selectProjectUuid);
     const sql = useAppSelector(selectSql);
+    const queryUuid = useAppSelector(selectQueryUuid);
     const selectedChartType = useAppSelector(selectActiveChartType);
     const activeEditorTab = useAppSelector(selectActiveEditorTab);
     const limit = useAppSelector(selectLimit);
@@ -98,6 +110,7 @@ export const ContentPanel: FC = () => {
 
     // Get organization colors to generate chart specs with a color palette defined by the organization
     const { data: organization } = useOrganization();
+    const { health } = useApp();
 
     const { showToastError } = useToaster();
 
@@ -115,6 +128,24 @@ export const ContentPanel: FC = () => {
         height: inputSectionHeight,
     } = useElementSize();
 
+    // Parameter state management for SQL Runner context
+    const parameterValues = useAppSelector(selectParameterValues);
+
+    const handleParameterChange = useCallback(
+        (key: string, value: string | number | string[] | number[] | null) => {
+            dispatch(updateParameterValue({ key, value }));
+        },
+        [dispatch],
+    );
+
+    const parameterReferences = useMemo(() => {
+        return new Set(getParameterReferences(sql));
+    }, [sql]);
+
+    const clearAllParameters = useCallback(() => {
+        dispatch(clearParameterValues());
+    }, [dispatch]);
+
     const currentVizConfig = useAppSelector((state) =>
         selectCompleteConfigByKind(state, selectedChartType),
     );
@@ -130,17 +161,18 @@ export const ContentPanel: FC = () => {
 
     const handleRunQuery = useCallback(
         async (sqlToUse: string) => {
-            if (!sqlToUse) return;
+            if (!sqlToUse || !limit) return;
 
             await dispatch(
                 runSqlQuery({
                     sql: sqlToUse,
-                    limit: DEFAULT_SQL_LIMIT,
+                    limit,
                     projectUuid,
+                    parameterValues,
                 }),
             );
         },
-        [dispatch, projectUuid],
+        [dispatch, projectUuid, limit, parameterValues],
     );
 
     useEffect(() => {
@@ -240,7 +272,17 @@ export const ContentPanel: FC = () => {
         selectPivotChartDataByKind(state, selectedChartType),
     );
 
-    const resultsFileUrl = useMemo(() => queryResults?.fileUrl, [queryResults]);
+    const maxColumnLimit = useMemo(
+        () => health.data?.pivotTable.maxColumnLimit,
+        [health],
+    );
+    const hasReachedPivotColumnLimit = useMemo(
+        () =>
+            pivotedChartInfo?.data?.columnCount &&
+            maxColumnLimit &&
+            pivotedChartInfo.data.columnCount > maxColumnLimit,
+        [pivotedChartInfo, maxColumnLimit],
+    );
 
     useEffect(() => {
         if (queryResults && panelSizes[1] === 0) {
@@ -248,6 +290,16 @@ export const ContentPanel: FC = () => {
             setPanelSizes([50, 50]);
         }
     }, [queryResults, panelSizes]);
+
+    const defaultQueryLimit = useMemo(() => {
+        return health.data?.query.defaultLimit ?? DEFAULT_SQL_LIMIT;
+    }, [health]);
+
+    useEffect(() => {
+        if (!limit) {
+            dispatch(setSqlLimit(defaultQueryLimit));
+        }
+    }, [defaultQueryLimit, dispatch, limit]);
 
     const [activeEchartsInstance, setActiveEchartsInstance] =
         useState<EChartsInstance>();
@@ -281,7 +333,8 @@ export const ContentPanel: FC = () => {
             (acc, col) => {
                 if (
                     isPivoted &&
-                    pivotedChartInfo.data?.indexColumn?.reference !== col
+                    getFirstIndexColumns(pivotedChartInfo.data?.indexColumn)
+                        ?.reference !== col
                 ) {
                     return acc;
                 }
@@ -301,6 +354,40 @@ export const ContentPanel: FC = () => {
         );
     }, [currentVizConfig, pivotedChartInfo]);
 
+    const getDownloadQueryUuid = useCallback(
+        async (downloadLimit: number | null) => {
+            // Always execute a new query if:
+            // 1. limit is null (meaning "all results" - should ignore existing query limits)
+            // 2. limit is different from current query
+            // 3. there is no fallback query uuid (in theory, never happens)
+            if (!queryUuid || limit === null || limit !== downloadLimit) {
+                const newQuery = await executeSqlQuery(
+                    projectUuid,
+                    sql,
+                    downloadLimit === null
+                        ? MAX_SAFE_INTEGER
+                        : downloadLimit ?? limit,
+                );
+                return newQuery.queryUuid;
+            }
+            return queryUuid;
+        },
+        [sql, projectUuid, limit, queryUuid],
+    );
+
+    const getDownloadPivotQueryUuid = useCallback(async () => {
+        if (!pivotedChartInfo?.data?.queryUuid) {
+            throw new Error('No query uuid to download');
+        }
+        return pivotedChartInfo?.data?.queryUuid;
+    }, [pivotedChartInfo]);
+
+    const {
+        data: projectParameters,
+        isLoading: isProjectParametersLoading,
+        isError: isProjectParametersError,
+    } = useParameters(projectUuid, Array.from(parameterReferences ?? []));
+
     return (
         <Stack spacing="none" style={{ flex: 1, overflow: 'hidden' }}>
             <Tooltip.Group>
@@ -309,11 +396,10 @@ export const ContentPanel: FC = () => {
                     radius={0}
                     px="md"
                     py={6}
-                    bg="gray.1"
                     sx={(theme) => ({
                         borderWidth: '0 0 1px 1px',
                         borderStyle: 'solid',
-                        borderColor: theme.colors.gray[3],
+                        borderColor: theme.colors.ldGray[3],
                     })}
                 >
                     <Group position="apart">
@@ -329,12 +415,6 @@ export const ContentPanel: FC = () => {
                                             ? 'none'
                                             : undefined
                                     }
-                                    styles={(theme) => ({
-                                        root: {
-                                            backgroundColor:
-                                                theme.colors.gray[2],
-                                        },
-                                    })}
                                     size="sm"
                                     radius="md"
                                     data={[
@@ -348,12 +428,8 @@ export const ContentPanel: FC = () => {
                                                     label="You haven't run this query yet."
                                                 >
                                                     <Group spacing={4} noWrap>
-                                                        <MantineIcon
-                                                            color="gray.6"
-                                                            icon={
-                                                                IconCodeCircle
-                                                            }
-                                                        />
+                                                        <SqlEditorPreferencesPopover />
+
                                                         <Text>SQL</Text>
                                                     </Group>
                                                 </Tooltip>
@@ -373,7 +449,7 @@ export const ContentPanel: FC = () => {
                                                 >
                                                     <Group spacing={4} noWrap>
                                                         <MantineIcon
-                                                            color="gray.6"
+                                                            color="ldGray.6"
                                                             icon={
                                                                 IconChartHistogram
                                                             }
@@ -404,6 +480,15 @@ export const ContentPanel: FC = () => {
                             </Indicator>
                         </Group>
                         <Group spacing="xs">
+                            <Parameters
+                                isEditMode={false}
+                                parameters={projectParameters}
+                                parameterValues={parameterValues}
+                                onParameterChange={handleParameterChange}
+                                onClearAll={clearAllParameters}
+                                isLoading={isProjectParametersLoading}
+                                isError={isProjectParametersError}
+                            />
                             {activeEditorTab === EditorTabs.SQL && (
                                 <SqlQueryHistory />
                             )}
@@ -423,27 +508,41 @@ export const ContentPanel: FC = () => {
                             !isVizTableConfig(currentVizConfig) &&
                             selectedChartType ? (
                                 <ChartDownload
-                                    fileUrl={
-                                        pivotedChartInfo?.data?.chartFileUrl
+                                    chartName={savedSqlChart?.name}
+                                    echartsInstance={activeEchartsInstance!}
+                                    projectUuid={projectUuid}
+                                    disabled={isLoadingSqlQuery}
+                                    hideLimitSelection={true}
+                                    totalResults={
+                                        resultsRunner.getRows().length
                                     }
-                                    columnNames={
+                                    columnOrder={
                                         pivotedChartInfo?.data?.columns?.map(
                                             (c) => c.reference,
                                         ) ?? []
                                     }
-                                    chartName={savedSqlChart?.name}
-                                    echartsInstance={activeEchartsInstance}
+                                    getDownloadQueryUuid={
+                                        getDownloadPivotQueryUuid
+                                    }
                                 />
                             ) : (
                                 mode === 'default' && (
-                                    <ResultsDownloadFromUrl
-                                        fileUrl={resultsFileUrl}
-                                        columnNames={
-                                            queryResults?.columns.map(
-                                                (c) => c.reference,
-                                            ) ?? []
-                                        }
+                                    <ResultsDownloadButton
+                                        projectUuid={projectUuid}
+                                        disabled={isLoadingSqlQuery}
                                         chartName={savedSqlChart?.name}
+                                        vizTableConfig={
+                                            isVizTableConfig(currentVizConfig)
+                                                ? currentVizConfig
+                                                : undefined
+                                        }
+                                        totalResults={
+                                            resultsRunner.getRows().length
+                                        }
+                                        columnOrder={resultsRunner.getColumnNames()}
+                                        getDownloadQueryUuid={
+                                            getDownloadQueryUuid
+                                        }
                                     />
                                 )
                             )}
@@ -469,8 +568,12 @@ export const ContentPanel: FC = () => {
                             sx={(theme) => ({
                                 borderWidth: '0 0 0 1px',
                                 borderStyle: 'solid',
-                                borderColor: theme.colors.gray[3],
+                                borderColor: theme.colors.ldGray[3],
                                 overflow: 'auto',
+                                backgroundColor:
+                                    theme.colorScheme === 'dark'
+                                        ? theme.colors.dark[6]
+                                        : 'white',
                             })}
                         >
                             <Box
@@ -638,7 +741,6 @@ export const ContentPanel: FC = () => {
                     <Box
                         hidden={hideResultsPanel}
                         component={PanelResizeHandle}
-                        bg="gray.1"
                         h={15}
                         sx={(theme) => ({
                             transition: 'background-color 0.2s ease-in-out',
@@ -647,12 +749,12 @@ export const ContentPanel: FC = () => {
                             alignItems: 'center',
                             justifyContent: 'center',
                             '&:hover': {
-                                backgroundColor: theme.colors.gray[2],
+                                backgroundColor: theme.colors.ldGray[2],
                             },
                             '&[data-resize-handle-state="drag"]': {
-                                backgroundColor: theme.colors.gray[3],
+                                backgroundColor: theme.colors.ldGray[3],
                             },
-                            borderLeft: `1px solid ${theme.colors.gray[3]}`,
+                            borderLeft: `1px solid ${theme.colors.ldGray[3]}`,
                             gap: 5,
                         })}
                     >
@@ -664,8 +766,8 @@ export const ContentPanel: FC = () => {
 
                         {showLimitText && (
                             <>
-                                <Text fz="xs" fw={400} c="gray.7">
-                                    Showing first {DEFAULT_SQL_LIMIT} rows
+                                <Text fz="xs" fw={400} c="ldGray.7">
+                                    Showing first {defaultQueryLimit} rows
                                 </Text>
                                 <MantineIcon
                                     color="gray"
@@ -725,24 +827,64 @@ export const ContentPanel: FC = () => {
                                         {selectedChartType &&
                                             pivotedChartInfo?.data
                                                 ?.tableData && (
-                                                <ChartDataTable
-                                                    columnNames={
-                                                        pivotedChartInfo?.data
-                                                            .tableData?.columns
-                                                    }
-                                                    rows={
-                                                        pivotedChartInfo?.data
-                                                            .tableData?.rows ??
-                                                        []
-                                                    }
-                                                    flexProps={{
-                                                        mah: '100%',
-                                                    }}
-                                                    onTHClick={
-                                                        handleTableHeaderClick
-                                                    }
-                                                    thSortConfig={sortConfig}
-                                                />
+                                                <>
+                                                    {hasReachedPivotColumnLimit &&
+                                                        maxColumnLimit && (
+                                                            <Group
+                                                                position="center"
+                                                                spacing="xs"
+                                                            >
+                                                                <MantineIcon
+                                                                    color="gray"
+                                                                    icon={
+                                                                        IconAlertCircle
+                                                                    }
+                                                                />
+                                                                <Text
+                                                                    fz="xs"
+                                                                    fw={400}
+                                                                    c="ldGray.7"
+                                                                    ta="center"
+                                                                >
+                                                                    This query
+                                                                    exceeds the
+                                                                    maximum
+                                                                    number of
+                                                                    columns (
+                                                                    {
+                                                                        maxColumnLimit
+                                                                    }
+                                                                    ). Showing
+                                                                    the first{' '}
+                                                                    {
+                                                                        maxColumnLimit
+                                                                    }{' '}
+                                                                    columns.
+                                                                </Text>
+                                                            </Group>
+                                                        )}
+                                                    <ChartDataTable
+                                                        columnNames={
+                                                            pivotedChartInfo
+                                                                ?.data.tableData
+                                                                ?.columns
+                                                        }
+                                                        rows={
+                                                            pivotedChartInfo
+                                                                ?.data.tableData
+                                                                ?.rows ?? []
+                                                        }
+                                                        flexProps={{
+                                                            mah: '100%',
+                                                        }}
+                                                        onTHClick={
+                                                            handleTableHeaderClick
+                                                        }
+                                                        thSortConfig={
+                                                            sortConfig
+                                                        }
+                                                    />
+                                                </>
                                             )}
                                     </ConditionalVisibility>
                                 </>

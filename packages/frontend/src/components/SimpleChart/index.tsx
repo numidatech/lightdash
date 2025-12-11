@@ -1,23 +1,18 @@
-import { type PivotReference } from '@lightdash/common';
-import { IconChartBarOff } from '@tabler/icons-react';
-import EChartsReact from 'echarts-for-react';
-import { type EChartsReactProps, type Opts } from 'echarts-for-react/lib/types';
 import {
-    memo,
-    useCallback,
-    useEffect,
-    useMemo,
-    useState,
-    type FC,
-} from 'react';
-import useEchartsCartesianConfig, {
     getFormattedValue,
     isLineSeriesOption,
-} from '../../hooks/echarts/useEchartsCartesianConfig';
-import { useVisualizationContext } from '../LightdashVisualization/useVisualizationContext';
+    type PivotReference,
+} from '@lightdash/common';
+import { IconChartBarOff } from '@tabler/icons-react';
+import { type EChartsReactProps, type Opts } from 'echarts-for-react/lib/types';
+import { memo, useCallback, useEffect, useMemo, type FC } from 'react';
+import useEchartsCartesianConfig from '../../hooks/echarts/useEchartsCartesianConfig';
+import { useLegendDoubleClickSelection } from '../../hooks/echarts/useLegendDoubleClickSelection';
 import SuboptimalState from '../common/SuboptimalState/SuboptimalState';
+import EChartsReact from '../EChartsReactWrapper';
+import { useVisualizationContext } from '../LightdashVisualization/useVisualizationContext';
 
-type EchartBaseClickEvent = {
+type EchartsBaseClickEvent = {
     // The component name clicked,
     // component type, could be 'series'、'markLine'、'markPoint'、'timeLine', etc..
     componentType: string;
@@ -45,7 +40,7 @@ type EchartBaseClickEvent = {
     pivotReference?: PivotReference;
 };
 
-export type EchartSeriesClickEvent = EchartBaseClickEvent & {
+export type EchartsSeriesClickEvent = EchartsBaseClickEvent & {
     componentType: 'series';
     data: Record<string, any>;
     seriesIndex: number;
@@ -53,13 +48,7 @@ export type EchartSeriesClickEvent = EchartBaseClickEvent & {
     pivotReference?: PivotReference;
 };
 
-type EchartClickEvent = EchartSeriesClickEvent | EchartBaseClickEvent;
-
-type LegendClickEvent = {
-    selected: {
-        [name: string]: boolean;
-    };
-};
+type EchartsClickEvent = EchartsSeriesClickEvent | EchartsBaseClickEvent;
 
 export const EmptyChart = () => (
     <div style={{ height: '100%', width: '100%', padding: '50px 0' }}>
@@ -81,8 +70,9 @@ export const LoadingChart = () => (
     </div>
 );
 
-const isSeriesClickEvent = (e: EchartClickEvent): e is EchartSeriesClickEvent =>
-    e.componentType === 'series';
+const isSeriesClickEvent = (
+    e: EchartsClickEvent,
+): e is EchartsSeriesClickEvent => e.componentType === 'series';
 
 type SimpleChartProps = Omit<EChartsReactProps, 'option'> & {
     isInDashboard: boolean;
@@ -92,24 +82,19 @@ type SimpleChartProps = Omit<EChartsReactProps, 'option'> & {
 };
 
 const SimpleChart: FC<SimpleChartProps> = memo((props) => {
-    const { chartRef, isLoading, onSeriesContextMenu, itemsMap } =
+    const { chartRef, isLoading, onSeriesContextMenu, itemsMap, resultsData } =
         useVisualizationContext();
 
-    const [selectedLegends, setSelectedLegends] = useState({});
-    const [selectedLegendsUpdated, setSelectedLegendsUpdated] = useState({});
-
-    const onLegendChange = useCallback((params: LegendClickEvent) => {
-        setSelectedLegends(params.selected);
-    }, []);
-
-    useEffect(() => {
-        setSelectedLegendsUpdated(selectedLegends);
-    }, [selectedLegends]);
-
+    const { selectedLegends, onLegendChange } = useLegendDoubleClickSelection();
     const eChartsOptions = useEchartsCartesianConfig(
-        selectedLegendsUpdated,
+        selectedLegends,
         props.isInDashboard,
     );
+
+    useEffect(() => {
+        // Load all the rows
+        resultsData?.setFetchAll(true);
+    }, [resultsData]);
 
     useEffect(() => {
         const listener = () => {
@@ -123,7 +108,7 @@ const SimpleChart: FC<SimpleChartProps> = memo((props) => {
     });
 
     const onChartContextMenu = useCallback(
-        (e: EchartClickEvent) => {
+        (e: EchartsClickEvent) => {
             if (onSeriesContextMenu) {
                 if (e.event.event.defaultPrevented) {
                     return;
@@ -180,6 +165,39 @@ const SimpleChart: FC<SimpleChartProps> = memo((props) => {
                                     // so we need to generate it here (and wrap it in an array) and then reuse the formatter used
                                     // on `useEchartsCartesianConfig` to generate the tooltip
                                     if (eChartsOptions.tooltip.formatter) {
+                                        // When using tuple mode (array values) for stacked bars
+                                        // param.value is an array like ["Dr. Wilson", 3]
+                                        // param.name contains the category header
+                                        if (Array.isArray(param.value)) {
+                                            return (
+                                                eChartsOptions.tooltip
+                                                    .formatter as any
+                                            )([
+                                                {
+                                                    ...param,
+                                                    axisValueLabel: param.name,
+                                                },
+                                            ]);
+                                        }
+
+                                        // When using primitive values (non-object)
+                                        if (
+                                            typeof param.value !== 'object' ||
+                                            param.value === null
+                                        ) {
+                                            return (
+                                                eChartsOptions.tooltip
+                                                    .formatter as any
+                                            )([
+                                                {
+                                                    ...param,
+                                                    axisValueLabel: param.name,
+                                                },
+                                            ]);
+                                        }
+
+                                        // When using dataset mode with object values (100% stacked)
+                                        // param.value is an object with dimension keys
                                         const dim =
                                             param.encode?.x?.[0] !== undefined
                                                 ? param.dimensionNames[
@@ -248,6 +266,7 @@ const SimpleChart: FC<SimpleChartProps> = memo((props) => {
         }
     }, [chartRef, eChartsOptions?.tooltip]);
 
+    if (resultsData?.error) return <EmptyChart />;
     if (isLoading) return <LoadingChart />;
     if (!eChartsOptions) return <EmptyChart />;
 

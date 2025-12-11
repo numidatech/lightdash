@@ -1,119 +1,168 @@
-import { ActionIcon, Group, Tabs, Title, Tooltip } from '@mantine/core';
+import {
+    ActionIcon,
+    Card,
+    Group,
+    Stack,
+    Tabs,
+    Title,
+    Tooltip,
+} from '@mantine-8/core';
 import { IconClock, IconRefresh, IconSend } from '@tabler/icons-react';
 import { useQueryClient } from '@tanstack/react-query';
-import React, { type FC } from 'react';
-import { useSchedulerLogs } from '../../features/scheduler/hooks/useScheduler';
-import { useTableTabStyles } from '../../hooks/styles/useTableTabStyles';
+import { type FC, useCallback, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router';
+import { useGetSlack, useSlackChannels } from '../../hooks/slack/useSlack';
 import useToaster from '../../hooks/toaster/useToaster';
-import LoadingState from '../common/LoadingState';
 import MantineIcon from '../common/MantineIcon';
-import ResourceEmptyState from '../common/ResourceView/ResourceEmptyState';
-import { SettingsCard } from '../common/Settings/SettingsCard';
-import Logs from './LogsView';
-import Schedulers from './SchedulersView';
+import LogsTable from './LogsTable';
+import SchedulersTable from './SchedulersTable';
+import classes from './SchedulersView.module.css';
+
+enum SchedulersViewTab {
+    ALL_SCHEDULERS = 'scheduled-deliveries',
+    RUN_HISTORY = 'run-history',
+}
 
 const SchedulersView: FC<{ projectUuid: string }> = ({ projectUuid }) => {
-    const { data, isInitialLoading } = useSchedulerLogs(projectUuid);
-    const tableTabStyles = useTableTabStyles();
+    const [searchParams, setSearchParams] = useSearchParams();
     const queryClient = useQueryClient();
     const { showToastSuccess } = useToaster();
 
+    const activeTab =
+        searchParams.get('tab') === SchedulersViewTab.RUN_HISTORY
+            ? SchedulersViewTab.RUN_HISTORY
+            : SchedulersViewTab.ALL_SCHEDULERS;
+
+    const {
+        data: slackInstallation,
+        isInitialLoading: isLoadingSlackInstallation,
+    } = useGetSlack();
+    const organizationHasSlack = !!slackInstallation?.organizationUuid;
+
+    // Track slack channel IDs from scheduler data to ensure they're included in the query
+    const [schedulerSlackChannelIds, setSchedulerSlackChannelIds] = useState<
+        string[]
+    >([]);
+
+    const slackChannelsQuery = useSlackChannels(
+        '',
+        {
+            excludeArchived: false,
+            includeChannelIds:
+                schedulerSlackChannelIds.length > 0
+                    ? schedulerSlackChannelIds
+                    : undefined,
+        },
+        { enabled: organizationHasSlack && !isLoadingSlackInstallation },
+    );
+
+    // Create a map of Slack channel ID -> name
+    const slackChannelMap = useMemo(() => {
+        const map = new Map<string, string>();
+        slackChannelsQuery?.data?.forEach((channel) => {
+            map.set(channel.id, channel.name);
+        });
+        return map;
+    }, [slackChannelsQuery?.data]);
+
+    // Callback to get Slack channel name from ID
+    const getSlackChannelName = useCallback(
+        (channelId: string): string | null => {
+            return slackChannelMap.get(channelId) || null;
+        },
+        [slackChannelMap],
+    );
+
+    const handleTabChange = (value: string | null) => {
+        const newParams = new URLSearchParams(searchParams);
+        if (value === SchedulersViewTab.RUN_HISTORY) {
+            newParams.set('tab', SchedulersViewTab.RUN_HISTORY);
+        } else {
+            newParams.delete('tab');
+        }
+        setSearchParams(newParams);
+    };
+
     const handleRefresh = async () => {
-        await queryClient.invalidateQueries(['schedulerLogs']);
+        await Promise.all([
+            queryClient.invalidateQueries(['paginatedSchedulers']),
+            queryClient.invalidateQueries(['schedulerRuns']),
+        ]);
 
         showToastSuccess({
             title: 'Scheduled deliveries refreshed successfully',
         });
     };
 
-    if (isInitialLoading) {
-        return <LoadingState title="Loading scheduled deliveries" />;
-    }
     return (
-        <SettingsCard style={{ overflow: 'visible' }} p={0} shadow="none">
-            <Tabs
-                classNames={tableTabStyles.classes}
-                keepMounted={false}
-                defaultValue="scheduled-deliveries"
-            >
-                <Group
-                    align="center"
-                    pr="md"
-                    spacing="xs"
-                    sx={{
-                        flexGrow: 1,
+        <Card>
+            <Stack gap="sm">
+                <Tabs
+                    keepMounted={false}
+                    value={activeTab}
+                    onChange={handleTabChange}
+                    variant="pills"
+                    classNames={{
+                        list: classes.tabsList,
+                        tab: classes.tab,
+                        tabSection: classes.tabSection,
+                        panel: classes.panel,
                     }}
                 >
+                    <Group
+                        gap="xs"
+                        align="center"
+                        justify="space-between"
+                        className={classes.header}
+                    >
+                        <Title order={5}>Scheduled Deliveries</Title>
+                        <Tooltip label="Click to refresh the status of the scheduled deliveries">
+                            <ActionIcon
+                                onClick={handleRefresh}
+                                variant="subtle"
+                                size="xs"
+                            >
+                                <MantineIcon
+                                    icon={IconRefresh}
+                                    color="ldGray.6"
+                                    stroke={2}
+                                />
+                            </ActionIcon>
+                        </Tooltip>
+                    </Group>
                     <Tabs.List>
                         <Tabs.Tab
-                            value="scheduled-deliveries"
-                            icon={
-                                <MantineIcon
-                                    icon={IconSend}
-                                    size="md"
-                                    color="gray.7"
-                                />
-                            }
+                            value={SchedulersViewTab.ALL_SCHEDULERS}
+                            leftSection={<MantineIcon icon={IconSend} />}
                         >
-                            <Title order={6} fw={500} color="gray.7">
-                                All schedulers
-                            </Title>
+                            All schedulers
                         </Tabs.Tab>
                         <Tabs.Tab
-                            value="run-history"
-                            icon={
-                                <MantineIcon
-                                    icon={IconClock}
-                                    size="md"
-                                    color="gray.7"
-                                />
-                            }
+                            value={SchedulersViewTab.RUN_HISTORY}
+                            leftSection={<MantineIcon icon={IconClock} />}
                         >
-                            <Title order={6} fw={500} color="gray.7">
-                                Run history
-                            </Title>
+                            Run history
                         </Tabs.Tab>
                     </Tabs.List>
-                    <Tooltip label="Click to refresh the status of the scheduled deliveries">
-                        <ActionIcon ml="auto" onClick={handleRefresh}>
-                            <MantineIcon
-                                icon={IconRefresh}
-                                size="lg"
-                                color="gray.6"
-                                stroke={2}
-                            />
-                        </ActionIcon>
-                    </Tooltip>
-                </Group>
-                <Tabs.Panel value="scheduled-deliveries">
-                    {data && data.schedulers.length > 0 ? (
-                        <Schedulers {...data} projectUuid={projectUuid} />
-                    ) : (
-                        <ResourceEmptyState
-                            title="No scheduled deliveries on this project"
-                            description="Go to a chart or dashboard to set up your first scheduled delivery"
+
+                    <Tabs.Panel value={SchedulersViewTab.ALL_SCHEDULERS}>
+                        <SchedulersTable
+                            projectUuid={projectUuid}
+                            getSlackChannelName={getSlackChannelName}
+                            onSlackChannelIdsChange={
+                                setSchedulerSlackChannelIds
+                            }
                         />
-                    )}
-                </Tabs.Panel>
-                <Tabs.Panel value="run-history">
-                    {data && data.schedulers.length > 0 ? (
-                        data.logs.length > 0 ? (
-                            <Logs {...data} projectUuid={projectUuid} />
-                        ) : (
-                            <ResourceEmptyState
-                                title="Scheduled deliveries have not run any jobs as of now"
-                                description="Check in later of hit the refresh button to see if any jobs have run"
-                            />
-                        )
-                    ) : (
-                        <ResourceEmptyState
-                            title="No scheduled deliveries on this project"
-                            description="Go to a chart or dashboard to set up your first scheduled delivery"
+                    </Tabs.Panel>
+                    <Tabs.Panel value={SchedulersViewTab.RUN_HISTORY}>
+                        <LogsTable
+                            projectUuid={projectUuid}
+                            getSlackChannelName={getSlackChannelName}
                         />
-                    )}
-                </Tabs.Panel>
-            </Tabs>
-        </SettingsCard>
+                    </Tabs.Panel>
+                </Tabs>
+            </Stack>
+        </Card>
     );
 };
 

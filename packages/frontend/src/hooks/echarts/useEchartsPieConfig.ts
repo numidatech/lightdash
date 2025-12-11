@@ -1,5 +1,16 @@
 import {
+    calculateBorderRadiusForSlice,
+    formatColorIndicator,
     formatItemValue,
+    formatTooltipLabel,
+    formatTooltipRow,
+    formatTooltipValue,
+    getLegendStyle,
+    getPieExternalLabelStyle,
+    getPieInternalLabelStyle,
+    getPieLabelLineStyle,
+    getPieSliceStyle,
+    getTooltipStyle,
     PieChartLegendLabelMaxLengthDefault,
     PieChartTooltipLabelMaxLength,
     type ResultRow,
@@ -10,6 +21,7 @@ import { type EChartsOption, type PieSeriesOption } from 'echarts';
 import { useMemo } from 'react';
 import { isPieVisualizationConfig } from '../../components/LightdashVisualization/types';
 import { useVisualizationContext } from '../../components/LightdashVisualization/useVisualizationContext';
+import { useLegendDoubleClickTooltip } from './useLegendDoubleClickTooltip';
 export type PieSeriesDataPoint = NonNullable<
     PieSeriesOption['data']
 >[number] & {
@@ -19,9 +31,17 @@ export type PieSeriesDataPoint = NonNullable<
     };
 };
 
-const useEchartsPieConfig = (isInDashboard: boolean) => {
-    const { visualizationConfig, itemsMap, getGroupColor, minimal } =
-        useVisualizationContext();
+const useEchartsPieConfig = (
+    selectedLegends?: Record<string, boolean>,
+    isInDashboard?: boolean,
+) => {
+    const {
+        visualizationConfig,
+        itemsMap,
+        getGroupColor,
+        minimal,
+        parameters,
+    } = useVisualizationContext();
 
     const theme = useMantineTheme();
 
@@ -39,6 +59,7 @@ const useEchartsPieConfig = (isInDashboard: boolean) => {
             sortedGroupLabels,
             groupFieldIds,
             validConfig: {
+                isDonut,
                 valueLabel: valueLabelDefault,
                 showValue: showValueDefault,
                 showPercentage: showPercentageDefault,
@@ -49,6 +70,9 @@ const useEchartsPieConfig = (isInDashboard: boolean) => {
         } = chartConfig;
 
         if (!selectedMetric) return;
+
+        // Calculate total for percentage calculation
+        const total = data.reduce((sum, { value }) => sum + value, 0);
 
         return data
             .sort(
@@ -73,6 +97,12 @@ const useEchartsPieConfig = (isInDashboard: boolean) => {
                     groupColorOverrides?.[name] ??
                     getGroupColor(groupPrefix, name);
 
+                // Calculate percentage for this slice
+                const percent = (value / total) * 100;
+
+                const borderRadius = isDonut
+                    ? calculateBorderRadiusForSlice(percent)
+                    : 0;
                 const config: PieSeriesDataPoint = {
                     id: name,
                     groupId: name,
@@ -80,23 +110,45 @@ const useEchartsPieConfig = (isInDashboard: boolean) => {
                     value: value,
                     itemStyle: {
                         color: itemColor,
+                        borderRadius,
                     },
                     label: {
                         show: valueLabel !== 'hidden',
                         position:
                             valueLabel === 'outside' ? 'outside' : 'inside',
+                        ...(valueLabel === 'outside'
+                            ? getPieExternalLabelStyle()
+                            : getPieInternalLabelStyle()),
                         formatter: (params) => {
-                            return valueLabel !== 'hidden' &&
-                                showValue &&
-                                showPercentage
-                                ? `${params.percent}% - ${meta.value.formatted}`
+                            const isOutside = valueLabel === 'outside';
+
+                            if (valueLabel === 'hidden') return '';
+
+                            // For outside labels, use rich text formatting
+                            if (isOutside) {
+                                if (showValue && showPercentage) {
+                                    return `{name|${params.name}: }{value|${params.percent}% - ${meta.value.formatted}}`;
+                                } else if (showValue) {
+                                    return `{name|${params.name}: }{value|${meta.value.formatted}}`;
+                                } else if (showPercentage) {
+                                    return `{name|${params.name}: }{value|${params.percent}%}`;
+                                } else {
+                                    return `{name|${params.name}}`;
+                                }
+                            }
+
+                            // For inside labels, use plain formatting (no rich text)
+                            // Always show name alongside value/percentage
+                            return showValue && showPercentage
+                                ? `${params.name}: ${params.percent}% - ${meta.value.formatted}`
                                 : showValue
-                                ? `${meta.value.formatted}`
+                                ? `${params.name}: ${meta.value.formatted}`
                                 : showPercentage
-                                ? `${params.percent}%`
+                                ? `${params.name}: ${params.percent}%`
                                 : `${params.name}`;
                         },
                     },
+                    labelLine: getPieLabelLineStyle(),
                     meta,
                 };
 
@@ -133,12 +185,16 @@ const useEchartsPieConfig = (isInDashboard: boolean) => {
                         ? ['50%', '52%']
                         : ['50%', '50%']
                     : ['50%', '50%'],
+            ...getPieSliceStyle(!!isDonut),
             tooltip: {
                 trigger: 'item',
-                formatter: ({ marker, name, value, percent }) => {
+                formatter: (params) => {
+                    const { color, name, value, percent } = params;
                     const formattedValue = formatItemValue(
                         selectedMetric,
                         value,
+                        false,
+                        parameters,
                     );
 
                     const truncatedName =
@@ -149,11 +205,20 @@ const useEchartsPieConfig = (isInDashboard: boolean) => {
                               )}...`
                             : name;
 
-                    return `${marker} <b>${truncatedName}</b><br />${percent}% - ${formattedValue}`;
+                    const colorIndicator = formatColorIndicator(
+                        color as string,
+                    );
+                    const label = formatTooltipLabel(truncatedName);
+                    const valueWithPercent = `${percent}% - ${formattedValue}`;
+                    const valuePill = formatTooltipValue(valueWithPercent);
+
+                    return formatTooltipRow(colorIndicator, label, valuePill);
                 },
             },
         };
-    }, [chartConfig, seriesData]);
+    }, [chartConfig, seriesData, parameters]);
+
+    const { tooltip: legendDoubleClickTooltip } = useLegendDoubleClickTooltip();
 
     const eChartsOption: EChartsOption | undefined = useMemo(() => {
         if (!chartConfig || !pieSeriesOption) return;
@@ -170,7 +235,8 @@ const useEchartsPieConfig = (isInDashboard: boolean) => {
                 show: showLegend,
                 orient: legendPosition,
                 type: 'scroll',
-                formatter: (name) => {
+                ...getLegendStyle('square'),
+                formatter: (name: string) => {
                     return name.length >
                         (legendMaxItemLength ??
                             PieChartLegendLabelMaxLengthDefault)
@@ -181,10 +247,8 @@ const useEchartsPieConfig = (isInDashboard: boolean) => {
                           )}...`
                         : name;
                 },
-                tooltip: {
-                    show: true, // show tooltip for truncated legend items
-                    trigger: 'item',
-                },
+                tooltip: legendDoubleClickTooltip,
+                selected: selectedLegends,
                 ...(legendPosition === 'vertical'
                     ? {
                           left: 'left',
@@ -199,16 +263,19 @@ const useEchartsPieConfig = (isInDashboard: boolean) => {
             },
             tooltip: {
                 trigger: 'item',
+                ...getTooltipStyle(),
             },
             series: [pieSeriesOption],
             animation: !(isInDashboard || minimal),
         };
     }, [
         chartConfig,
-        isInDashboard,
-        minimal,
         pieSeriesOption,
         theme?.other?.chartFont,
+        legendDoubleClickTooltip,
+        selectedLegends,
+        isInDashboard,
+        minimal,
     ]);
 
     if (!itemsMap) return;

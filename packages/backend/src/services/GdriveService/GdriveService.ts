@@ -1,13 +1,16 @@
 import { subject } from '@casl/ability';
 import {
+    CustomSqlQueryForbiddenError,
     ForbiddenError,
     isCustomSqlDimension,
     SessionUser,
     UploadMetricGsheet,
     UploadMetricGsheetPayload,
 } from '@lightdash/common';
+import { fromSession } from '../../auth/account';
 import { LightdashConfig } from '../../config/parseConfig';
 import { DashboardModel } from '../../models/DashboardModel/DashboardModel';
+import { ProjectModel } from '../../models/ProjectModel/ProjectModel';
 import { SavedChartModel } from '../../models/SavedChartModel';
 import { UserModel } from '../../models/UserModel';
 import { SchedulerClient } from '../../scheduler/SchedulerClient';
@@ -21,6 +24,7 @@ type GdriveServiceArguments = {
     dashboardModel: DashboardModel;
     userModel: UserModel;
     schedulerClient: SchedulerClient;
+    projectModel: ProjectModel;
 };
 
 export class GdriveService extends BaseService {
@@ -36,6 +40,8 @@ export class GdriveService extends BaseService {
 
     schedulerClient: SchedulerClient;
 
+    projectModel: ProjectModel;
+
     constructor({
         lightdashConfig,
         userModel,
@@ -43,6 +49,7 @@ export class GdriveService extends BaseService {
         savedChartModel,
         dashboardModel,
         schedulerClient,
+        projectModel,
     }: GdriveServiceArguments) {
         super();
         this.lightdashConfig = lightdashConfig;
@@ -51,18 +58,34 @@ export class GdriveService extends BaseService {
         this.savedChartModel = savedChartModel;
         this.dashboardModel = dashboardModel;
         this.schedulerClient = schedulerClient;
+        this.projectModel = projectModel;
     }
 
     async scheduleUploadGsheet(
         user: SessionUser,
         gsheetOptions: UploadMetricGsheet,
     ) {
+        const projectSummary = await this.projectModel.getSummary(
+            gsheetOptions.projectUuid,
+        );
         if (
             user.ability.cannot(
                 'manage',
                 subject('ExportCsv', {
-                    organizationUuid: user.organizationUuid,
-                    projectUuid: gsheetOptions.projectUuid,
+                    organizationUuid: projectSummary.organizationUuid,
+                    projectUuid: projectSummary.projectUuid,
+                }),
+            )
+        ) {
+            throw new ForbiddenError();
+        }
+
+        if (
+            user.ability.cannot(
+                'manage',
+                subject('GoogleSheets', {
+                    organizationUuid: projectSummary.organizationUuid,
+                    projectUuid: projectSummary.projectUuid,
                 }),
             )
         ) {
@@ -76,20 +99,23 @@ export class GdriveService extends BaseService {
             user.ability.cannot(
                 'manage',
                 subject('CustomSql', {
-                    organizationUuid: user.organizationUuid,
-                    projectUuid: gsheetOptions.projectUuid,
+                    organizationUuid: projectSummary.organizationUuid,
+                    projectUuid: projectSummary.projectUuid,
                 }),
             )
         ) {
-            throw new ForbiddenError(
-                'User cannot run queries with custom SQL dimensions',
-            );
+            throw new CustomSqlQueryForbiddenError();
         }
+
+        const { organizationUuid } = await this.projectService.getProject(
+            gsheetOptions.projectUuid,
+            fromSession(user),
+        );
 
         const payload: UploadMetricGsheetPayload = {
             ...gsheetOptions,
             userUuid: user.userUuid,
-            organizationUuid: user.organizationUuid,
+            organizationUuid,
         };
 
         const { jobId } = await this.schedulerClient.uploadGsheetFromQueryJob(

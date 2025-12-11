@@ -109,10 +109,76 @@ describe('DashboardModel', () => {
             )
             .response([]);
 
-        const dashboard = await model.getById(expectedDashboard.uuid);
+        const dashboard = await model.getByIdOrSlug(expectedDashboard.uuid);
 
         expect(dashboard).toEqual(expectedDashboard);
         expect(tracker.history.select).toHaveLength(4);
+    });
+
+    test('should order dashboard tiles by y_offset then x_offset when fetching dashboard', async () => {
+        // Create tiles with specific coordinates to test ordering
+        const tile1 = {
+            ...dashboardTileWithSavedChartEntry,
+            y_offset: 1,
+            x_offset: 1,
+            dashboard_tile_uuid: 'uuid-c',
+        };
+        const tile2 = {
+            ...loomTileEntry,
+            y_offset: 1,
+            x_offset: 2,
+            dashboard_tile_uuid: 'uuid-b',
+        };
+        const tile3 = {
+            ...markdownTileEntry,
+            y_offset: 2,
+            x_offset: 1,
+            dashboard_tile_uuid: 'uuid-a',
+        };
+
+        tracker.on
+            .select(
+                queryMatcher(DashboardsTableName, [expectedDashboard.uuid, 1]),
+            )
+            .response([
+                {
+                    ...dashboardWithVersionEntry,
+                    space_uuid: 'spaceUuid',
+                    space_name: 'space name',
+                },
+            ]);
+        tracker.on
+            .select(
+                queryMatcher(DashboardViewsTableName, [
+                    dashboardWithVersionEntry.dashboard_version_id,
+                ]),
+            )
+            .response([dashboardViewEntry]);
+        tracker.on
+            .select(
+                queryMatcher(DashboardTilesTableName, [
+                    dashboardWithVersionEntry.dashboard_version_id,
+                ]),
+            )
+            .response([tile1, tile2, tile3]); // Provide in expected sorted order: y=1,x=1 → y=1,x=2 → y=2,x=1
+        tracker.on
+            .select(
+                queryMatcher(DashboardTabsTableName, [
+                    dashboardWithVersionEntry.dashboard_version_id,
+                    dashboardWithVersionEntry.dashboard_id,
+                ]),
+            )
+            .response([]);
+
+        // Fetch the dashboard
+        const dashboard = await model.getByIdOrSlug(expectedDashboard.uuid);
+
+        // Assert that tiles are returned in the expected order
+        // First by y_offset (ascending), then x_offset (ascending)
+        expect(dashboard.tiles.length).toBe(3);
+        expect(dashboard.tiles[0].uuid).toBe(tile1.dashboard_tile_uuid); // y=1, x=1
+        expect(dashboard.tiles[1].uuid).toBe(tile2.dashboard_tile_uuid); // y=1, x=2
+        expect(dashboard.tiles[2].uuid).toBe(tile3.dashboard_tile_uuid); // y=2, x=1
     });
 
     test("should error if dashboard isn't found", async () => {
@@ -123,7 +189,7 @@ describe('DashboardModel', () => {
             .response([]);
 
         await expect(
-            model.getById(expectedDashboard.uuid),
+            model.getByIdOrSlug(expectedDashboard.uuid),
         ).rejects.toThrowError(NotFoundError);
     });
 
@@ -150,6 +216,62 @@ describe('DashboardModel', () => {
         expect(tracker.history.select).toHaveLength(2);
     });
 
+    test('should check if saved chart exists in dashboard', async () => {
+        const testProjectUuid = 'test-project-uuid';
+        const testDashboardUuid = 'test-dashboard-uuid';
+        const testChartUuid = 'test-chart-uuid';
+
+        // Mock any select query that contains these parameters
+        tracker.on
+            .select(
+                ({ sql, bindings }: RawQuery) =>
+                    sql.includes('latest_dashboard_version_cte') &&
+                    bindings.includes(testDashboardUuid) &&
+                    bindings.includes(testProjectUuid) &&
+                    bindings.includes(testChartUuid),
+            )
+            .response([
+                {
+                    dashboard_uuid: testDashboardUuid,
+                },
+            ]);
+
+        const result = await model.savedChartExistsInDashboard(
+            testProjectUuid,
+            testDashboardUuid,
+            testChartUuid,
+        );
+
+        expect(result).toBe(true);
+        expect(tracker.history.select).toHaveLength(1);
+    });
+
+    test('should return false when saved chart does not exist in dashboard', async () => {
+        const testProjectUuid = 'test-project-uuid';
+        const testDashboardUuid = 'test-dashboard-uuid';
+        const testChartUuid = 'test-chart-uuid';
+
+        // Mock any select query that contains these parameters with empty response
+        tracker.on
+            .select(
+                ({ sql, bindings }: RawQuery) =>
+                    sql.includes('latest_dashboard_version_cte') &&
+                    bindings.includes(testDashboardUuid) &&
+                    bindings.includes(testProjectUuid) &&
+                    bindings.includes(testChartUuid),
+            )
+            .response([]);
+
+        const result = await model.savedChartExistsInDashboard(
+            testProjectUuid,
+            testDashboardUuid,
+            testChartUuid,
+        );
+
+        expect(result).toBe(false);
+        expect(tracker.history.select).toHaveLength(1);
+    });
+
     test('should create dashboard with tile ids', async () => {
         tracker.on.select(SpaceTableName).responseOnce([spaceEntry]);
         tracker.on.insert(DashboardsTableName).responseOnce([dashboardEntry]);
@@ -167,7 +289,7 @@ describe('DashboardModel', () => {
         tracker.on.update(DashboardViewsTableName).responseOnce([]);
         tracker.on.select(DashboardsTableName).responseOnce('slug');
 
-        jest.spyOn(model, 'getById').mockImplementationOnce(() =>
+        jest.spyOn(model, 'getByIdOrSlug').mockImplementationOnce(() =>
             Promise.resolve(expectedDashboard),
         );
         jest.spyOn(DashboardModel, 'generateUniqueSlug').mockResolvedValue(
@@ -353,7 +475,7 @@ describe('DashboardModel', () => {
         tracker.on.insert(DashboardTileMarkdownsTableName).responseOnce([]);
         tracker.on.update(DashboardViewsTableName).responseOnce([]);
 
-        jest.spyOn(model, 'getById').mockImplementationOnce(() =>
+        jest.spyOn(model, 'getByIdOrSlug').mockImplementationOnce(() =>
             Promise.resolve(expectedDashboard),
         );
 
@@ -461,7 +583,7 @@ describe('DashboardModel', () => {
         tracker.on.insert(DashboardTileChartTableName).responseOnce([]);
         tracker.on.update(DashboardViewsTableName).responseOnce([]);
 
-        jest.spyOn(model, 'getById').mockImplementationOnce(() =>
+        jest.spyOn(model, 'getByIdOrSlug').mockImplementationOnce(() =>
             Promise.resolve(expectedDashboard),
         );
 
@@ -538,7 +660,7 @@ describe('DashboardModel', () => {
         tracker.on.insert(DashboardTileChartTableName).responseOnce([]);
         tracker.on.update(DashboardViewsTableName).responseOnce([]);
 
-        jest.spyOn(model, 'getById').mockImplementationOnce(() =>
+        jest.spyOn(model, 'getByIdOrSlug').mockImplementationOnce(() =>
             Promise.resolve(expectedDashboard),
         );
 

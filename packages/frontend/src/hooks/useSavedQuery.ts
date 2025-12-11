@@ -11,9 +11,9 @@ import {
 import { IconArrowRight } from '@tabler/icons-react';
 import {
     useMutation,
+    type UseMutationOptions,
     useQuery,
     useQueryClient,
-    type UseMutationOptions,
     type UseQueryOptions,
 } from '@tanstack/react-query';
 import { useNavigate, useParams } from 'react-router';
@@ -32,6 +32,7 @@ const createSavedQuery = async (
             ...payload.metricQuery,
             filters: convertDateFilters(payload.metricQuery.filters),
         },
+        parameters: payload.parameters,
     };
     return lightdashApi<SavedChart>({
         url: `/projects/${projectUuid}/saved`,
@@ -278,6 +279,7 @@ export const useUpdateMutation = (
 ) => {
     const navigate = useNavigate();
     const queryClient = useQueryClient();
+    const params = useParams();
     const { showToastSuccess, showToastApiError } = useToaster();
 
     return useMutation<
@@ -305,7 +307,23 @@ export const useUpdateMutation = (
                 await queryClient.invalidateQueries(['content']);
 
                 await queryClient.invalidateQueries(['spaces']);
+
                 queryClient.setQueryData(['saved_query', data.uuid], data);
+                queryClient.setQueryData(
+                    ['saved_query', params.savedQueryUuid],
+                    data,
+                );
+
+                if (dashboardUuid) {
+                    // Invalidate dashboard chart queries to refresh charts on dashboards
+                    await queryClient.resetQueries([
+                        'dashboard_chart_ready_query',
+                        data.projectUuid,
+                        data.uuid,
+                        dashboardUuid,
+                    ]);
+                }
+
                 showToastSuccess({
                     title: `Success! Chart was saved.`,
                     action: dashboardUuid
@@ -330,57 +348,10 @@ export const useUpdateMutation = (
     );
 };
 
-export const useMoveChartMutation = (
-    options?: UseMutationOptions<
-        SavedChart,
-        ApiError,
-        Pick<SavedChart, 'uuid' | 'spaceUuid'>
-    >,
-) => {
-    const navigate = useNavigate();
-    const queryClient = useQueryClient();
-    const { projectUuid } = useParams<{ projectUuid: string }>();
-    const { showToastSuccess, showToastApiError } = useToaster();
-
-    return useMutation<
-        SavedChart,
-        ApiError,
-        Pick<SavedChart, 'uuid' | 'spaceUuid'>
-    >(({ uuid, spaceUuid }) => updateSavedQuery(uuid, { spaceUuid }), {
-        mutationKey: ['saved_query_move'],
-        ...options,
-        onSuccess: async (data, _, __) => {
-            await queryClient.invalidateQueries(['spaces']);
-            await queryClient.invalidateQueries(['space', projectUuid]);
-            await queryClient.invalidateQueries([
-                'most-popular-and-recently-updated',
-            ]);
-            await queryClient.invalidateQueries(['content']);
-
-            queryClient.setQueryData(['saved_query', data.uuid], data);
-            showToastSuccess({
-                title: `Chart has been moved to ${data.spaceName}`,
-                action: {
-                    children: 'Go to space',
-                    icon: IconArrowRight,
-                    onClick: () =>
-                        navigate(
-                            `/projects/${projectUuid}/spaces/${data.spaceUuid}`,
-                        ),
-                },
-            });
-            options?.onSuccess?.(data, _, __);
-        },
-        onError: ({ error }) => {
-            showToastApiError({
-                title: `Failed to move chart`,
-                apiError: error,
-            });
-        },
-    });
-};
-
-export const useCreateMutation = () => {
+export const useCreateMutation = ({
+    redirectOnSuccess = true,
+    showToastOnSuccess = true,
+}: { redirectOnSuccess?: boolean; showToastOnSuccess?: boolean } = {}) => {
     const navigate = useNavigate();
     const { projectUuid } = useParams<{ projectUuid: string }>();
     const queryClient = useQueryClient();
@@ -393,16 +364,25 @@ export const useCreateMutation = () => {
         {
             mutationKey: ['saved_query_create', projectUuid],
             onSuccess: (data) => {
+                const navigateUrl = `/projects/${projectUuid}/saved/${data.uuid}/view`;
                 queryClient.setQueryData(['saved_query', data.uuid], data);
-                showToastSuccess({
-                    title: `Success! Chart was saved.`,
-                });
-                void navigate(
-                    `/projects/${projectUuid}/saved/${data.uuid}/view`,
-                    {
+                if (showToastOnSuccess) {
+                    showToastSuccess({
+                        title: `Success! Chart was saved.`,
+                        action: redirectOnSuccess
+                            ? undefined
+                            : {
+                                  children: 'View chart',
+                                  icon: IconArrowRight,
+                                  onClick: () => navigate(navigateUrl),
+                              },
+                    });
+                }
+                if (redirectOnSuccess) {
+                    void navigate(navigateUrl, {
                         replace: true,
-                    },
-                );
+                    });
+                }
             },
             onError: ({ error }) => {
                 showToastApiError({
@@ -505,6 +485,19 @@ export const useAddVersionMutation = () => {
 
             queryClient.setQueryData(['saved_query', data.uuid], data);
             await queryClient.resetQueries(['savedChartResults', data.uuid]);
+
+            if (dashboardUuid) {
+                // Invalidate dashboard chart queries to refresh charts on dashboards
+                await queryClient.resetQueries([
+                    'dashboard_chart_ready_query',
+                    data.projectUuid,
+                    data.uuid,
+                    dashboardUuid,
+                ]);
+                // Reset create-query cache to sync with Redux state reset
+                // This ensures auto-fetch triggers when returning to view mode
+                await queryClient.resetQueries(['create-query']);
+            }
 
             if (dashboardUuid)
                 showToastSuccess({

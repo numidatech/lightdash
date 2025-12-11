@@ -1,5 +1,6 @@
 import { subject } from '@casl/ability';
 import {
+    assertIsAccountWithOrg,
     ChartSummary,
     CreateSchedulerAndTargets,
     CreateSchedulerLog,
@@ -7,24 +8,33 @@ import {
     ForbiddenError,
     getTimezoneLabel,
     getTzMinutesOffset,
+    isChartCreateScheduler,
     isChartScheduler,
     isCreateSchedulerSlackTarget,
+    isDashboardCreateScheduler,
     isDashboardScheduler,
     isUserWithOrg,
     isValidFrequency,
     isValidTimezone,
+    KnexPaginateArgs,
+    KnexPaginatedData,
     NotExistsError,
+    NotFoundError,
     ParameterError,
     ScheduledJobs,
     Scheduler,
     SchedulerAndTargets,
     SchedulerCronUpdate,
     SchedulerFormat,
+    SchedulerJobStatus,
+    SchedulerRun,
+    SchedulerRunLogsResponse,
+    SchedulerRunStatus,
+    SchedulerWithLogs,
     SessionUser,
-    UnexpectedServerError,
     UpdateSchedulerAndTargetsWithoutId,
+    type Account,
 } from '@lightdash/common';
-import { arrayToString, stringToArray } from 'cron-converter';
 import cronstrue from 'cronstrue';
 import {
     LightdashAnalytics,
@@ -37,6 +47,8 @@ import {
     getSchedulerTargetType,
     SchedulerLogDb,
 } from '../../database/entities/scheduler';
+import { CaslAuditWrapper } from '../../logging/caslAuditWrapper';
+import { logAuditEvent } from '../../logging/winston';
 import { DashboardModel } from '../../models/DashboardModel/DashboardModel';
 import type { ProjectModel } from '../../models/ProjectModel/ProjectModel';
 import { SavedChartModel } from '../../models/SavedChartModel';
@@ -105,7 +117,19 @@ export class SchedulerService extends BaseService {
     ): Promise<ChartSummary | DashboardDAO> {
         return isChartScheduler(scheduler)
             ? this.savedChartModel.getSummary(scheduler.savedChartUuid)
-            : this.dashboardModel.getById(scheduler.dashboardUuid);
+            : this.dashboardModel.getByIdOrSlug(scheduler.dashboardUuid);
+    }
+
+    public async getCreateSchedulerResource(
+        scheduler: CreateSchedulerAndTargets,
+    ): Promise<ChartSummary | DashboardDAO> {
+        if (isChartCreateScheduler(scheduler)) {
+            return this.savedChartModel.getSummary(scheduler.savedChartUuid);
+        }
+        if (isDashboardCreateScheduler(scheduler)) {
+            return this.dashboardModel.getByIdOrSlug(scheduler.dashboardUuid);
+        }
+        throw new ParameterError('Invalid scheduler type');
     }
 
     private async checkUserCanUpdateSchedulerResource(
@@ -137,6 +161,22 @@ export class SchedulerService extends BaseService {
                 projectUuid,
             }),
         );
+
+        const canManageGoogleSheets = user.ability.can(
+            'manage',
+            subject('GoogleSheets', {
+                organizationUuid,
+                projectUuid,
+            }),
+        );
+
+        if (
+            !canManageGoogleSheets &&
+            scheduler.format === SchedulerFormat.GSHEETS
+        ) {
+            throw new ForbiddenError();
+        }
+
         const isDeliveryOwner = scheduler.createdBy === user.userUuid;
 
         if (canManageDeliveries || (canCreateDeliveries && isDeliveryOwner)) {
@@ -173,7 +213,9 @@ export class SchedulerService extends BaseService {
                 throw new ForbiddenError();
         } else if (scheduler.dashboardUuid) {
             const { organizationUuid, spaceUuid, projectUuid } =
-                await this.dashboardModel.getById(scheduler.dashboardUuid);
+                await this.dashboardModel.getByIdOrSlug(
+                    scheduler.dashboardUuid,
+                );
             const [space] = await this.spaceModel.find({ spaceUuid });
             const spaceAccess = await this.spaceModel.getUserSpaceAccess(
                 user.userUuid,
@@ -201,6 +243,83 @@ export class SchedulerService extends BaseService {
 
     async getAllSchedulers(): Promise<SchedulerAndTargets[]> {
         return this.schedulerModel.getAllSchedulers();
+    }
+
+    async getSchedulers(
+        user: SessionUser,
+        projectUuid: string,
+        paginateArgs?: KnexPaginateArgs,
+        searchQuery?: string,
+        sort?: { column: string; direction: 'asc' | 'desc' },
+        filters?: {
+            createdByUserUuids?: string[];
+            formats?: string[];
+            resourceType?: 'chart' | 'dashboard';
+            resourceUuids?: string[];
+            destinations?: string[];
+        },
+        includeLatestRun?: boolean,
+    ): Promise<KnexPaginatedData<SchedulerAndTargets[]>> {
+        if (!isUserWithOrg(user)) {
+            throw new ForbiddenError('User is not part of an organization');
+        }
+        const projectSummary = await this.projectModel.getSummary(projectUuid);
+        // Only allow editors to view all schedulers
+        if (
+            user.ability.cannot(
+                'update',
+                subject('Project', {
+                    organizationUuid: projectSummary.organizationUuid,
+                    projectUuid,
+                }),
+            )
+        ) {
+            throw new ForbiddenError();
+        }
+
+        const schedulers = await this.schedulerModel.getSchedulers({
+            projectUuid,
+            paginateArgs,
+            searchQuery,
+            sort,
+            filters,
+        });
+
+        if (!includeLatestRun) {
+            return schedulers;
+        }
+
+        const schedulerUuids = schedulers.data.map(
+            (scheduler) => scheduler.schedulerUuid,
+        );
+
+        if (schedulerUuids.length === 0) {
+            return schedulers;
+        }
+
+        const runs = await this.schedulerModel.getSchedulerRuns({
+            projectUuid,
+            sort: { column: 'scheduledTime', direction: 'desc' },
+            filters: {
+                schedulerUuids,
+            },
+        });
+
+        const latestRunByScheduler = new Map<string, SchedulerRun>();
+        runs.data.forEach((run) => {
+            if (!latestRunByScheduler.has(run.schedulerUuid)) {
+                latestRunByScheduler.set(run.schedulerUuid, run);
+            }
+        });
+
+        return {
+            ...schedulers,
+            data: schedulers.data.map((scheduler) => ({
+                ...scheduler,
+                latestRun:
+                    latestRunByScheduler.get(scheduler.schedulerUuid) ?? null,
+            })),
+        };
     }
 
     async getScheduler(
@@ -298,6 +417,11 @@ export class SchedulerService extends BaseService {
 
             await this.schedulerClient.generateDailyJobsForScheduler(
                 scheduler,
+                {
+                    organizationUuid,
+                    projectUuid,
+                    userUuid: user.userUuid,
+                },
                 defaultTimezone,
             );
         }
@@ -328,10 +452,17 @@ export class SchedulerService extends BaseService {
             const defaultTimezone = await this.getSchedulerDefaultTimezone(
                 schedulerUuid,
             );
+            const { organizationUuid, projectUuid } =
+                await this.getCreateSchedulerResource(scheduler);
 
             // If the scheduler is enabled, we need to generate the daily jobs
             await this.schedulerClient.generateDailyJobsForScheduler(
                 scheduler,
+                {
+                    organizationUuid,
+                    projectUuid,
+                    userUuid: scheduler.createdBy,
+                },
                 defaultTimezone,
             );
         }
@@ -385,7 +516,9 @@ export class SchedulerService extends BaseService {
         if (
             user.ability.cannot(
                 'view',
-                subject('CsvJobResult', {
+                subject('JobStatus', {
+                    projectUuid: job.details?.projectUuid,
+                    organizationUuid: job.details?.organizationUuid,
                     createdByUserUuid: job.details?.createdByUserUuid,
                 }),
             )
@@ -400,13 +533,24 @@ export class SchedulerService extends BaseService {
         return job;
     }
 
-    async getSchedulerLogs(user: SessionUser, projectUuid: string) {
+    async getSchedulerLogs(
+        user: SessionUser,
+        projectUuid: string,
+        paginateArgs?: KnexPaginateArgs,
+        searchQuery?: string,
+        filters?: {
+            statuses?: SchedulerJobStatus[];
+            createdByUserUuids?: string[];
+            destinations?: string[];
+        },
+    ): Promise<KnexPaginatedData<SchedulerWithLogs>> {
+        const projectSummary = await this.projectModel.getSummary(projectUuid);
         // Only allow editors to view scheduler logs
         if (
             user.ability.cannot(
                 'update',
                 subject('Project', {
-                    organizationUuid: user.organizationUuid,
+                    organizationUuid: projectSummary.organizationUuid,
                     projectUuid,
                 }),
             )
@@ -414,9 +558,12 @@ export class SchedulerService extends BaseService {
             throw new ForbiddenError();
         }
 
-        const schedulerLogs = await this.schedulerModel.getSchedulerLogs(
+        const schedulerLogs = await this.schedulerModel.getSchedulerLogs({
             projectUuid,
-        );
+            paginateArgs,
+            searchQuery,
+            filters,
+        });
 
         this.analytics.track({
             userId: user.userUuid,
@@ -424,18 +571,38 @@ export class SchedulerService extends BaseService {
             properties: {
                 projectId: projectUuid,
                 organizationId: user.organizationUuid,
-                numScheduledDeliveries: schedulerLogs.schedulers.length,
+                numScheduledDeliveries: schedulerLogs.data.schedulers.length,
             },
         });
         return schedulerLogs;
     }
 
     async getJobStatus(
+        account: Account,
         jobId: string,
     ): Promise<Pick<SchedulerLogDb, 'status' | 'details'>> {
+        assertIsAccountWithOrg(account);
         const job = await this.schedulerModel.getJobStatus(jobId);
-
+        if (
+            account.user.ability.cannot(
+                'view',
+                subject('JobStatus', {
+                    organizationUuid: job.details?.organizationUuid,
+                    projectUuid: job.details?.projectUuid,
+                    createdByUserUuid: job.details?.createdByUserUuid,
+                }),
+            )
+        ) {
+            throw new ForbiddenError();
+        }
         return { status: job.status, details: job.details };
+    }
+
+    async setJobStatus(
+        jobId: string,
+        status: SchedulerJobStatus,
+    ): Promise<void> {
+        await this.schedulerModel.setJobStatus(jobId, status);
     }
 
     async sendScheduler(
@@ -450,7 +617,10 @@ export class SchedulerService extends BaseService {
                 'You must give a name to this scheduled delivery',
             );
         }
-        if (scheduler.targets.length === 0) {
+        if (
+            scheduler.targets.length === 0 &&
+            scheduler.format !== SchedulerFormat.GSHEETS
+        ) {
             throw new ParameterError(
                 'You must specify at least 1 destination before sending a scheduled delivery',
             );
@@ -469,10 +639,41 @@ export class SchedulerService extends BaseService {
             slackChannels,
         );
 
+        const { organizationUuid, projectUuid } =
+            await this.getCreateSchedulerResource(scheduler);
+
         return this.schedulerClient.addScheduledDeliveryJob(
             new Date(),
-            scheduler,
+            {
+                ...scheduler,
+                organizationUuid,
+                projectUuid,
+                userUuid: user.userUuid,
+            },
             undefined,
+        );
+    }
+
+    async sendSchedulerByUuid(user: SessionUser, schedulerUuid: string) {
+        if (!isUserWithOrg(user)) {
+            throw new ForbiddenError('User is not part of an organization');
+        }
+
+        const {
+            scheduler,
+            resource: { organizationUuid, projectUuid },
+        } = await this.checkUserCanUpdateSchedulerResource(user, schedulerUuid);
+
+        return this.schedulerClient.addScheduledDeliveryJob(
+            new Date(),
+            {
+                ...scheduler,
+                organizationUuid,
+                projectUuid,
+                userUuid: user.userUuid,
+                schedulerUuid,
+            },
+            schedulerUuid,
         );
     }
 
@@ -529,5 +730,136 @@ export class SchedulerService extends BaseService {
         const schedulerUpdates = await Promise.all(schedulerUpdatePromises);
 
         await this.schedulerModel.bulkUpdateSchedulersCron(schedulerUpdates);
+    }
+
+    async getSchedulerRuns(
+        user: SessionUser,
+        projectUuid: string,
+        paginateArgs?: KnexPaginateArgs,
+        searchQuery?: string,
+        sort?: { column: string; direction: 'asc' | 'desc' },
+        filters?: {
+            schedulerUuids?: string[];
+            statuses?: SchedulerRunStatus[];
+            createdByUserUuids?: string[];
+            destinations?: string[];
+            resourceType?: 'chart' | 'dashboard';
+            resourceUuids?: string[];
+        },
+    ): Promise<KnexPaginatedData<SchedulerRun[]>> {
+        const projectSummary = await this.projectModel.getSummary(projectUuid);
+
+        const auditedAbility = new CaslAuditWrapper(user.ability, user, {
+            auditLogger: logAuditEvent,
+        });
+
+        // Only allow editors to view scheduler runs
+        if (
+            auditedAbility.cannot(
+                'update',
+                subject('Project', {
+                    organizationUuid: projectSummary.organizationUuid,
+                    projectUuid,
+                    uuid: projectUuid,
+                }),
+            )
+        ) {
+            throw new ForbiddenError();
+        }
+
+        const schedulerRuns = await this.schedulerModel.getSchedulerRuns({
+            projectUuid,
+            paginateArgs,
+            searchQuery,
+            sort,
+            filters,
+        });
+
+        this.analytics.track({
+            userId: user.userUuid,
+            event: 'scheduled_delivery_runs.viewed',
+            properties: {
+                projectId: projectUuid,
+                organizationId: user.organizationUuid,
+                numRuns: schedulerRuns.data.length,
+            },
+        });
+
+        return schedulerRuns;
+    }
+
+    async getRunLogs(
+        user: SessionUser,
+        runId: string,
+    ): Promise<SchedulerRunLogsResponse> {
+        // Fetch the run logs
+        const runLogs = await this.schedulerModel.getRunLogs(runId);
+
+        // Get project details for authorization check
+        const scheduler = await this.schedulerModel.getScheduler(
+            runLogs.schedulerUuid,
+        );
+
+        // Determine projectUuid based on resource type
+        let projectUuid: string;
+        if (scheduler.savedChartUuid) {
+            try {
+                const chart = await this.savedChartModel.get(
+                    scheduler.savedChartUuid,
+                );
+                projectUuid = chart.projectUuid;
+            } catch (error) {
+                throw new NotFoundError(
+                    'Chart referenced by scheduler no longer exists',
+                );
+            }
+        } else if (scheduler.dashboardUuid) {
+            try {
+                const dashboard = await this.dashboardModel.getByIdOrSlug(
+                    scheduler.dashboardUuid,
+                );
+                projectUuid = dashboard.projectUuid;
+            } catch (error) {
+                throw new NotFoundError(
+                    'Dashboard referenced by scheduler no longer exists',
+                );
+            }
+        } else {
+            throw new NotFoundError('Scheduler resource not found');
+        }
+
+        const projectSummary = await this.projectModel.getSummary(projectUuid);
+
+        const auditedAbility = new CaslAuditWrapper(user.ability, user, {
+            auditLogger: logAuditEvent,
+        });
+
+        // Only allow editors to view run logs
+        if (
+            auditedAbility.cannot(
+                'update',
+                subject('Project', {
+                    organizationUuid: projectSummary.organizationUuid,
+                    projectUuid,
+                    uuid: projectUuid,
+                }),
+            )
+        ) {
+            throw new ForbiddenError();
+        }
+
+        this.analytics.track({
+            userId: user.userUuid,
+            event: 'scheduled_delivery_run_logs.viewed',
+            properties: {
+                runId,
+                schedulerUuid: runLogs.schedulerUuid,
+                organizationId: user.organizationUuid,
+                projectId: projectUuid,
+                numLogs: runLogs.logs.length,
+            },
+        });
+
+        return runLogs;
     }
 }

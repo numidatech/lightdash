@@ -11,7 +11,7 @@ import {
     useMantineTheme,
 } from '@mantine/core';
 import { IconInfoCircle } from '@tabler/icons-react';
-import React, { useCallback, useMemo, useState, type FC } from 'react';
+import { useCallback, useMemo, useState, type FC } from 'react';
 import { useTableTabStyles } from '../../../hooks/styles/useTableTabStyles';
 import MantineIcon from '../MantineIcon';
 import ResourceActionHandlers from './ResourceActionHandlers';
@@ -140,7 +140,7 @@ const ResourceView: FC<ResourceViewProps> = ({
                                                                 icon={
                                                                     IconInfoCircle
                                                                 }
-                                                                color="gray.6"
+                                                                color="ldGray.9"
                                                             />
                                                         </Tooltip>
                                                     ) : null
@@ -148,7 +148,7 @@ const ResourceView: FC<ResourceViewProps> = ({
                                             >
                                                 {tab.name ? (
                                                     <Text
-                                                        color="gray.7"
+                                                        color="ldGray.9"
                                                         fz={15}
                                                         fw={500}
                                                     >
@@ -186,7 +186,7 @@ const ResourceView: FC<ResourceViewProps> = ({
                                             position="right"
                                         >
                                             <IconInfoCircle
-                                                color={theme.colors.gray[6]}
+                                                color={theme.colors.ldGray[6]}
                                                 size={18}
                                             />
                                         </Tooltip>
@@ -197,7 +197,7 @@ const ResourceView: FC<ResourceViewProps> = ({
                             ) : null}
                         </Group>
 
-                        <Divider color="gray.3" />
+                        <Divider color="ldGray.3" />
                     </>
                 ) : null}
 

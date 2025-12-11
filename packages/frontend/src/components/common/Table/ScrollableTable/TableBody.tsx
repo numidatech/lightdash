@@ -7,19 +7,31 @@ import {
     type ConditionalFormattingRowFields,
     type ResultRow,
 } from '@lightdash/common';
-import { Button, Group } from '@mantine/core';
+import {
+    Button,
+    Center,
+    Group,
+    Loader,
+    Skeleton,
+    Tooltip,
+    useMantineColorScheme,
+} from '@mantine/core';
 import { IconChevronDown, IconChevronRight } from '@tabler/icons-react';
 import { flexRender, type Row } from '@tanstack/react-table';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import React, { useMemo, type FC } from 'react';
-import { getColorFromRange, readableColor } from '../../../../utils/colorUtils';
-import { getConditionalRuleLabel } from '../../Filters/FilterInputs/utils';
+import React, { useEffect, useMemo, type FC } from 'react';
+import {
+    getColorFromRange,
+    readableColor,
+    transformColorsForDarkMode,
+} from '../../../../utils/colorUtils';
+import { getConditionalRuleLabelFromItem } from '../../Filters/FilterInputs/utils';
 import MantineIcon from '../../MantineIcon';
-import { ROW_HEIGHT_PX, Tr } from '../Table.styles';
+import { ROW_HEIGHT_PX, SMALL_TEXT_LENGTH } from '../constants';
+import { Tr } from '../Table.styles';
 import { type TableContext } from '../types';
 import { useTableContext } from '../useTableContext';
 import { countSubRows } from '../utils';
-import { SMALL_TEXT_LENGTH } from './../constants';
 import BodyCell from './BodyCell';
 
 export const VirtualizedArea: FC<{ cellCount: number; padding: number }> = ({
@@ -58,10 +70,11 @@ const TableRow: FC<TableRowProps> = ({
     minMaxMap,
     minimal = false,
 }) => {
+    const { colorScheme } = useMantineColorScheme();
     const rowFields = useMemo(
         () =>
             row
-                .getVisibleCells()
+                .getAllCells() // get all as they can be necessary for conditional formatting
                 .reduce<ConditionalFormattingRowFields>((acc, cell) => {
                     const meta = cell.column.columnDef.meta;
                     if (meta?.item) {
@@ -101,7 +114,17 @@ const TableRow: FC<TableRowProps> = ({
                         value: cellValue?.value?.raw,
                         minMaxMap,
                         config: conditionalFormattingConfig,
-                        getColorFromRange,
+                        getColorFromRange: (val, colorRange, minMaxRange) => {
+                            const effectiveColorRange =
+                                colorScheme === 'dark'
+                                    ? transformColorsForDarkMode(colorRange)
+                                    : colorRange;
+                            return getColorFromRange(
+                                val,
+                                effectiveColorRange,
+                                minMaxRange,
+                            );
+                        },
                     });
 
                 // Frozen/locked rows should have a white background, unless there is a conditional formatting color
@@ -116,15 +139,15 @@ const TableRow: FC<TableRowProps> = ({
                     field,
                     conditionalFormattingConfig,
                     rowFields,
-                    getConditionalRuleLabel,
+                    getConditionalRuleLabelFromItem,
                 );
 
                 const toggleExpander = row.getToggleExpandedHandler();
-                const fontColor =
-                    conditionalFormattingColor &&
-                    readableColor(conditionalFormattingColor) === 'white'
-                        ? 'white'
-                        : undefined;
+                // When conditional formatting is applied, always use calculated contrast color
+                // to ensure text remains readable regardless of light/dark mode
+                const fontColor = conditionalFormattingColor
+                    ? readableColor(conditionalFormattingColor)
+                    : undefined;
 
                 const suppressContextMenu =
                     cell.getIsPlaceholder() || cell.getIsAggregated();
@@ -212,43 +235,55 @@ const TableRow: FC<TableRowProps> = ({
         </Tr>
     );
 };
-/**
- * Get the maximum height of a row, by calculating the max height of each cell
- * This method will only take new lines (`\n`) into account, this will not work for long text that is broken down into multiple lines
- * By calculating the max row height, we can fix the flickering issue when scrolling and some rows are big
- * See issue: https://github.com/lightdash/lightdash/issues/13882
- * @param row - The row to calculate the height for
- * @returns The maximum height of the row
- */
-const getMaxRowHeight = (row: Row<ResultRow>) => {
-    return row.getVisibleCells().reduce((acc, cell) => {
-        const lines = (
-            cell.getValue() as ResultRow[0] | undefined
-        )?.value?.formatted?.split('\n');
-        if (!lines) return acc;
-        return Math.max(acc, lines?.length * ROW_HEIGHT_PX);
-    }, ROW_HEIGHT_PX);
-};
+
+const SCROLL_THRESHOLD = 100;
+
 const VirtualizedTableBody: FC<{
     tableContainerRef: React.RefObject<HTMLDivElement | null>;
-}> = ({ tableContainerRef }) => {
-    const { table, cellContextMenu, conditionalFormattings, minMaxMap } =
-        useTableContext();
+    minimal?: boolean;
+}> = ({ tableContainerRef, minimal }) => {
+    const {
+        table,
+        cellContextMenu,
+        conditionalFormattings,
+        minMaxMap,
+        isInfiniteScrollEnabled,
+        isFetchingRows,
+        fetchMoreRows,
+    } = useTableContext();
     const { rows } = table.getRowModel();
 
     const rowVirtualizer = useVirtualizer({
         getScrollElement: () => tableContainerRef.current,
         count: rows.length,
-        estimateSize: (index) => {
-            try {
-                return getMaxRowHeight(rows[index]);
-            } catch (e) {
-                console.error('Error getting row height', e);
-                return ROW_HEIGHT_PX;
-            }
-        },
+        estimateSize: (_index) => ROW_HEIGHT_PX,
         overscan: 25,
     });
+
+    useEffect(() => {
+        const scrollElement = rowVirtualizer.scrollElement;
+        // Trigger fetching when user is within SCROLL_THRESHOLD px of the bottom
+        // Scrolling math explanation:
+        // - rowVirtualizer.scrollOffset: Current scroll position from top (how far user has scrolled down)
+        // - scrollElement.clientHeight: Visible height of the scrollable container (viewport height)
+        // - scrollElement.scrollHeight: Total scrollable height (all content including non-visible)
+        // - We fetch more when: (scrollOffset + clientHeight) >= (scrollHeight - threshold)
+        //   This means: current position + visible area >= total height minus buffer zone
+        if (
+            isInfiniteScrollEnabled &&
+            scrollElement &&
+            rowVirtualizer.scrollOffset !== null &&
+            rowVirtualizer.scrollOffset + scrollElement.clientHeight >=
+                scrollElement.scrollHeight - SCROLL_THRESHOLD
+        ) {
+            fetchMoreRows();
+        }
+    }, [
+        rowVirtualizer.scrollOffset,
+        fetchMoreRows,
+        isInfiniteScrollEnabled,
+        rowVirtualizer.scrollElement,
+    ]);
 
     const virtualRows = rowVirtualizer.getVirtualItems();
     const paddingTop =
@@ -260,23 +295,78 @@ const VirtualizedTableBody: FC<{
             : 0;
     const cellsCount = rows[0]?.getVisibleCells().length || 0;
 
+    const skeletonRows = useMemo(() => {
+        const tableColumnsCount = table.getAllColumns().length;
+        const pageSize = table.getState().pagination.pageSize;
+
+        return Array.from({ length: pageSize }).map((_, index) => {
+            return (
+                <tr key={index}>
+                    {Array.from({ length: tableColumnsCount }).map(
+                        (__, colIdx) => (
+                            <td key={colIdx} style={{ padding: 8.5 }}>
+                                <Skeleton
+                                    w="100%"
+                                    // Removing 17px to account for the padding of the table defined in Table.styles.ts
+                                    h={`calc(${ROW_HEIGHT_PX}px - 17px)`}
+                                />
+                            </td>
+                        ),
+                    )}
+                </tr>
+            );
+        });
+    }, [table]);
+
     return (
         <tbody>
             {paddingTop > 0 && (
                 <VirtualizedArea cellCount={cellsCount} padding={paddingTop} />
             )}
-            {virtualRows.map(({ index }) => {
-                return (
-                    <TableRow
-                        key={index}
-                        index={index}
-                        row={rows[index]}
-                        cellContextMenu={cellContextMenu}
-                        conditionalFormattings={conditionalFormattings}
-                        minMaxMap={minMaxMap}
-                    />
-                );
-            })}
+
+            {virtualRows.length === 0 && isFetchingRows
+                ? skeletonRows
+                : virtualRows.map(({ index }) => {
+                      // If this is the last row and we're loading, show the loader
+                      if (
+                          isFetchingRows &&
+                          index + 1 === rows.length &&
+                          isInfiniteScrollEnabled
+                      ) {
+                          return (
+                              <tr key={index}>
+                                  <td
+                                      colSpan={
+                                          table.getVisibleFlatColumns().length
+                                      }
+                                  >
+                                      <Center>
+                                          <Tooltip
+                                              withinPortal
+                                              position="top"
+                                              label={`Loading more rows...`}
+                                          >
+                                              <Loader size="xs" color="gray" />
+                                          </Tooltip>
+                                      </Center>
+                                  </td>
+                              </tr>
+                          );
+                      }
+
+                      return (
+                          <TableRow
+                              minimal={minimal}
+                              key={index}
+                              index={index}
+                              row={rows[index]}
+                              cellContextMenu={cellContextMenu}
+                              conditionalFormattings={conditionalFormattings}
+                              minMaxMap={minMaxMap}
+                          />
+                      );
+                  })}
+
             {paddingBottom > 0 && (
                 <VirtualizedArea
                     cellCount={cellsCount}
@@ -287,39 +377,18 @@ const VirtualizedTableBody: FC<{
     );
 };
 
-const NormalTableBody: FC = () => {
-    const { table, cellContextMenu, conditionalFormattings, minMaxMap } =
-        useTableContext();
-    const { rows } = table.getRowModel();
-
-    return (
-        <tbody>
-            {rows.map((row, index) => (
-                <TableRow
-                    key={index}
-                    minimal
-                    index={index}
-                    row={row}
-                    cellContextMenu={cellContextMenu}
-                    conditionalFormattings={conditionalFormattings}
-                    minMaxMap={minMaxMap}
-                />
-            ))}
-        </tbody>
-    );
-};
-
 interface TableBodyProps {
     minimal?: boolean;
     tableContainerRef: React.RefObject<HTMLDivElement | null>;
 }
 
 const TableBody: FC<TableBodyProps> = ({ minimal, tableContainerRef }) => {
-    if (minimal) {
-        return <NormalTableBody />;
-    } else {
-        return <VirtualizedTableBody tableContainerRef={tableContainerRef} />;
-    }
+    return (
+        <VirtualizedTableBody
+            tableContainerRef={tableContainerRef}
+            minimal={minimal}
+        />
+    );
 };
 
 export default TableBody;

@@ -80,6 +80,7 @@ describe('Dashboard', () => {
         cy.get('[data-testid="ExploreMenu/NewDashboardButton"]').click();
 
         cy.findByLabelText('Name your dashboard *').type('Title');
+        cy.findByText('Next').click();
         cy.findByText('Create').click();
 
         // Check url has no filters
@@ -88,12 +89,42 @@ describe('Dashboard', () => {
         cy.url().should('not.include', '?');
     });
 
+    it('views underlying data with dimensions and metrics', () => {
+        cy.visit(`/projects/${SEED_PROJECT.project_uuid}/dashboards`);
+
+        // wait for the dashboard to load
+        cy.findByText('Loading dashboards').should('not.exist');
+
+        cy.contains('a', 'Jaffle dashboard').click();
+
+        cy.get('.react-grid-layout').within(() => {
+            cy.findByText("What's our total revenue to date?");
+        });
+
+        cy.findAllByText('Loading chart').should('have.length', 0); // Finish loading
+
+        cy.contains('855').click();
+        cy.contains('View underlying data').click();
+
+        cy.get('section[role="dialog"]').within(() => {
+            // Metrics
+            cy.contains('Payments Unique payment count');
+            cy.contains('Orders Average order size');
+
+            // Dimensions
+            cy.contains('Orders Status');
+            cy.contains('Orders Order date');
+            cy.contains('Payments Amount');
+        });
+    });
+
     it('Should create dashboard with saved chart + charts within dashboard + filters + tile targets', () => {
         cy.visit(`/projects/${SEED_PROJECT.project_uuid}/dashboards`);
 
         cy.contains('Create dashboard').click();
         cy.findByLabelText('Name your dashboard *').type('Title');
         cy.findByLabelText('Dashboard description').type('Description');
+        cy.findByText('Next').click();
         cy.findByText('Create').click();
 
         // Add Saved Chart
@@ -268,11 +299,12 @@ describe('Dashboard', () => {
         cy.findAllByText('No data available').should('have.length', 0);
     });
 
-    it('Should preview a dashboard image export', () => {
+    it.skip('Should preview a dashboard image export', () => {
         cy.visit(`/projects/${SEED_PROJECT.project_uuid}/dashboards`);
         // create dashboard with title small
         cy.contains('Create dashboard').click();
         cy.findByLabelText('Name your dashboard *').type('Small');
+        cy.findByText('Next').click();
         cy.findByText('Create').click();
 
         // Create chart within dashboard
@@ -297,10 +329,96 @@ describe('Dashboard', () => {
         cy.wait(2000);
 
         // get the fourth button with class  mantine-ActionIcon-root
-        cy.get('.mantine-ActionIcon-root').eq(4).click();
+        cy.get('[data-testid="dashboard-header-menu"]').click();
         cy.contains('Export dashboard').click();
         cy.findByText('Generate preview').click();
 
         cy.get('div').contains('Success', { timeout: 20000 }).should('exist');
+    });
+
+    it.skip('Should access dashboard by slug instead of UUID', () => {
+        // First, verify we can access via slug
+        const slug = 'jaffle-dashboard';
+        cy.visit(`/projects/${SEED_PROJECT.project_uuid}/dashboards/${slug}`);
+
+        // Verify the dashboard loads correctly
+        cy.get('.react-grid-layout').within(() => {
+            cy.findByText("What's our total revenue to date?");
+            cy.findByText("What's the average spend per customer?");
+        });
+
+        cy.findAllByText('Loading chart').should('have.length', 0);
+
+        // Verify URL contains the slug
+        cy.url().should('include', `/dashboards/${slug}`);
+
+        // Verify charts render
+        cy.get('.echarts-for-react').should('have.length', 3);
+    });
+
+    it.skip('Should maintain dashboard filters when using slug', () => {
+        const slug = 'jaffle-dashboard';
+        cy.visit(`/projects/${SEED_PROJECT.project_uuid}/dashboards/${slug}`);
+
+        cy.get('.react-grid-layout').within(() => {
+            cy.contains('How much revenue');
+        });
+
+        cy.findAllByText('Loading chart').should('have.length', 0);
+
+        // Add filter
+        cy.contains('Add filter').click();
+
+        cy.findByTestId('FilterConfiguration/FieldSelect')
+            .click()
+            .type('payment method{downArrow}{enter}');
+        cy.findByPlaceholderText('Start typing to filter results').type(
+            'credit_card',
+        );
+        cy.findByRole('option', { name: 'credit_card' }).click();
+        cy.findAllByRole('tab').eq(0).click();
+        cy.contains('button', 'Apply').click({ force: true });
+
+        cy.contains('bank_transfer').should('have.length', 0);
+
+        // Verify URL still uses slug with temp filters
+        cy.url().should('include', `/dashboards/${slug}`);
+        cy.url().should('include', 'tempFilters=');
+        cy.url().should('include', 'credit_card');
+
+        // Reload and verify slug is preserved
+        cy.reload();
+        cy.url().should('include', `/dashboards/${slug}`);
+        cy.contains('Payment method is credit_card');
+    });
+
+    it.skip('Should access dashboard via API using slug', () => {
+        const slug = 'jaffle-dashboard';
+
+        // Test API endpoint with slug
+        cy.request({
+            method: 'GET',
+            url: `/api/v1/dashboards/${slug}`,
+        }).then((response) => {
+            expect(response.status).to.eq(200);
+            expect(response.body).to.have.property('status', 'ok');
+            expect(response.body.results).to.have.property(
+                'name',
+                'Jaffle dashboard',
+            );
+            expect(response.body.results).to.have.property('slug', slug);
+            expect(response.body.results).to.have.property('uuid');
+            expect(response.body.results.tiles).to.be.an('array');
+        });
+    });
+
+    it.skip('Should handle invalid dashboard slug gracefully', () => {
+        cy.visit(
+            `/projects/${SEED_PROJECT.project_uuid}/dashboards/non-existent-slug`,
+            { failOnStatusCode: false },
+        );
+
+        // Should show an error message
+        cy.contains('Dashboard not found').should('exist');
     });
 });

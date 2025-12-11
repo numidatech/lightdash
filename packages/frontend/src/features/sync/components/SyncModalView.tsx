@@ -22,6 +22,7 @@ import {
     IconDots,
     IconInfoCircle,
     IconPencil,
+    IconRefresh,
     IconTrash,
 } from '@tabler/icons-react';
 import { useState, type FC } from 'react';
@@ -29,6 +30,9 @@ import MantineIcon from '../../../components/common/MantineIcon';
 import { useChartSchedulers } from '../../../features/scheduler/hooks/useChartSchedulers';
 import { useActiveProjectUuid } from '../../../hooks/useActiveProject';
 import { useProject } from '../../../hooks/useProject';
+import useTracking from '../../../providers/Tracking/useTracking';
+import { EventName } from '../../../types/Events';
+import { useSendNowScheduler } from '../../scheduler/hooks/useScheduler';
 import { useSchedulersEnabledUpdateMutation } from '../../scheduler/hooks/useSchedulersUpdateMutation';
 import { SyncModalAction } from '../providers/types';
 import { useSyncModal } from '../providers/useSyncModal';
@@ -74,6 +78,10 @@ export const SyncModalView: FC<{ chartUuid: string }> = ({ chartUuid }) => {
     const { activeProjectUuid } = useActiveProjectUuid();
     const { data: project } = useProject(activeProjectUuid);
 
+    const { mutate: mutateSendNow, isLoading: isSendingNowLoading } =
+        useSendNowScheduler();
+    const { track } = useTracking();
+
     if (!project) return null;
 
     return (
@@ -101,7 +109,11 @@ export const SyncModalView: FC<{ chartUuid: string }> = ({ chartUuid }) => {
                                             align="center"
                                             justify="space-between"
                                         >
-                                            <Text span size="xs" color="gray.6">
+                                            <Text
+                                                span
+                                                size="xs"
+                                                color="ldGray.6"
+                                            >
                                                 {getHumanReadableCronExpression(
                                                     sync.cron,
                                                     sync.timezone ||
@@ -111,6 +123,25 @@ export const SyncModalView: FC<{ chartUuid: string }> = ({ chartUuid }) => {
                                         </Flex>
                                     </Stack>
                                     <Group mr="lg">
+                                        <Tooltip withinPortal label="Sync now">
+                                            <ActionIcon
+                                                color="ldGray.7"
+                                                p="xs"
+                                                size="lg"
+                                                disabled={isSendingNowLoading}
+                                                onClick={() => {
+                                                    track({
+                                                        name: EventName.SCHEDULER_SEND_NOW_BUTTON,
+                                                    });
+                                                    mutateSendNow(sync);
+                                                }}
+                                            >
+                                                <MantineIcon
+                                                    icon={IconRefresh}
+                                                />
+                                            </ActionIcon>
+                                        </Tooltip>
+
                                         <ToggleSyncEnabled scheduler={sync} />
                                     </Group>
                                 </Flex>
@@ -137,6 +168,7 @@ export const SyncModalView: FC<{ chartUuid: string }> = ({ chartUuid }) => {
 
                                     <Menu.Dropdown>
                                         <Menu.Item
+                                            disabled={isSendingNowLoading}
                                             icon={
                                                 <MantineIcon
                                                     icon={IconPencil}
@@ -182,10 +214,10 @@ export const SyncModalView: FC<{ chartUuid: string }> = ({ chartUuid }) => {
                         my="sm"
                         pt="md"
                     >
-                        <Text fz="sm" fw={450} c="gray.7">
+                        <Text fz="sm" fw={450} c="ldGray.7">
                             This chart has no Syncs set up yet
                         </Text>
-                        <Text fz="xs" fw={400} c="gray.6">
+                        <Text fz="xs" fw={400} c="ldGray.6">
                             Get started by clicking 'Create new Sync' to
                             seamlessly integrate your chart data with Google
                             Sheets
@@ -196,8 +228,8 @@ export const SyncModalView: FC<{ chartUuid: string }> = ({ chartUuid }) => {
             <Flex
                 sx={(theme) => ({
                     position: 'sticky',
-                    backgroundColor: 'white',
-                    borderTop: `1px solid ${theme.colors.gray[4]}`,
+                    backgroundColor: theme.colors.background[0],
+                    borderTop: `1px solid ${theme.colors.ldGray[4]}`,
                     bottom: 0,
                     zIndex: 2,
                     margin: -16, // TODO: is there a way to negate theme values?

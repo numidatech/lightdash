@@ -26,6 +26,7 @@ const useToaster = () => {
             action,
             color: toastColor,
             autoClose = 5000,
+            // isError = false,
             ...rest
         }: NotificationData) => {
             const commonProps = {
@@ -96,6 +97,29 @@ const useToaster = () => {
                                     }}
                                 />
                             )}
+                            {/*isError && (
+                                <Button
+                                    size="xs"
+                                    variant="light"
+                                    color={toastColor}
+                                    leftIcon={<IconSos />}
+                                    style={{
+                                        alignSelf: 'flex-end',
+                                    }}
+                                    onClick={() => {
+                                        modals.open({
+                                            id: 'support-drawer',
+                                            title: 'Share with Lightdash Support',
+                                            size: 'lg',
+                                            children: <SupportDrawerContent />,
+                                            yOffset: 100,
+                                            zIndex: 1000,
+                                        });
+                                    }}
+                                >
+                                    Share with Lightdash
+                                </Button>
+                            )*/}
                         </Stack>
                     ) : undefined,
                 onClose: (props: NotificationProps) => {
@@ -141,6 +165,7 @@ const useToaster = () => {
                 bg: 'red',
                 icon: <MantineIcon icon={IconAlertTriangleFilled} size="xl" />,
                 autoClose: 60000,
+                isError: true,
                 ...props,
             });
         },
@@ -154,8 +179,11 @@ const useToaster = () => {
             },
         ) => {
             const title: ReactNode | undefined = props.title ?? 'Error';
-            const subtitle: ReactNode = (
+
+            const subtitle: ReactNode = props.apiError ? (
                 <ApiErrorDisplay apiError={props.apiError} />
+            ) : (
+                ''
             );
 
             showToast({
@@ -248,6 +276,7 @@ const useToaster = () => {
             ) : currentErrors.current[key][0].apiError ? (
                 <ApiErrorDisplay
                     apiError={currentErrors.current[key][0].apiError}
+                    onClose={() => notifications.hide(key)}
                 />
             ) : (
                 currentErrors.current[key][0].subtitle ||

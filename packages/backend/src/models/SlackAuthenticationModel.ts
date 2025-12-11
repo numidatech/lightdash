@@ -6,7 +6,7 @@ import {
 } from '@lightdash/common';
 import { Installation, InstallationQuery } from '@slack/bolt';
 import { Knex } from 'knex';
-import { DbOrganization } from '../database/entities/organizations';
+import isNil from 'lodash/isNil';
 import {
     DbSlackAuthTokens,
     SlackAuthTokensTableName,
@@ -24,7 +24,9 @@ const getTeamId = (payload: Installation) => {
     if (payload.team !== undefined) {
         return payload.team.id;
     }
-    throw new Error('Could not find a valid team id in the payload request');
+    throw new NotFoundError(
+        'Could not find a valid team id in the payload request',
+    );
 };
 export class SlackAuthenticationModel {
     protected database: Knex;
@@ -35,14 +37,14 @@ export class SlackAuthenticationModel {
 
     async getOrganizationId(organizationUuid: string | undefined) {
         if (organizationUuid === undefined)
-            throw new Error(
+            throw new NotFoundError(
                 `Could not find organization with uuid ${organizationUuid}`,
             );
         const [row] = await this.database('organizations')
             .select<DbSlackAuthTokens[]>('organization_id')
             .where('organization_uuid', organizationUuid);
         if (row === undefined) {
-            throw new Error(
+            throw new NotFoundError(
                 `Could not find organization with uuid ${organizationUuid}`,
             );
         }
@@ -87,7 +89,7 @@ export class SlackAuthenticationModel {
             .select<DbSlackAuthTokens[]>('*')
             .where('slack_team_id', teamId);
         if (row === undefined) {
-            throw new Error(`Could not find slack user id ${teamId}`);
+            throw new NotFoundError(`Could not find slack user id ${teamId}`);
         }
         return row.installation.user.id;
     }
@@ -101,15 +103,15 @@ export class SlackAuthenticationModel {
             )
             .select<(DbSlackAuthTokens & DbUser)[]>('*')
             .where('slack_team_id', teamId);
-        if (row === undefined) {
-            throw new Error(`Could not find user uuid id ${teamId}`);
+        if (isNil(row?.user_uuid)) {
+            throw new NotFoundError(`Could not find user uuid id ${teamId}`);
         }
         return row.user_uuid;
     }
 
     async getInstallationFromOrganizationUuid(
         organizationUuid: string,
-    ): Promise<SlackSettings | undefined> {
+    ): Promise<Omit<SlackSettings, 'hasRequiredScopes'> | undefined> {
         const [row] = await this.database(SlackAuthTokensTableName)
             .leftJoin(
                 'organizations',
@@ -130,6 +132,21 @@ export class SlackAuthenticationModel {
             notificationChannel: row.notification_channel ?? undefined,
             appProfilePhotoUrl: row.app_profile_photo_url ?? undefined,
         };
+    }
+
+    async getRawInstallationFromOrganizationUuid(
+        organizationUuid: string,
+    ): Promise<Installation<'v1' | 'v2', boolean> | undefined> {
+        const [row] = await this.database(SlackAuthTokensTableName)
+            .leftJoin(
+                'organizations',
+                'slack_auth_tokens.organization_id',
+                'organizations.organization_id',
+            )
+            .select('*')
+            .where('organization_uuid', organizationUuid);
+
+        return row?.installation;
     }
 
     async deleteInstallation(installQuery: AnyType) {

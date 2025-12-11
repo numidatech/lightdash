@@ -2,10 +2,10 @@ import {
     FunnelChartDataInput,
     FunnelChartLabelPosition,
     FunnelChartLegendPosition,
+    getItemLabelWithoutTableName,
     isField,
     isMetric,
     isTableCalculation,
-    type ApiQueryResults,
     type FunnelChart,
     type ItemsMap,
     type Metric,
@@ -15,6 +15,7 @@ import {
 import { useDebouncedValue } from '@mantine/hooks';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { type FunnelSeriesDataPoint } from './echarts/useEchartsFunnelConfig';
+import { type InfiniteQueryResults } from './useQueryResults';
 
 type FunnelChartConfig = {
     validConfig: FunnelChart;
@@ -47,7 +48,7 @@ type FunnelChartConfig = {
 };
 
 export type FunnelChartConfigFn = (
-    resultsData: ApiQueryResults | undefined,
+    resultsData: InfiniteQueryResults | undefined,
     funnelChartConfig: FunnelChart | undefined,
     itemsMap: ItemsMap | undefined,
     numericFields: Record<string, Metric | TableCalculation>,
@@ -97,7 +98,7 @@ const useFunnelChartConfig: FunnelChartConfigFn = (
     );
 
     const allNumericFieldIds = useMemo(
-        () => Object.keys(numericFields),
+        () => (numericFields ? Object.keys(numericFields) : []),
         [numericFields],
     );
 
@@ -176,7 +177,9 @@ const useFunnelChartConfig: FunnelChartConfigFn = (
                     if (dataValue > dataMaxValue) {
                         dataMaxValue = dataValue;
                     }
+                    const rowId = rowValues[0].formatted;
                     return {
+                        id: rowId,
                         name: rowValues[0].formatted,
                         value: dataValue,
                         meta: {
@@ -198,8 +201,13 @@ const useFunnelChartConfig: FunnelChartConfigFn = (
                             if (dataValue > dataMaxValue) {
                                 dataMaxValue = dataValue;
                             }
+                            const item = itemsMap?.[id];
+                            const fieldName = item
+                                ? getItemLabelWithoutTableName(item)
+                                : id;
                             acc.push({
-                                name: id,
+                                id,
+                                name: fieldName,
                                 value: dataValue,
                                 meta: {
                                     value: resultsData.rows[0][id].value,
@@ -214,12 +222,19 @@ const useFunnelChartConfig: FunnelChartConfigFn = (
                 maxValue: dataMaxValue,
             };
         }
-    }, [allNumericFieldIds, dataInput, fieldId, resultsData, selectedField]);
+    }, [
+        allNumericFieldIds,
+        dataInput,
+        fieldId,
+        resultsData,
+        selectedField,
+        itemsMap,
+    ]);
 
     const colorDefaults = useMemo(() => {
         return Object.fromEntries(
             data.map((item, index) => {
-                return [item.name, colorPalette[index % colorPalette.length]];
+                return [item.id, colorPalette[index % colorPalette.length]];
             }),
         );
     }, [data, colorPalette]);

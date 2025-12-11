@@ -32,7 +32,6 @@ export const PieChartConfiguration = ({
         (state) => state.pieChartConfig.fieldConfig?.y[0],
     );
 
-    // NOTE that this form is only used on semantic viewer, so uses customMetricFieldOptions
     const aggregateFieldOptions = useVizSelector(
         (state) => state.pieChartConfig.options.customMetricFieldOptions,
     );
@@ -47,7 +46,7 @@ export const PieChartConfiguration = ({
 
     return (
         <Stack spacing="sm" mb="lg">
-            <Title order={5} fz="sm" c="gray.9">
+            <Title order={5} fz="sm" c="ldGray.9">
                 Data
             </Title>
 

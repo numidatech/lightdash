@@ -1,6 +1,6 @@
 import { Button, Menu, Text, Tooltip } from '@mantine/core';
 import { useInterval } from '@mantine/hooks';
-import { IconChevronDown, IconRefresh } from '@tabler/icons-react';
+import { IconCheck, IconChevronDown, IconRefresh } from '@tabler/icons-react';
 import {
     memo,
     useCallback,
@@ -56,8 +56,12 @@ export const DashboardRefreshButton: FC<DashboardRefreshButtonProps> = memo(
             [refreshInterval],
         );
 
-        const { isFetching, invalidateDashboardRelatedQueries } =
-            useDashboardRefresh();
+        const {
+            isFetching,
+            invalidateDashboardRelatedQueries,
+            invalidateDashboardResultsQueries,
+        } = useDashboardRefresh();
+
         const clearCacheAndFetch = useDashboardContext(
             (c) => c.clearCacheAndFetch,
         );
@@ -68,8 +72,14 @@ export const DashboardRefreshButton: FC<DashboardRefreshButtonProps> = memo(
         const invalidateAndSetRefreshTime = useCallback(async () => {
             clearCacheAndFetch();
             await invalidateDashboardRelatedQueries();
+            await invalidateDashboardResultsQueries();
+
             setLastRefreshTime(new Date());
-        }, [clearCacheAndFetch, invalidateDashboardRelatedQueries]);
+        }, [
+            clearCacheAndFetch,
+            invalidateDashboardRelatedQueries,
+            invalidateDashboardResultsQueries,
+        ]);
 
         const interval = useInterval(
             () => invalidateAndSetRefreshTime(),
@@ -95,6 +105,7 @@ export const DashboardRefreshButton: FC<DashboardRefreshButtonProps> = memo(
                 <Tooltip
                     withinPortal
                     position="bottom"
+                    disabled={isOpen}
                     label={
                         <Text>
                             Last refreshed at:{' '}
@@ -120,7 +131,7 @@ export const DashboardRefreshButton: FC<DashboardRefreshButtonProps> = memo(
                                 c={
                                     isOneAtLeastFetching
                                         ? 'transparent'
-                                        : 'gray.7'
+                                        : 'foreground'
                                 }
                             >
                                 Every{' '}
@@ -135,7 +146,9 @@ export const DashboardRefreshButton: FC<DashboardRefreshButtonProps> = memo(
                         <MantineIcon
                             icon={IconRefresh}
                             color={
-                                isOneAtLeastFetching ? 'transparent' : 'black'
+                                isOneAtLeastFetching
+                                    ? 'transparent'
+                                    : 'foreground'
                             }
                         />
                     </Button>
@@ -154,15 +167,18 @@ export const DashboardRefreshButton: FC<DashboardRefreshButtonProps> = memo(
                             variant="default"
                             h={28}
                             w="md"
-                            disabled={isOneAtLeastFetching}
+                            loading={isOneAtLeastFetching}
                             p={0}
+                            styles={{
+                                leftIcon: { display: 'none' },
+                            }}
                             onClick={() => setIsOpen((prev) => !prev)}
                         >
                             <MantineIcon size="sm" icon={IconChevronDown} />
                         </Button>
                     </Menu.Target>
                     <Menu.Dropdown>
-                        <Menu.Label>Auto-refresh</Menu.Label>
+                        <Menu.Label>Auto-refresh while viewing</Menu.Label>
                         <Menu.Item
                             fz="xs"
                             onClick={() => {
@@ -170,17 +186,11 @@ export const DashboardRefreshButton: FC<DashboardRefreshButtonProps> = memo(
                                 setIsAutoRefresh(false);
                             }}
                             disabled={refreshInterval === undefined}
-                            bg={
-                                refreshInterval === undefined ? 'blue' : 'white'
+                            rightSection={
+                                refreshInterval === undefined ? (
+                                    <MantineIcon icon={IconCheck} size="sm" />
+                                ) : null
                             }
-                            sx={{
-                                '&[disabled]': {
-                                    color:
-                                        refreshInterval === undefined
-                                            ? 'white'
-                                            : 'black',
-                                },
-                            }}
                         >
                             Off
                         </Menu.Item>
@@ -202,20 +212,15 @@ export const DashboardRefreshButton: FC<DashboardRefreshButtonProps> = memo(
                                         }`,
                                     });
                                 }}
-                                bg={
-                                    refreshInterval === +value
-                                        ? 'blue'
-                                        : 'white'
-                                }
                                 disabled={refreshInterval === +value}
-                                sx={{
-                                    '&[disabled]': {
-                                        color:
-                                            refreshInterval === +value
-                                                ? 'white'
-                                                : 'black',
-                                    },
-                                }}
+                                rightSection={
+                                    refreshInterval === +value ? (
+                                        <MantineIcon
+                                            icon={IconCheck}
+                                            size="sm"
+                                        />
+                                    ) : null
+                                }
                             >
                                 {label}
                             </Menu.Item>

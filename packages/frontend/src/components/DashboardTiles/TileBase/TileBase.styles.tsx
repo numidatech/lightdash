@@ -1,5 +1,4 @@
 import styled, { css } from 'styled-components';
-import { TILE_HEADER_HEIGHT, TILE_HEADER_MARGIN_BOTTOM } from './constants';
 
 interface HeaderContainerProps {
     $isEditMode: boolean;
@@ -10,11 +9,10 @@ interface HeaderContainerProps {
 export const HeaderContainer = styled.div<HeaderContainerProps>`
     display: flex;
     flex-direction: row;
-    justify-content: space-between;
+    justify-content: flex-start;
     align-items: center;
     gap: 8px;
-    height: ${TILE_HEADER_HEIGHT}px;
-    margin-bottom: ${TILE_HEADER_MARGIN_BOTTOM}px;
+    margin-bottom: 12px;
 
     ${(props) =>
         props.$isEditMode
@@ -41,8 +39,6 @@ interface TileTitleProps {
     $hovered?: boolean;
 }
 
-// FIXME: colors in this file are hardcoded to mantine values.
-// #FFF is white, #212529 is gray.9
 export const TitleWrapper = styled.div<TileTitleProps>`
     flex-grow: 1;
     overflow: hidden;
@@ -59,8 +55,9 @@ export const TitleWrapper = styled.div<TileTitleProps>`
                       z-index: 10;
 
                       a {
-                          outline: 8px solid #fff;
-                          background-color: #fff;
+                          outline: 4px solid var(--mantine-color-background-0);
+                          background-color: var(--mantine-color-background-0);
+                          color: var(--mantine-color-foreground-0);
                       }
                   `
                 : ''}
@@ -70,11 +67,11 @@ export const TitleWrapper = styled.div<TileTitleProps>`
 export const TileTitleLink = styled.a<TileTitleProps>`
     font-weight: 600;
     font-size: 16px;
-    color: #212529;
+    color: var(--mantine-color-foreground-0);
     text-decoration: none;
 
     :hover {
-        color: #212529 !important;
+        color: var(--mantine-color-foreground-0) !important;
         text-decoration: underline;
         text-wrap: wrap;
     }
@@ -102,15 +99,30 @@ export const TileTitleLink = styled.a<TileTitleProps>`
         `}
 `;
 
-export const ButtonsWrapper = styled.div`
-    display: flex;
-    flex-direction: row;
-    justify-content: flex-end;
-    gap: 8px;
-`;
-
 export const ChartContainer = styled.div`
     flex: 1;
     overflow: hidden;
     display: flex;
+`;
+
+export const TileCardWrapper = styled.div`
+    height: 100%;
+
+    &:hover .drag-handle-icon {
+        opacity: 1;
+    }
+`;
+
+export const DragHandle = styled.div`
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    cursor: grab;
+    z-index: 10;
+    opacity: 0;
+    transition: opacity 0.2s ease;
+
+    &:active {
+        cursor: grabbing;
+    }
 `;

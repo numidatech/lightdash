@@ -1,4 +1,4 @@
-import { type MetricFilterRule } from './filter';
+import { type ModelRequiredFilterRule } from './filter';
 import type { DefaultTimeDimension } from './timeFrames';
 
 export enum OrderFieldsByStrategy {
@@ -16,15 +16,25 @@ export type TableBase = {
     label: string; // Friendly name
     originalName?: string; // Original name from dbt, without alias
     description?: string; // Optional description of table
+    /*
+        @deprecated
+
+        TODO: database and schema can be deleted
+     */
     database: string;
+    /*
+        @deprecated
+     */
     schema: string;
     sqlTable: string; // The sql identifier for the table
+    primaryKey?: string[];
     orderFieldsBy?: OrderFieldsByStrategy;
     groupLabel?: string;
     sqlWhere?: string;
-    requiredFilters?: MetricFilterRule[];
+    requiredFilters?: ModelRequiredFilterRule[];
     hidden?: boolean;
     requiredAttributes?: Record<string, string | string[]>;
     groupDetails?: Record<string, GroupType>;
     defaultTimeDimension?: DefaultTimeDimension;
+    aiHint?: string | string[];
 };

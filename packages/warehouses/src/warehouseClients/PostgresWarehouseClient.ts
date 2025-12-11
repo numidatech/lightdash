@@ -11,15 +11,19 @@ import {
     WarehouseCatalog,
     WarehouseQueryError,
     WarehouseResults,
+    WarehouseTypes,
 } from '@lightdash/common';
 import { readFileSync } from 'fs';
 import path from 'path';
 import * as pg from 'pg';
 import { PoolConfig, QueryResult, types } from 'pg';
 import { Writable } from 'stream';
+import * as tls from 'tls';
 import { rootCertificates } from 'tls';
+import { normalizeUnicode } from '../utils/sql';
 import QueryStream from './PgQueryStream';
 import WarehouseBaseClient from './WarehouseBaseClient';
+import WarehouseBaseSqlBuilder from './WarehouseBaseSqlBuilder';
 
 types.setTypeParser(types.builtins.NUMERIC, (value) => parseFloat(value));
 types.setTypeParser(types.builtins.INT8, BigInt);
@@ -134,13 +138,63 @@ const convertDataTypeIdToDimensionType = (
     }
 };
 
+export class PostgresSqlBuilder extends WarehouseBaseSqlBuilder {
+    type = WarehouseTypes.POSTGRES;
+
+    getAdapterType(): SupportedDbtAdapter {
+        return SupportedDbtAdapter.POSTGRES;
+    }
+
+    getEscapeStringQuoteChar(): string {
+        return "'";
+    }
+
+    escapeString(value: string): string {
+        if (typeof value !== 'string') {
+            return value;
+        }
+
+        return (
+            normalizeUnicode(value)
+                // Escape single quotes by doubling them (PostgreSQL standard)
+                .replaceAll("'", "''")
+                // PostgreSQL LIKE wildcards need to be escaped with backslashes
+                .replaceAll('\\', '\\\\') // Escape backslashes first
+                // Remove SQL comments (-- and /* */)
+                .replace(/--.*$/gm, '')
+                .replace(/\/\*[\s\S]*?\*\//g, '')
+                // Remove null bytes
+                .replaceAll('\0', '')
+        );
+    }
+
+    getMetricSql(sql: string, metric: Metric): string {
+        switch (metric.type) {
+            case MetricType.AVERAGE:
+                return `AVG(${sql}::DOUBLE PRECISION)`;
+            case MetricType.PERCENTILE:
+                return `PERCENTILE_CONT(${
+                    (metric.percentile ?? 50) / 100
+                }) WITHIN GROUP (ORDER BY ${sql})`;
+            case MetricType.MEDIAN:
+                return `PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY ${sql})`;
+            default:
+                return super.getMetricSql(sql, metric);
+        }
+    }
+
+    concatString(...args: string[]): string {
+        return `(${args.join(' || ')})`;
+    }
+}
+
 export class PostgresClient<
     T extends CreatePostgresLikeCredentials,
 > extends WarehouseBaseClient<T> {
     config: pg.PoolConfig;
 
     constructor(credentials: T, config: pg.PoolConfig) {
-        super(credentials);
+        super(credentials, new PostgresSqlBuilder(credentials.startOfWeek));
         this.config = config;
     }
 
@@ -176,6 +230,8 @@ export class PostgresClient<
         },
     ): Promise<void> {
         let pool: pg.Pool | undefined;
+        let closeClient: (() => void) | undefined;
+
         return new Promise<void>((resolve, reject) => {
             pool = new pg.Pool({
                 ...this.config,
@@ -199,15 +255,17 @@ export class PostgresClient<
                     reject(err);
                 });
             });
+
             pool.connect((err, client, done) => {
+                // Store references so we can clean up properly
+                closeClient = done;
+
                 if (err) {
                     reject(err);
-                    done();
                     return;
                 }
                 if (!client) {
                     reject(new Error('client undefined'));
-                    done();
                     return;
                 }
 
@@ -216,7 +274,6 @@ export class PostgresClient<
                         `Postgres client error ${getErrorMessage(e)}`,
                     );
                     reject(e);
-                    done();
                 });
 
                 const runQuery = () => {
@@ -235,41 +292,36 @@ export class PostgresClient<
                         // typecast is necessary to fix the type issue described above
                     ) as unknown as QueryStream;
 
+                    const writable = new Writable({
+                        objectMode: true,
+                        write(
+                            chunk: {
+                                row: AnyType;
+                                fields: QueryResult<AnyType>['fields'];
+                            },
+                            encoding,
+                            callback,
+                        ) {
+                            streamCallback({
+                                fields: PostgresClient.convertQueryResultFields(
+                                    chunk.fields,
+                                ),
+                                rows: [chunk.row],
+                            });
+                            callback();
+                        },
+                    });
+
                     // release the client when the stream is finished
                     stream.on('end', () => {
-                        done();
                         resolve();
                     });
                     stream.on('error', (err2) => {
                         reject(err2);
-                        done();
                     });
-                    stream
-                        .pipe(
-                            new Writable({
-                                objectMode: true,
-                                write(
-                                    chunk: {
-                                        row: AnyType;
-                                        fields: QueryResult<AnyType>['fields'];
-                                    },
-                                    encoding,
-                                    callback,
-                                ) {
-                                    streamCallback({
-                                        fields: PostgresClient.convertQueryResultFields(
-                                            chunk.fields,
-                                        ),
-                                        rows: [chunk.row],
-                                    });
-                                    callback();
-                                },
-                            }),
-                        )
-                        .on('error', (err2) => {
-                            reject(err2);
-                            done();
-                        });
+                    stream.pipe(writable).on('error', (err2) => {
+                        reject(err2);
+                    });
                 };
 
                 if (options?.timezone) {
@@ -291,10 +343,23 @@ export class PostgresClient<
                 const error = e as pg.DatabaseError;
                 throw this.parseError(error, sql);
             })
-            .finally(() => {
-                pool?.end().catch(() => {
-                    console.info('Failed to end postgres pool');
-                });
+            .finally(async () => {
+                // Release the client first, then end the pool
+                if (closeClient) {
+                    try {
+                        closeClient();
+                    } catch (releaseError) {
+                        console.warn('Error releasing client:', releaseError);
+                    }
+                }
+
+                if (pool) {
+                    try {
+                        await pool.end();
+                    } catch (poolError) {
+                        console.info('Failed to end postgres pool:', poolError);
+                    }
+                }
             });
     }
 
@@ -457,37 +522,6 @@ export class PostgresClient<
         return this.parseWarehouseCatalog(rows, mapFieldType);
     }
 
-    getStringQuoteChar() {
-        return "'";
-    }
-
-    getEscapeStringQuoteChar() {
-        return "'";
-    }
-
-    getAdapterType(): SupportedDbtAdapter {
-        return SupportedDbtAdapter.POSTGRES;
-    }
-
-    getMetricSql(sql: string, metric: Metric) {
-        switch (metric.type) {
-            case MetricType.AVERAGE:
-                return `AVG(${sql}::DOUBLE PRECISION)`;
-            case MetricType.PERCENTILE:
-                return `PERCENTILE_CONT(${
-                    (metric.percentile ?? 50) / 100
-                }) WITHIN GROUP (ORDER BY ${sql})`;
-            case MetricType.MEDIAN:
-                return `PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY ${sql})`;
-            default:
-                return super.getMetricSql(sql, metric);
-        }
-    }
-
-    concatString(...args: string[]) {
-        return `(${args.join(' || ')})`;
-    }
-
     parseError(error: pg.DatabaseError, query: string = '') {
         // getErrorLineAndCharPosition is a helper function to get the line and character position of the error
         // NOTE: the database returns "position" which is the count of characters from the start of the query, regardless of newlines
@@ -569,6 +603,14 @@ const getSSLConfigFromMode = ({
                 ca,
                 cert: sslcert ?? undefined,
                 key: sslkey ?? undefined,
+                checkServerIdentity: (hostname, cert) => {
+                    if (hostname === 'localhost') {
+                        // When connecting to localhost, we don't need to validate the server identity
+                        // pg library defaults to localhost when connecting via IP address
+                        return undefined;
+                    }
+                    return tls.checkServerIdentity(hostname, cert);
+                },
             };
         case 'no-verify':
             return { rejectUnauthorized: false, ca };

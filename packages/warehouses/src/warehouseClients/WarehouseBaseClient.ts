@@ -3,55 +3,114 @@ import {
     CreateWarehouseCredentials,
     DimensionType,
     Metric,
+    NotImplementedError,
     PartitionColumn,
     SupportedDbtAdapter,
     WarehouseCatalog,
     WarehouseResults,
+    WarehouseSqlBuilder,
     WeekDay,
+    type WarehouseExecuteAsyncQuery,
+    type WarehouseExecuteAsyncQueryArgs,
+    type WarehouseGetAsyncQueryResults,
+    type WarehouseGetAsyncQueryResultsArgs,
 } from '@lightdash/common';
-import { WarehouseClient } from '../types';
-import { getDefaultMetricSql } from '../utils/sql';
+import { type WarehouseClient } from '../types';
 
-export default class WarehouseBaseClient<T extends CreateWarehouseCredentials>
-    implements WarehouseClient
+export default abstract class WarehouseBaseClient<
+    T extends CreateWarehouseCredentials,
+> implements WarehouseClient
 {
     credentials: T;
 
-    startOfWeek: WeekDay | null | undefined;
+    protected sqlBuilder: WarehouseSqlBuilder;
 
-    constructor(credentials: T) {
+    protected constructor(credentials: T, sqlBuilder: WarehouseSqlBuilder) {
         this.credentials = credentials;
-        this.startOfWeek = credentials.startOfWeek;
+        this.sqlBuilder = sqlBuilder;
     }
 
     getAdapterType(): SupportedDbtAdapter {
-        throw new Error('Warehouse method not implemented.');
+        return this.sqlBuilder.getAdapterType();
     }
 
     getStringQuoteChar(): string {
-        throw new Error('Warehouse method not implemented.');
+        return this.sqlBuilder.getStringQuoteChar();
     }
 
     getEscapeStringQuoteChar(): string {
-        throw new Error('Warehouse method not implemented.');
+        return this.sqlBuilder.getEscapeStringQuoteChar();
     }
 
-    async getCatalog(
+    getFieldQuoteChar(): string {
+        return this.sqlBuilder.getFieldQuoteChar();
+    }
+
+    getFloatingType(): string {
+        return this.sqlBuilder.getFloatingType();
+    }
+
+    abstract getCatalog(
         config: { database: string; schema: string; table: string }[],
-    ): Promise<WarehouseCatalog> {
-        throw new Error('Warehouse method not implemented.');
+    ): Promise<WarehouseCatalog>;
+
+    async getAsyncQueryResults<TFormattedRow extends Record<string, unknown>>(
+        _args: WarehouseGetAsyncQueryResultsArgs,
+        _rowFormatter?: (row: Record<string, unknown>) => TFormattedRow,
+    ): Promise<WarehouseGetAsyncQueryResults<TFormattedRow>> {
+        throw new NotImplementedError(
+            `Native pagination not supported. Please configure S3 Storage to use ${this.getAdapterType()} - https://docs.lightdash.com/self-host/customize-deployment/environment-variables#s3`,
+        );
     }
 
-    async streamQuery(
+    abstract streamQuery(
         query: string,
         streamCallback: (data: WarehouseResults) => void,
         options: {
             values?: AnyType[];
+            queryParams?: Record<string, AnyType>;
             tags?: Record<string, string>;
             timezone?: string;
         },
-    ): Promise<void> {
-        throw new Error('Warehouse method not implemented.');
+    ): Promise<void>;
+
+    async executeAsyncQuery(
+        {
+            sql,
+            values,
+            queryParams,
+            tags,
+            timezone,
+        }: WarehouseExecuteAsyncQueryArgs,
+        resultsStreamCallback: (
+            rows: WarehouseResults['rows'],
+            fields: WarehouseResults['fields'],
+        ) => void,
+    ): Promise<WarehouseExecuteAsyncQuery> {
+        let rowCount = 0;
+
+        const startTime = performance.now();
+        await this.streamQuery(
+            sql,
+            ({ rows, fields }) => {
+                rowCount = (rowCount ?? 0) + rows.length;
+                resultsStreamCallback(rows, fields);
+            },
+            {
+                values,
+                queryParams,
+                tags,
+                timezone,
+            },
+        );
+
+        // we could have this return further down but types are a bit messy with this union and count updating on a callback
+        return {
+            queryId: null,
+            queryMetadata: null,
+            durationMs: performance.now() - startTime,
+            totalRows: rowCount,
+        };
     }
 
     async runQuery(
@@ -59,6 +118,7 @@ export default class WarehouseBaseClient<T extends CreateWarehouseCredentials>
         tags?: Record<string, string>,
         timezone?: string,
         values?: AnyType[],
+        queryParams?: Record<string, AnyType>,
     ) {
         let fields: WarehouseResults['fields'] = {};
         const rows: WarehouseResults['rows'] = [];
@@ -71,6 +131,7 @@ export default class WarehouseBaseClient<T extends CreateWarehouseCredentials>
             },
             {
                 values,
+                queryParams,
                 tags,
                 timezone,
             },
@@ -80,11 +141,11 @@ export default class WarehouseBaseClient<T extends CreateWarehouseCredentials>
     }
 
     getMetricSql(sql: string, metric: Metric): string {
-        return getDefaultMetricSql(sql, metric.type);
+        return this.sqlBuilder.getMetricSql(sql, metric);
     }
 
     getStartOfWeek(): WeekDay | null | undefined {
-        return this.startOfWeek;
+        return this.sqlBuilder.getStartOfWeek();
     }
 
     async test(): Promise<void> {
@@ -92,28 +153,27 @@ export default class WarehouseBaseClient<T extends CreateWarehouseCredentials>
     }
 
     concatString(...args: string[]): string {
-        return `CONCAT(${args.join(', ')})`;
+        return this.sqlBuilder.concatString(...args);
     }
 
-    async getAllTables(): Promise<
+    abstract getAllTables(
+        schema?: string,
+        tags?: Record<string, string>,
+    ): Promise<
         {
             database: string;
             schema: string;
             table: string;
             partitionColumn?: PartitionColumn;
         }[]
-    > {
-        throw new Error('Warehouse method not implemented.');
-    }
+    >;
 
-    async getFields(
+    abstract getFields(
         tableName: string,
         schema?: string,
         database?: string,
         tags?: Record<string, string>,
-    ): Promise<WarehouseCatalog> {
-        throw new Error('Warehouse method not implemented.');
-    }
+    ): Promise<WarehouseCatalog>;
 
     parseWarehouseCatalog(
         rows: Record<string, AnyType>[],
@@ -146,5 +206,9 @@ export default class WarehouseBaseClient<T extends CreateWarehouseCredentials>
 
     parseError(error: Error): Error {
         return error;
+    }
+
+    escapeString(value: string): string {
+        return this.sqlBuilder.escapeString(value);
     }
 }

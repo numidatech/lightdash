@@ -15,26 +15,18 @@ port=8080
 Started="bash_install.started"
 Failed="bash_install.failed"
 Successful="bash_install.successful"
-Support="bash_install.support"
 
 # Errors
 OsNotSupported="OS Not Supported"
 DockerNotInstalled="Docker not installed"
 ContainersNotStarted="Containers not started"
 Interrupted="Interrupted"
-DockerComposeNotFound="Docker Compose not found"
 PortNotAvailable="Port not available"
 
 # Regular Colors
-Black='\033[0;30m'        # Black
-Red='\[\e[0;31m\]'        # Red
-Green='\033[0;32m'        # Green
-Yellow='\033[0;33m'       # Yellow
-Blue='\033[0;34m'         # Blue
-Purple='\033[0;35m'       # Purple
-Cyan='\033[0;36m'         # Cyan
-White='\033[0;37m'        # White
-NC='\033[0m' # No Color
+Red="\033[0;31m"
+Cyan="\033[0;36m"
+Color_end="\033[0m"
 
 is_command_present() {
     type "$1" >/dev/null 2>&1
@@ -156,7 +148,7 @@ track_error() {
 }
 
 track_support() {
-  echo -e "\n📨 🙏 Sorry that you had an issue with the installation. Please head to our Slack community and post your issue in #help 🙋 \n https://join.slack.com/t/lightdash-community/shared_invite/zt-2ehqnrvqt-LbCq7cUSFHAzEj_wMuxg4A \n Someone from Lightdash will help you out (usually the same day)"
+  echo -e "\n📨 🙏 Sorry that you had an issue with the installation. Please head to our Slack community and post your issue in #help 🙋 \n https://join.slack.com/t/lightdash-community/shared_invite/zt-2wgtavou8-VRhwXI%7EQbjCAHQs0WBac3w \n Someone from Lightdash will help you out (usually the same day)"
 }
 
 # This function checks if the relevant ports required by Lightdash are available or not
@@ -208,7 +200,7 @@ install_docker() {
         if [[ $os == sles ]]; then
             os_sp="$(cat /etc/*-release | awk -F= '$1 == "VERSION_ID" { gsub(/"/, ""); print $2; exit }')"
             os_arch="$(uname -i)"
-            sudo SUSEConnect -p sle-module-containers/$os_sp/$os_arch -r ''
+            sudo SUSEConnect -p sle-module-containers/"$os_sp"/"$os_arch" -r ''
         fi
         $zypper_cmd install docker docker-runc containerd
         sudo systemctl enable docker.service
@@ -224,12 +216,12 @@ install_docker() {
         sudo pacman -S docker --noconfirm # (docker, containerd, runc)
         docker info
         sudo systemctl enable --now docker
-        sudo usermod -aG docker $USER
+        sudo usermod -aG docker "$USER"
     else
 
         yum_cmd="sudo yum --assumeyes --quiet"
         $yum_cmd install yum-utils
-        sudo yum-config-manager --add-repo https://download.docker.com/linux/$os/docker-ce.repo
+        sudo yum-config-manager --add-repo https://download.docker.com/linux/"$os"/docker-ce.repo
         echo "Installing docker"
         $yum_cmd install docker-ce docker-ce-cli containerd.io
 
@@ -237,20 +229,17 @@ install_docker() {
 
 }
 install_docker_machine() {
-
-    echo "\nInstalling docker machine ..."
+    echo -e "\nInstalling docker machine ..."
 
     if [[ $os == "Mac" ]];then
-        curl -sL https://github.com/docker/machine/releases/download/v0.16.2/docker-machine-`uname -s`-`uname -m` >/usr/local/bin/docker-machine
+        curl -sL https://github.com/docker/machine/releases/download/v0.16.2/docker-machine-"$(uname -s)"-"$(uname -m)" >/usr/local/bin/docker-machine
         chmod +x /usr/local/bin/docker-machine
     else
-        curl -sL https://github.com/docker/machine/releases/download/v0.16.2/docker-machine-`uname -s`-`uname -m` >/tmp/docker-machine
+        curl -sL https://github.com/docker/machine/releases/download/v0.16.2/docker-machine-"$(uname -s)"-"$(uname -m)" >/tmp/docker-machine
         chmod +x /tmp/docker-machine
         sudo cp /tmp/docker-machine /usr/local/bin/docker-machine
 
     fi
-
-
 }
 
 check_docker_version() {
@@ -266,13 +255,13 @@ check_docker_version() {
 
 start_docker() {
     echo "Starting Docker ..."
-    if [ $os = "Mac" ]; then
+    if [ "$os" = "Mac" ]; then
       if open -Ra Docker; then
         open --background -a Docker && while ! docker system info > /dev/null 2>&1; do sleep 1; done
       else
         open --background -a OrbStack && while ! docker system info > /dev/null 2>&1; do sleep 1; done
       fi
-    elif [ $os = "Windows" ]; then
+    elif [ "$os" = "Windows" ]; then
       echo "+++++++++++ IMPORTANT READ ++++++++++++++++++++++"
       echo "Make sure Docker Desktop is running."
       echo "+++++++++++++++++++++++++++++++++++++++++++++++++"
@@ -283,6 +272,7 @@ start_docker() {
         fi
     fi
 }
+
 wait_for_containers_start() {
     local timeout=$1
 
@@ -293,7 +283,7 @@ wait_for_containers_start() {
             break
         else
             echo -ne "Waiting for all containers to start. This check will timeout in $timeout seconds ...\r\c"
-            if [ $os = "Windows" ]; then
+            if [ "$os" = "Windows" ]; then
                   echo "+++++++++++ IMPORTANT READ ++++++++++++++++++++++"
                   echo "If you are getting the error 'Error response from daemon: i/o timeout'."
                   echo "Go to Docker > Settings > General and enable the option 'Expose daemon on tcp://localhost:2375 without TLS'"
@@ -316,7 +306,7 @@ set_vars() {
         done
     fi
 
-    read -p "Port [8080]: " port
+    read -r -p "Port [8080]: " port
     if [[ $port == "" ]];then
       port=8080
     fi
@@ -329,7 +319,7 @@ bye() {  # Prints a friendly good bye message and exits the script.
         echo "🔴 The containers didn't seem to start correctly. Please run the following command to check containers that may have errored out:"
         echo ""
         echo -e "docker compose -f docker-compose.yml ps -a"
-        echo "Please reach us on Lightdash for support https://join.slack.com/t/lightdash-community/shared_invite/zt-2ehqnrvqt-LbCq7cUSFHAzEj_wMuxg4A"
+        echo "Please reach us on Lightdash for support https://join.slack.com/t/lightdash-community/shared_invite/zt-2wgtavou8-VRhwXI%7EQbjCAHQs0WBac3w"
         echo "++++++++++++++++++++++++++++++++++++++++"
         track_error $Interrupted
         track_support
@@ -349,28 +339,28 @@ echo -e "\n✅ Detected OS: ${os}"
 
 echo ""
 
-echo -e "👉 ${RED}Please enter how you want to setup Lightdash\n"
-echo -e "${RED}1) Fast install [default]\n"
-echo -e "${RED}2) Custom install\n"
+echo -e "👉 ${Red}Please enter how you want to setup Lightdash\n${Color_end}"
+echo -e "${Red}1) Fast install [default]\n${Color_end}"
+echo -e "${Red}2) Custom install\n${Color_end}"
 
 if [[ $CI == 'true' ]]; then
     choice_setup=1
 else
-    read -p "⚙️  Enter your preference (1/2):" choice_setup
+    read -r -p "⚙️  Enter your preference (1/2): " choice_setup
 fi
 
 while [[ $choice_setup != "1"   &&  $choice_setup != "2" && $choice_setup != "" ]]
 do
-    echo -e "\n❌ ${CYAN}Please enter either 1 or 2"
-    read -p "⚙️  Enter your preference (1/2):  " choice_setup
+    echo -e "\n❌ ${Cyan}Please enter either 1 or 2${Color_end}"
+    read -r -p "⚙️  Enter your preference (1/2): " choice_setup
 done
 
 if [[ $choice_setup == "1" || $choice_setup == "" ]];then
     setup_type='default'
-    echo -e "\n✅ ${CYAN}You have chosen: fast setup\n"
+    echo -e "\n✅ ${Cyan}You have chosen: fast setup\n${Color_end}"
 else
     setup_type='local_dbt'
-    echo -e "\n✅ ${CYAN}You have chosen: local dbt project setup\n"
+    echo -e "\n✅ ${Cyan}You have chosen: local dbt project setup\n${Color_end}"
 fi
 
 # Run bye if failure happens
@@ -431,7 +421,7 @@ if [[ $status_code -ne 200 ]]; then
     echo "🔴 The containers didn't seem to start correctly. Please run the following command to check containers that may have errored out:"
     echo ""
     echo -e "docker compose -f docker-compose.yml ps -a"
-    echo "Please reach us on Lightdash for support https://join.slack.com/t/lightdash-community/shared_invite/zt-2ehqnrvqt-LbCq7cUSFHAzEj_wMuxg4A"
+    echo "Please reach us on Lightdash for support https://join.slack.com/t/lightdash-community/shared_invite/zt-2wgtavou8-VRhwXI%7EQbjCAHQs0WBac3w"
     echo "++++++++++++++++++++++++++++++++++++++++"
 
     track_error "$ContainersNotStarted"
@@ -455,7 +445,7 @@ else
     echo "+++++++++++++++++++++++++++++++++++++++++++++++++"
     echo ""
     echo "👉 Need help Getting Started?"
-    echo -e "Join us on Slack https://join.slack.com/t/lightdash-community/shared_invite/zt-2ehqnrvqt-LbCq7cUSFHAzEj_wMuxg4A"
+    echo -e "Join us on Slack https://join.slack.com/t/lightdash-community/shared_invite/zt-2wgtavou8-VRhwXI%7EQbjCAHQs0WBac3w"
     echo ""
 
 fi

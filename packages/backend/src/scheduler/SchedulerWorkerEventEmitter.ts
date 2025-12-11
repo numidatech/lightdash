@@ -60,9 +60,41 @@ schedulerWorkerEventEmitter.on('worker:fatalError', ({ worker, error }) => {
 
 // Handle job events
 schedulerWorkerEventEmitter.on('job:start', ({ worker, job }) => {
+    // truncate some properties from the payload to avoid logging excessively large
+    const sanitizedPayload: Record<string, AnyType> = {};
+    const propertiesToTruncate: string[] = ['explores'];
+
+    const isObject =
+        job.payload &&
+        typeof job.payload === 'object' &&
+        !Array.isArray(job.payload);
+    if (isObject) {
+        Object.entries(job.payload as Record<string, AnyType>).forEach(
+            ([key, value]) => {
+                if (propertiesToTruncate.includes(key)) {
+                    const asString =
+                        typeof value === 'string'
+                            ? value
+                            : (() => {
+                                  try {
+                                      return JSON.stringify(value);
+                                  } catch (e) {
+                                      return String(value);
+                                  }
+                              })();
+                    sanitizedPayload[key] =
+                        asString.length > 50
+                            ? `${asString.slice(0, 50)}... [truncated]`
+                            : asString;
+                } else {
+                    sanitizedPayload[key] = value;
+                }
+            },
+        );
+    }
     Logger.info(
         `Worker ${worker.workerId} started job ${job.id} (${job.task_identifier}). Attempt ${job.attempts} of ${job.max_attempts}`,
-        { payload: job.payload },
+        { payload: sanitizedPayload },
     );
 });
 
@@ -81,14 +113,6 @@ schedulerWorkerEventEmitter.on('job:error', ({ worker, job, error }) => {
 schedulerWorkerEventEmitter.on('job:failed', ({ worker, job, error }) => {
     const message = `Worker ${worker.workerId} failed job ${job.id} (${job.task_identifier}). ${error}`;
     Logger.info(message);
-    Sentry.captureException(new Error(message), {
-        extra: {
-            workerId: worker.workerId,
-            jobId: job.id,
-            task: job.task_identifier,
-            error,
-        },
-    });
 });
 
 schedulerWorkerEventEmitter.on('job:complete', ({ worker, job }) => {

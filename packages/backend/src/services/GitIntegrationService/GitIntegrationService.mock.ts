@@ -4,10 +4,20 @@ import {
     CustomSqlDimension,
     DimensionType,
     MetricType,
+    SupportedDbtVersions,
 } from '@lightdash/common';
+import { warehouseClientMock } from '../../utils/QueryBuilder/MetricQueryBuilder.mock';
 
 export const PROJECT_MODEL = {
     getExploreFromCache: jest.fn(() => ({ ymlPath: 'path/to/schema.yml' })),
+    getWarehouseCredentialsForProject: jest.fn(() => ({})),
+    getWarehouseClientFromCredentials: jest.fn(() => warehouseClientMock),
+    get: jest.fn(() =>
+        Promise.resolve({
+            projectUuid: 'projectUuid',
+            dbtVersion: SupportedDbtVersions.V1_9,
+        }),
+    ),
 };
 export const SAVED_CHART_MODEL = {};
 export const SPACE_MODEL = {};
@@ -88,7 +98,7 @@ models:
               label: New metric
               description: description
               type: average
-              format: '#,##0.000'
+              format: '#,##0.###'
   - name: table_b
     description: >-
       # Description This table has basic information
@@ -122,13 +132,11 @@ models:
               type: count_distinct
             metric_b:
               type: sum
-        additional_dimensions:
-          amount_size:
-            label: Amount size
-            name: amount_size
-            description: ''
-            type: string
-            sql: \${table_a.dim_a}
+          additional_dimensions:
+            amount_size:
+              label: Amount size
+              type: string
+              sql: \${table_a.dim_a}
   - name: table_b
     description: >-
       # Description This table has basic information

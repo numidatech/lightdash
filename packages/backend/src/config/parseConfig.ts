@@ -1,15 +1,72 @@
 import {
+    AI_DEFAULT_MAX_QUERY_LIMIT,
+    ALL_TASK_NAMES,
+    AllowedEmailDomainsRole,
+    AllowedEmailDomainsRoles,
+    AnyType,
+    AuthTokenPrefix,
+    cleanColorArray,
+    CreateDatabricksCredentials,
+    DbtGithubProjectConfig,
+    DbtProjectType,
+    DbtVersionOption,
+    DbtVersionOptionLatest,
     getErrorMessage,
+    getInvalidHexColors,
     isLightdashMode,
     isOrganizationMemberRole,
+    isSchedulerTaskName,
     LightdashMode,
     OrganizationMemberRole,
     ParameterError,
     ParseError,
     SentryConfig,
+    SupportedDbtVersions,
+    WarehouseTypes,
+    WeekDay,
+    type SchedulerTaskName,
 } from '@lightdash/common';
+import * as Sentry from '@sentry/core';
 import { type ClientAuthMethod } from 'openid-client';
 import { VERSION } from '../version';
+import {
+    aiCopilotConfigSchema,
+    AiCopilotConfigSchemaType,
+    DEFAULT_ANTHROPIC_MODEL_NAME,
+    DEFAULT_BEDROCK_MODEL_NAME,
+    DEFAULT_DEFAULT_AI_PROVIDER,
+    DEFAULT_OPENAI_EMBEDDING_MODEL,
+    DEFAULT_OPENAI_MODEL_NAME,
+    DEFAULT_OPENROUTER_MODEL_NAME,
+} from './aiConfigSchema';
+
+enum TokenEnvironmentVariable {
+    SERVICE_ACCOUNT = 'LD_SETUP_SERVICE_ACCOUNT_TOKEN',
+}
+
+const tokenConfigs = {
+    [TokenEnvironmentVariable.SERVICE_ACCOUNT]: {
+        prefix: AuthTokenPrefix.SERVICE_ACCOUNT,
+    },
+};
+
+const isApiValidToken = (tokenVar: TokenEnvironmentVariable) => {
+    const { prefix } = tokenConfigs[tokenVar];
+    const token = process.env[tokenVar];
+
+    if (!token) return undefined;
+
+    if (token.startsWith(prefix)) {
+        return {
+            value: token,
+        };
+    }
+
+    throw new ParseError(
+        `Cannot parse API token environment variable ${tokenVar}. The token needs to be prefixed with ${prefix}.`,
+        { variant: 'ApiToken' },
+    );
+};
 
 export const getIntegerFromEnvironmentVariable = (
     name: string,
@@ -91,6 +148,36 @@ const getArrayFromCommaSeparatedList = (envVar: string) => {
         .filter((domain) => domain.length > 0);
 };
 
+export const getHexColorsFromEnvironmentVariable = (
+    colorPalette: string | undefined,
+): string[] | undefined => {
+    if (!colorPalette) {
+        return undefined;
+    }
+
+    const hexColors = cleanColorArray(colorPalette.split(','));
+
+    // Validate that all colors are valid hex codes
+    const invalidColors = getInvalidHexColors(hexColors);
+
+    if (invalidColors.length > 0) {
+        throw new ParseError(
+            `Cannot parse environment variable "DEFAULT_COLOR_PALETTE_COLORS". All values must be valid hex colors (e.g. #FF0000) but found invalid colors: ${invalidColors.join(
+                ', ',
+            )}`,
+        );
+    }
+
+    // Validate that there are exactly 20 colors
+    if (hexColors.length !== 20) {
+        throw new ParseError(
+            `Cannot parse environment variable "DEFAULT_COLOR_PALETTE_COLORS". Must contain exactly 20 colors, but found ${hexColors.length} colors.`,
+        );
+    }
+
+    return hexColors;
+};
+
 /**
  * Given a value, uses the arguments provided to figure out if that value
  * should be decoded as a base64 string.
@@ -156,13 +243,19 @@ export const getPemFileContent = (certValue: string | undefined) =>
         decodeUnlessStartsWith: '-----BEGIN ', // -----BEGIN CERTIFICATE | -----BEGIN PRIVATE KEY
     });
 
-type LoggingLevel = 'error' | 'warn' | 'info' | 'http' | 'debug';
+export type LoggingLevel =
+    | 'error'
+    | 'warn'
+    | 'info'
+    | 'http'
+    | 'debug'
+    | 'audit';
 const assertIsLoggingLevel = (x: string): x is LoggingLevel =>
-    ['error', 'warn', 'info', 'http', 'debug'].includes(x);
+    ['error', 'warn', 'info', 'http', 'debug', 'audit'].includes(x);
 const parseLoggingLevel = (raw: string): LoggingLevel => {
     if (!assertIsLoggingLevel(raw)) {
         throw new ParseError(
-            `Cannot parse environment variable "LIGHTDASH_LOG_LEVEL". Value must be one of "error", "warn", "info", "debug" but LIGHTDASH_LOG_LEVEL=${raw}`,
+            `Cannot parse environment variable "LIGHTDASH_LOG_LEVEL". Value must be one of "error", "warn", "info", "debug", "audit" but LIGHTDASH_LOG_LEVEL=${raw}`,
         );
     }
     return raw;
@@ -205,6 +298,445 @@ export const parseOrganizationMemberRoleArray = (
         return role;
     });
 };
+const parseApiExpiration = (envVariable: string): Date | null => {
+    const apiExpiration = process.env[envVariable];
+    const apiExpirationDays = apiExpiration ? parseInt(apiExpiration, 10) : 30; // Convert to number, this might throw an error
+    if (apiExpirationDays === 0) return null; // If 0, we return null, which means, no expiration
+    if (Number.isNaN(apiExpirationDays)) {
+        throw new ParameterError(`${envVariable} must be a valid number`);
+    }
+    return new Date(Date.now() + 1000 * 60 * 60 * 24 * apiExpirationDays);
+};
+
+const parseEnum = <T>(
+    value: string | undefined,
+    enumObj?: AnyType,
+): T | undefined => {
+    if (!value) return undefined;
+
+    const enumValues = enumObj ? Object.values(enumObj) : [];
+    if (enumValues.length > 0 && !enumValues.includes(value)) {
+        throw new ParameterError(
+            `Invalid value "${value}". Must be one of ${enumValues.join(', ')}`,
+        );
+    }
+    return value as T;
+};
+
+const getInitialSetupConfig = (): LightdashConfig['initialSetup'] => {
+    const parseCompute = (): CreateDatabricksCredentials['compute'] => {
+        // This is a stringified array of objects, in JSON format
+        // If format is not correct, it will throw an error
+        const compute = process.env.LD_SETUP_PROJECT_COMPUTE;
+        if (!compute) return undefined;
+        return JSON.parse(compute) as CreateDatabricksCredentials['compute'];
+    };
+
+    try {
+        if (!process.env.LD_SETUP_ADMIN_EMAIL) return undefined;
+
+        const projectPat = process.env.LD_SETUP_PROJECT_PAT;
+        if (!projectPat) {
+            throw new ParameterError(
+                `LD_SETUP_PROJECT_PAT is required for initial setup`,
+                { variant: 'ApiToken' },
+            );
+        }
+
+        return {
+            organization: {
+                admin: {
+                    name: process.env.LD_SETUP_ADMIN_NAME || 'Admin User',
+                    email: process.env.LD_SETUP_ADMIN_EMAIL!,
+                },
+                emailDomains: getArrayFromCommaSeparatedList(
+                    'LD_SETUP_ORGANIZATION_EMAIL_DOMAIN',
+                ),
+                defaultRole:
+                    parseEnum<AllowedEmailDomainsRole>(
+                        process.env.LD_SETUP_ORGANIZATION_DEFAULT_ROLE,
+                        AllowedEmailDomainsRoles,
+                    ) || OrganizationMemberRole.VIEWER,
+                name: process.env.LD_SETUP_ORGANIZATION_NAME!,
+            },
+            // TODO: Does this need validation as well?
+            apiKey: process.env.LD_SETUP_ADMIN_API_KEY
+                ? {
+                      token: process.env.LD_SETUP_ADMIN_API_KEY,
+                      expirationTime: parseApiExpiration(
+                          'LD_SETUP_API_KEY_EXPIRATION',
+                      ),
+                  }
+                : undefined,
+            serviceAccount: isApiValidToken(
+                TokenEnvironmentVariable.SERVICE_ACCOUNT,
+            )
+                ? {
+                      token: process.env.LD_SETUP_SERVICE_ACCOUNT_TOKEN!,
+                      expirationTime: parseApiExpiration(
+                          'LD_SETUP_SERVICE_ACCOUNT_EXPIRATION',
+                      ),
+                  }
+                : undefined,
+            project: {
+                name: process.env.LD_SETUP_PROJECT_NAME!,
+                type: WarehouseTypes.DATABRICKS,
+                catalog: process.env.LD_SETUP_PROJECT_CATALOG,
+                database: process.env.LD_SETUP_PROJECT_SCHEMA!,
+                serverHostName: process.env.LD_SETUP_PROJECT_HOST!,
+                httpPath: process.env.LD_SETUP_PROJECT_HTTP_PATH!,
+                personalAccessToken: projectPat,
+                requireUserCredentials: undefined,
+                startOfWeek: parseEnum<WeekDay>(
+                    process.env.LD_SETUP_START_OF_WEEK,
+                    WeekDay,
+                ),
+                compute: parseCompute(),
+                dbtVersion:
+                    parseEnum<SupportedDbtVersions>(
+                        process.env.LD_SETUP_DBT_VERSION,
+                        SupportedDbtVersions,
+                    ) || DbtVersionOptionLatest.LATEST,
+            },
+            dbt: {
+                type: DbtProjectType.GITHUB,
+                authorization_method: 'personal_access_token',
+                personal_access_token: process.env.LD_SETUP_GITHUB_PAT!,
+                repository: process.env.LD_SETUP_GITHUB_REPOSITORY!,
+                branch: process.env.LD_SETUP_GITHUB_BRANCH!,
+                project_sub_path: process.env.LD_SETUP_GITHUB_PATH || '/',
+                host_domain: undefined,
+            },
+        };
+    } catch (e) {
+        // If a variable is not set, we will skip the initial setup
+        // log an error, but don't throw an error, to avoid blocking the backend.
+        //
+        // Unless it's related to API tokens, in which case we throw an error to get
+        // a proper token. Otherwise, the CLI will not work and the app will be in a state
+        // that needs to be recovered.
+        if (
+            (e instanceof ParseError && e.data.variant === 'ApiToken') ||
+            (e instanceof ParameterError && e.data.variant === 'ApiToken')
+        ) {
+            throw e;
+        }
+
+        console.error('Error parsing initial setup config', e);
+        return undefined;
+    }
+};
+
+/**
+ * This method is some kind of subset of the initial setup config
+ * and it is used to update some of the values on server restart
+ */
+export const getUpdateSetupConfig = (): LightdashConfig['updateSetup'] => {
+    if (
+        process.env.LD_SETUP_ADMIN_API_KEY &&
+        !process.env.LD_SETUP_ADMIN_EMAIL
+    ) {
+        throw new ParameterError(
+            `LD_SETUP_ADMIN_API_KEY is present, but there is no LD_SETUP_ADMIN_EMAIL to create a PAT for`,
+        );
+    }
+
+    return {
+        organization: {
+            admin: {
+                email: process.env.LD_SETUP_ADMIN_EMAIL,
+            },
+            emailDomains: getArrayFromCommaSeparatedList(
+                'LD_SETUP_ORGANIZATION_EMAIL_DOMAIN',
+            ),
+            defaultRole: parseEnum<AllowedEmailDomainsRole>(
+                process.env.LD_SETUP_ORGANIZATION_DEFAULT_ROLE,
+                AllowedEmailDomainsRoles,
+            ),
+        },
+        apiKey: {
+            token: process.env.LD_SETUP_ADMIN_API_KEY,
+            expirationTime: parseApiExpiration('LD_SETUP_API_KEY_EXPIRATION'),
+        },
+        project: {
+            httpPath: process.env.LD_SETUP_PROJECT_HTTP_PATH,
+            dbtVersion: parseEnum<SupportedDbtVersions>(
+                process.env.LD_SETUP_DBT_VERSION,
+                SupportedDbtVersions,
+            ),
+            personalAccessToken: process.env.LD_SETUP_PROJECT_PAT,
+        },
+        serviceAccount: isApiValidToken(
+            TokenEnvironmentVariable.SERVICE_ACCOUNT,
+        )
+            ? {
+                  token: process.env.LD_SETUP_SERVICE_ACCOUNT_TOKEN!,
+                  expirationTime: parseApiExpiration(
+                      'LD_SETUP_SERVICE_ACCOUNT_EXPIRATION',
+                  ),
+              }
+            : undefined,
+        dbt: {
+            personal_access_token: process.env.LD_SETUP_GITHUB_PAT,
+        },
+        embed: {
+            allowAllDashboards:
+                process.env.LD_SETUP_EMBED_ALLOW_ALL_DASHBOARDS === 'true',
+            secret: process.env.LD_SETUP_EMBED_SECRET,
+        },
+    };
+};
+
+export const parseBaseS3Config = (): LightdashConfig['s3'] => {
+    const endpoint = process.env.S3_ENDPOINT;
+    const bucket = process.env.S3_BUCKET;
+    const region = process.env.S3_REGION;
+    const accessKey = process.env.S3_ACCESS_KEY;
+    const secretKey = process.env.S3_SECRET_KEY;
+    const forcePathStyle = process.env.S3_FORCE_PATH_STYLE === 'true';
+    const expirationTime = parseInt(
+        process.env.S3_EXPIRATION_TIME || '259200', // 3 days in seconds
+        10,
+    );
+    const useCredentialsFromRaw = getArrayFromCommaSeparatedList(
+        'S3_USE_CREDENTIALS_FROM',
+    );
+    const useCredentialsFrom = useCredentialsFromRaw
+        .map((v) => v.trim().toLowerCase())
+        .filter((v) => v.length > 0);
+
+    if (!endpoint || !bucket || !region) {
+        return undefined;
+    }
+
+    return {
+        endpoint,
+        bucket,
+        region,
+        accessKey,
+        secretKey,
+        expirationTime,
+        forcePathStyle,
+        useCredentialsFrom: useCredentialsFrom.length
+            ? useCredentialsFrom
+            : undefined,
+    };
+};
+
+export const parseResultsS3Config = (): LightdashConfig['results']['s3'] => {
+    const baseS3Config = parseBaseS3Config();
+
+    if (!baseS3Config) {
+        return undefined;
+    }
+
+    const {
+        endpoint: baseEndpoint,
+        bucket: baseBucket,
+        region: baseRegion,
+        accessKey: baseAccessKey,
+        secretKey: baseSecretKey,
+        forcePathStyle: baseForcePathStyle,
+        useCredentialsFrom: baseUseCredentialsFrom,
+    } = baseS3Config;
+
+    const bucket =
+        process.env.RESULTS_S3_BUCKET ||
+        process.env.RESULTS_CACHE_S3_BUCKET || // Deprecated
+        baseBucket;
+    const region =
+        process.env.RESULTS_S3_REGION ||
+        process.env.RESULTS_CACHE_S3_REGION || // Deprecated
+        baseRegion;
+    const accessKey =
+        process.env.RESULTS_S3_ACCESS_KEY ||
+        process.env.RESULTS_CACHE_S3_ACCESS_KEY || // Deprecated
+        baseAccessKey;
+    const secretKey =
+        process.env.RESULTS_S3_SECRET_KEY ||
+        process.env.RESULTS_CACHE_S3_SECRET_KEY || // Deprecated
+        baseSecretKey;
+
+    return {
+        endpoint: baseEndpoint, // ! For now we keep reusing the S3_ENDPOINT like we have been so far, we are just going to enforce it
+        forcePathStyle: baseForcePathStyle, // ! For now we keep reusing the S3_FORCE_PATH_STYLE like we have been so far, we are just going to enforce it
+        bucket,
+        region,
+        accessKey,
+        secretKey,
+        useCredentialsFrom: baseUseCredentialsFrom,
+    };
+};
+
+const validateTaskList = (tasks: string[], envVarName: string) => {
+    const validTasks: SchedulerTaskName[] = [];
+    const invalidTasks: string[] = [];
+
+    for (const task of tasks) {
+        if (isSchedulerTaskName(task)) {
+            validTasks.push(task as SchedulerTaskName);
+        } else {
+            invalidTasks.push(task);
+        }
+    }
+
+    if (invalidTasks.length > 0) {
+        console.warn(
+            `Invalid scheduler tasks found in ${envVarName} environment variable: ${invalidTasks.join(
+                ', ',
+            )}. These tasks will be ignored.`,
+        );
+    }
+
+    return validTasks;
+};
+
+const parseAndSanitizeSchedulerTasks = (): Array<SchedulerTaskName> => {
+    const includeTasks = getArrayFromCommaSeparatedList(
+        'SCHEDULER_INCLUDE_TASKS',
+    );
+    const excludeTasks = getArrayFromCommaSeparatedList(
+        'SCHEDULER_EXCLUDE_TASKS',
+    );
+
+    // If neither is set, return undefined (run all tasks)
+    if (includeTasks.length === 0 && excludeTasks.length === 0) {
+        return ALL_TASK_NAMES;
+    }
+
+    if (includeTasks.length > 0 && excludeTasks.length > 0) {
+        throw new ParseError(
+            `Cannot set both SCHEDULER_INCLUDE_TASKS and SCHEDULER_EXCLUDE_TASKS environment variables. Please use only one of them.`,
+        );
+    }
+
+    // Validate include tasks
+    const validIncludeTasks = validateTaskList(
+        includeTasks,
+        'SCHEDULER_INCLUDE_TASKS',
+    );
+
+    // Validate exclude tasks
+    const validExcludeTasks = validateTaskList(
+        excludeTasks,
+        'SCHEDULER_EXCLUDE_TASKS',
+    );
+
+    // Handle different scenarios
+    if (validIncludeTasks.length > 0 && validExcludeTasks.length === 0) {
+        return validIncludeTasks;
+    }
+
+    if (validIncludeTasks.length === 0 && validExcludeTasks.length > 0) {
+        // Only exclude set: include all and exclude the ones from the variable
+        return ALL_TASK_NAMES.filter(
+            (task) => !validExcludeTasks.includes(task),
+        );
+    }
+
+    return ALL_TASK_NAMES;
+};
+
+const getBedrockConfig = () => {
+    if (process.env.BEDROCK_API_KEY) {
+        return {
+            apiKey: process.env.BEDROCK_API_KEY,
+            region: process.env.BEDROCK_REGION,
+            modelName:
+                process.env.BEDROCK_MODEL_NAME || DEFAULT_BEDROCK_MODEL_NAME,
+            embeddingModelName: process.env.BEDROCK_EMBEDDING_MODEL,
+            availableModels: getArrayFromCommaSeparatedList(
+                'BEDROCK_AVAILABLE_MODELS',
+            ),
+        } as const;
+    }
+    if (process.env.BEDROCK_ACCESS_KEY_ID) {
+        return {
+            accessKeyId: process.env.BEDROCK_ACCESS_KEY_ID,
+            secretAccessKey: process.env.BEDROCK_SECRET_ACCESS_KEY,
+            sessionToken: process.env.BEDROCK_SESSION_TOKEN,
+            region: process.env.BEDROCK_REGION,
+            modelName:
+                process.env.BEDROCK_MODEL_NAME || DEFAULT_BEDROCK_MODEL_NAME,
+            embeddingModelName: process.env.BEDROCK_EMBEDDING_MODEL,
+            availableModels: getArrayFromCommaSeparatedList(
+                'BEDROCK_AVAILABLE_MODELS',
+            ),
+        } as const;
+    }
+
+    return undefined;
+};
+
+export const getAiConfig = () => ({
+    enabled: process.env.AI_COPILOT_ENABLED === 'true',
+    debugLoggingEnabled:
+        process.env.AI_COPILOT_DEBUG_LOGGING_ENABLED === 'true',
+    telemetryEnabled: process.env.AI_COPILOT_TELEMETRY_ENABLED === 'true',
+    requiresFeatureFlag:
+        process.env.AI_COPILOT_REQUIRES_FEATURE_FLAG === 'true',
+    askAiButtonEnabled: process.env.ASK_AI_BUTTON_ENABLED === 'true',
+    embeddingEnabled: process.env.AI_EMBEDDING_ENABLED === 'true',
+    defaultProvider:
+        process.env.AI_DEFAULT_PROVIDER || DEFAULT_DEFAULT_AI_PROVIDER,
+    defaultEmbeddingModelProvider: process.env.AI_DEFAULT_EMBEDDING_PROVIDER,
+    providers: {
+        azure: process.env.AZURE_AI_API_KEY
+            ? {
+                  endpoint: process.env.AZURE_AI_ENDPOINT,
+                  apiKey: process.env.AZURE_AI_API_KEY,
+                  apiVersion: process.env.AZURE_AI_API_VERSION,
+                  deploymentName: process.env.AZURE_AI_DEPLOYMENT_NAME,
+              }
+            : undefined,
+        openai: process.env.OPENAI_API_KEY
+            ? {
+                  apiKey: process.env.OPENAI_API_KEY,
+                  modelName:
+                      process.env.OPENAI_MODEL_NAME ||
+                      DEFAULT_OPENAI_MODEL_NAME,
+                  embeddingModelName:
+                      process.env.OPENAI_EMBEDDING_MODEL ||
+                      DEFAULT_OPENAI_EMBEDDING_MODEL,
+                  baseUrl: process.env.OPENAI_BASE_URL,
+                  availableModels: getArrayFromCommaSeparatedList(
+                      'OPENAI_AVAILABLE_MODELS',
+                  ),
+              }
+            : undefined,
+        anthropic: process.env.ANTHROPIC_API_KEY
+            ? {
+                  apiKey: process.env.ANTHROPIC_API_KEY,
+                  modelName:
+                      process.env.ANTHROPIC_MODEL_NAME ||
+                      DEFAULT_ANTHROPIC_MODEL_NAME,
+                  availableModels: getArrayFromCommaSeparatedList(
+                      'ANTHROPIC_AVAILABLE_MODELS',
+                  ),
+              }
+            : undefined,
+        openrouter: process.env.OPENROUTER_API_KEY
+            ? {
+                  apiKey: process.env.OPENROUTER_API_KEY,
+                  modelName:
+                      process.env.OPENROUTER_MODEL_NAME ||
+                      DEFAULT_OPENROUTER_MODEL_NAME,
+                  sortOrder: process.env.OPENROUTER_SORT_ORDER,
+                  allowedProviders: getArrayFromCommaSeparatedList(
+                      'OPENROUTER_ALLOWED_PROVIDERS',
+                  ),
+              }
+            : undefined,
+        bedrock: getBedrockConfig(),
+    },
+    maxQueryLimit:
+        getIntegerFromEnvironmentVariable('AI_COPILOT_MAX_QUERY_LIMIT') ||
+        AI_DEFAULT_MAX_QUERY_LIMIT,
+    verifiedAnswerSimilarityThreshold:
+        getFloatFromEnvironmentVariable(
+            'AI_VERIFIED_ANSWER_SIMILARITY_THRESHOLD',
+        ) ?? 0.6,
+});
 
 export type LoggingConfig = {
     level: LoggingLevel;
@@ -276,6 +808,8 @@ export type LightdashConfig = {
         defaultLimit: number;
         csvCellsLimit: number;
         timezone: string | undefined;
+        maxPageSize: number;
+        useSqlPivotResults: boolean;
     };
     pivotTable: {
         maxColumnLimit: number;
@@ -285,21 +819,19 @@ export type LightdashConfig = {
             daysLimit: number;
         };
     };
-    customVisualizations: {
-        enabled: boolean;
+    // This is the override color palette for the organization
+    // TODO: allow override for dark theme
+    appearance: {
+        overrideColorPalette?: string[];
+        overrideColorPaletteName?: string;
     };
     s3?: S3Config;
     headlessBrowser: HeadlessBrowserConfig;
-    resultsCache: {
-        resultsEnabled: boolean;
+    results: {
+        cacheEnabled: boolean;
         autocompleteEnabled: boolean;
         cacheStateTimeSeconds: number;
-        s3: {
-            bucket?: string;
-            region?: string;
-            accessKey?: string;
-            secretKey?: string;
-        };
+        s3?: Omit<S3Config, 'expirationTime'>;
     };
     slack?: SlackConfig;
     scheduler: {
@@ -307,6 +839,17 @@ export type LightdashConfig = {
         concurrency: number;
         jobTimeout: number;
         screenshotTimeout?: number;
+        tasks: Array<SchedulerTaskName>;
+        queryHistory: {
+            cleanup: {
+                enabled: boolean;
+                retentionDays: number;
+                batchSize: number;
+                delayMs: number;
+                maxBatches?: number;
+                schedule: string;
+            };
+        };
     };
     groups: {
         enabled: boolean;
@@ -316,23 +859,120 @@ export type LightdashConfig = {
     };
     logging: LoggingConfig;
     ai: {
-        copilot: {
-            enabled: boolean;
-            embeddingSearchEnabled?: boolean;
-        };
+        copilot: AiCopilotConfigSchemaType;
+        analyticsProjectUuid?: string;
+        analyticsDashboardUuid?: string;
     };
     embedding: {
         enabled: boolean;
+        allowAll: {
+            dashboards: boolean;
+            charts: boolean;
+        };
+        events?: {
+            enabled: boolean;
+            rateLimiting: {
+                maxEventsPerWindow: number;
+                windowDurationMs: number;
+            };
+            allowedOrigins: string[];
+            enablePostMessage: boolean;
+        };
     };
     scim: {
+        enabled: boolean;
+    };
+    serviceAccount: {
+        enabled: boolean;
+    };
+    organizationWarehouseCredentials: {
         enabled: boolean;
     };
     github: {
         appName: string;
         redirectDomain: string;
     };
+    gitlab: {
+        clientId: string | undefined;
+        clientSecret: string | undefined;
+        redirectDomain: string;
+    };
     contentAsCode: {
         maxDownloads: number;
+    };
+    microsoftTeams: {
+        enabled: boolean;
+    };
+    googleCloudPlatform: {
+        projectId?: string;
+    };
+
+    initialSetup?: {
+        organization: {
+            admin: {
+                email: string;
+                name: string;
+            };
+            emailDomains: string[];
+            name: string;
+            defaultRole: AllowedEmailDomainsRole;
+        };
+        apiKey?: {
+            token: string;
+            expirationTime: Date | null;
+        };
+        serviceAccount?: {
+            token: string;
+            expirationTime: Date | null;
+        };
+        project: CreateDatabricksCredentials & {
+            name: string;
+            dbtVersion: DbtVersionOption;
+        };
+        dbt: DbtGithubProjectConfig;
+    };
+    updateSetup?: {
+        organization?: {
+            admin: {
+                email?: string;
+            };
+            emailDomains: string[];
+            defaultRole?: AllowedEmailDomainsRole;
+        };
+        apiKey: {
+            token?: string;
+            expirationTime: Date | null;
+        };
+        dbt: {
+            personal_access_token?: string;
+        };
+        project: {
+            httpPath?: CreateDatabricksCredentials['httpPath'];
+            dbtVersion?: DbtVersionOption;
+            personalAccessToken?: CreateDatabricksCredentials['personalAccessToken'];
+        };
+        serviceAccount?: {
+            token: string;
+            expirationTime: Date | null;
+        };
+        embed?: {
+            allowAllDashboards?: boolean;
+            secret?: string;
+        };
+    };
+    mcp: {
+        enabled: boolean;
+    };
+    customRoles: {
+        enabled: boolean;
+    };
+    analyticsEmbedSecret?: string;
+
+    dashboardComments: {
+        enabled: boolean;
+    };
+    echarts6: {
+        enabled: boolean;
     };
 };
 
@@ -345,19 +985,28 @@ export type SlackConfig = {
     port: number;
     socketMode?: boolean;
     channelsCachedTime: number;
+    supportUrl: string;
+    multiAgentChannelEnabled: boolean;
 };
 export type HeadlessBrowserConfig = {
     host?: string;
     port?: string;
     internalLightdashHost: string;
+    browserEndpoint: string;
 };
 export type S3Config = {
-    region?: string;
+    region: string;
+    endpoint: string;
+    bucket: string;
+    expirationTime?: number;
     accessKey?: string;
     secretKey?: string;
-    endpoint?: string;
-    bucket?: string;
-    expirationTime?: number;
+    forcePathStyle?: boolean;
+    /**
+     * Ordered list of credential sources to use for AWS SDK credential resolution.
+     * Comma-separated env var S3_USE_CREDENTIALS_FROM -> ["env","token_file","ini","container_metadata","instance_metadata"], etc.
+     */
+    useCredentialsFrom?: string[];
 };
 export type IntercomConfig = {
     appId: string;
@@ -419,6 +1068,7 @@ export type AuthGoogleConfig = {
     callbackPath: string;
     googleDriveApiKey: string | undefined;
     enabled: boolean;
+    enableGCloudADC: boolean;
 };
 
 type AuthOktaConfig = {
@@ -451,6 +1101,24 @@ type AuthOidcConfig = {
     scopes: string | undefined;
 } & JwtKeySetConfig;
 
+type AuthSnowflakeConfig = {
+    clientId: string | undefined;
+    clientSecret: string | undefined;
+    authorizationEndpoint: string | undefined;
+    tokenEndpoint: string | undefined;
+    callbackPath: string;
+    loginPath: string;
+};
+
+type AuthDatabricksConfig = {
+    clientId: string | undefined;
+    clientSecret: string | undefined;
+    authorizationEndpoint: string | undefined;
+    tokenEndpoint: string | undefined;
+    callbackPath: string;
+    loginPath: string;
+};
+
 export type AuthConfig = {
     disablePasswordAuthentication: boolean;
     /**
@@ -464,10 +1132,16 @@ export type AuthConfig = {
     oneLogin: AuthOneLoginConfig;
     azuread: AuthAzureADConfig;
     oidc: AuthOidcConfig;
+    snowflake: AuthSnowflakeConfig;
+    databricks: AuthDatabricksConfig;
     pat: {
         enabled: boolean;
         allowedOrgRoles: OrganizationMemberRole[];
         maxExpirationTimeInDays: number | undefined;
+    };
+    oauthServer?: {
+        accessTokenLifetime: number; // in seconds (default = 1 hour)
+        refreshTokenLifetime: number; // in seconds (default = 2 weeks)
     };
 };
 
@@ -476,6 +1150,7 @@ export type SmtpConfig = {
     port: number;
     secure: boolean;
     allowInvalidCertificate: boolean;
+    useAuth: boolean;
     auth: {
         user: string;
         pass: string | undefined;
@@ -528,11 +1203,31 @@ export const parseConfig = (): LightdashConfig => {
     const iframeEmbeddingEnabled = iframeAllowedDomains.length > 0;
     const corsEnabled = process.env.LIGHTDASH_CORS_ENABLED === 'true';
     const secureCookies = process.env.SECURE_COOKIES === 'true';
+    const useSecureBrowser = process.env.USE_SECURE_BROWSER === 'true';
+    const browserProtocol = useSecureBrowser ? 'wss' : 'ws';
+    const browserEndpoint = useSecureBrowser
+        ? `${browserProtocol}://${process.env.HEADLESS_BROWSER_HOST}`
+        : `${browserProtocol}://${process.env.HEADLESS_BROWSER_HOST}:${process.env.HEADLESS_BROWSER_PORT}`;
 
     if (iframeEmbeddingEnabled && !secureCookies) {
         throw new ParameterError(
             'To enable iframe embedding, SECURE_COOKIES must be set to true',
         );
+    }
+
+    const rawCopilotConfig = getAiConfig();
+    const copilotConfigParse =
+        aiCopilotConfigSchema.safeParse(rawCopilotConfig);
+
+    let copilotConfig: AiCopilotConfigSchemaType;
+    if (!copilotConfigParse.success) {
+        copilotConfig = rawCopilotConfig as AiCopilotConfigSchemaType;
+        Sentry.captureException(copilotConfigParse.error);
+        console.error(
+            `Invalid AI copilot configuration: ${copilotConfigParse.error.message}`,
+        );
+    } else {
+        copilotConfig = copilotConfigParse.data;
     }
 
     return {
@@ -549,7 +1244,7 @@ export const parseConfig = (): LightdashConfig => {
                 ),
                 frameAncestors: iframeEmbeddingEnabled
                     ? iframeAllowedDomains
-                    : ['https://*'],
+                    : [],
                 reportUri: process.env.LIGHTDASH_CSP_REPORT_URI,
             },
             crossOriginResourceSharingPolicy: {
@@ -561,9 +1256,10 @@ export const parseConfig = (): LightdashConfig => {
             ? {
                   host: process.env.EMAIL_SMTP_HOST,
                   port: parseInt(process.env.EMAIL_SMTP_PORT || '587', 10),
-                  secure: process.env.EMAIL_SMTP_SECURE !== 'false', // default to true
+                  secure: process.env.EMAIL_SMTP_SECURE !== 'false', // defaults to true
                   allowInvalidCertificate:
                       process.env.EMAIL_SMTP_ALLOW_INVALID_CERT === 'true',
+                  useAuth: process.env.EMAIL_SMTP_USE_AUTH !== 'false', // defaults to true
                   auth: {
                       user: process.env.EMAIL_SMTP_USER || '',
                       pass: process.env.EMAIL_SMTP_PASSWORD,
@@ -663,6 +1359,7 @@ export const parseConfig = (): LightdashConfig => {
                 callbackPath: '/oauth/redirect/google',
                 googleDriveApiKey: process.env.GOOGLE_DRIVE_API_KEY,
                 enabled: process.env.AUTH_GOOGLE_ENABLED === 'true',
+                enableGCloudADC: process.env.AUTH_ENABLE_GCLOUD_ADC === 'true',
             },
             okta: {
                 oauth2Issuer: process.env.AUTH_OKTA_OAUTH_ISSUER,
@@ -726,12 +1423,37 @@ export const parseConfig = (): LightdashConfig => {
                     'client_secret_basic',
                 scopes: process.env.AUTH_OIDC_SCOPES,
             },
+            snowflake: {
+                clientId: process.env.SNOWFLAKE_OAUTH_CLIENT_ID,
+                clientSecret: process.env.SNOWFLAKE_OAUTH_CLIENT_SECRET,
+                authorizationEndpoint:
+                    process.env.SNOWFLAKE_OAUTH_AUTHORIZATION_ENDPOINT,
+                tokenEndpoint: process.env.SNOWFLAKE_OAUTH_TOKEN_ENDPOINT,
+                loginPath: '/login/snowflake',
+                callbackPath: '/oauth/redirect/snowflake',
+            },
+            databricks: {
+                clientId: process.env.DATABRICKS_OAUTH_CLIENT_ID,
+                clientSecret: process.env.DATABRICKS_OAUTH_CLIENT_SECRET,
+                authorizationEndpoint:
+                    process.env.DATABRICKS_OAUTH_AUTHORIZATION_ENDPOINT,
+                tokenEndpoint: process.env.DATABRICKS_OAUTH_TOKEN_ENDPOINT,
+                loginPath: '/login/databricks',
+                callbackPath: '/oauth/redirect/databricks',
+            },
+            oauthServer: {
+                accessTokenLifetime:
+                    getIntegerFromEnvironmentVariable(
+                        'AUTH_OAUTH_SERVER_ACCESS_TOKEN_LIFETIME',
+                    ) || 60 * 60, // 1 hour
+                refreshTokenLifetime:
+                    getIntegerFromEnvironmentVariable(
+                        'AUTH_OAUTH_SERVER_REFRESH_TOKEN_LIFETIME',
+                    ) || 60 * 60 * 24 * 14, // 2 weeks
+            },
         },
         intercom: {
-            appId:
-                process.env.INTERCOM_APP_ID === undefined
-                    ? 'zppxyjpp'
-                    : process.env.INTERCOM_APP_ID,
+            appId: process.env.INTERCOM_APP_ID || '',
             apiBase:
                 process.env.INTERCOM_APP_BASE || 'https://api-iam.intercom.io',
         },
@@ -782,6 +1504,11 @@ export const parseConfig = (): LightdashConfig => {
                     'LIGHTDASH_CSV_CELLS_LIMIT',
                 ) || 100000,
             timezone: process.env.LIGHTDASH_QUERY_TIMEZONE,
+            maxPageSize:
+                getIntegerFromEnvironmentVariable(
+                    'LIGHTDASH_QUERY_MAX_PAGE_SIZE',
+                ) || 2500, // Defaults to default limit * 5
+            useSqlPivotResults: process.env.USE_SQL_PIVOT_RESULTS === 'true',
         },
         chart: {
             versionHistory: {
@@ -791,47 +1518,29 @@ export const parseConfig = (): LightdashConfig => {
                     ) || 3,
             },
         },
-        customVisualizations: {
-            enabled:
-                process.env.CUSTOM_VISUALIZATIONS_ENABLED === 'true' || false,
-        },
         pivotTable: {
             maxColumnLimit:
                 getIntegerFromEnvironmentVariable(
                     'LIGHTDASH_PIVOT_TABLE_MAX_COLUMN_LIMIT',
-                ) || 60,
-        },
-        s3: {
-            region: process.env.S3_REGION,
-            accessKey: process.env.S3_ACCESS_KEY,
-            secretKey: process.env.S3_SECRET_KEY,
-            bucket: process.env.S3_BUCKET,
-            endpoint: process.env.S3_ENDPOINT,
-            expirationTime: parseInt(
-                process.env.S3_EXPIRATION_TIME || '259200', // 3 days in seconds
-                10,
-            ),
+                ) || 200,
         },
         headlessBrowser: {
             port: process.env.HEADLESS_BROWSER_PORT,
             host: process.env.HEADLESS_BROWSER_HOST,
             internalLightdashHost:
                 process.env.INTERNAL_LIGHTDASH_HOST || siteUrl,
+            browserEndpoint,
         },
-        resultsCache: {
-            resultsEnabled: process.env.RESULTS_CACHE_ENABLED === 'true',
+        s3: parseBaseS3Config(),
+        results: {
+            cacheEnabled: process.env.RESULTS_CACHE_ENABLED === 'true',
             autocompleteEnabled:
                 process.env.AUTOCOMPLETE_CACHE_ENABLED === 'true',
             cacheStateTimeSeconds: parseInt(
                 process.env.CACHE_STALE_TIME_SECONDS || '86400', // A day in seconds
                 10,
             ),
-            s3: {
-                bucket: process.env.RESULTS_CACHE_S3_BUCKET,
-                region: process.env.RESULTS_CACHE_S3_REGION,
-                accessKey: process.env.RESULTS_CACHE_S3_ACCESS_KEY,
-                secretKey: process.env.RESULTS_CACHE_S3_SECRET_KEY,
-            },
+            s3: parseResultsS3Config(),
         },
         slack: {
             signingSecret: process.env.SLACK_SIGNING_SECRET,
@@ -845,6 +1554,9 @@ export const parseConfig = (): LightdashConfig => {
                 process.env.SLACK_CHANNELS_CACHED_TIME || '600000',
                 10,
             ), // 10 minutes
+            supportUrl: process.env.SLACK_SUPPORT_URL || '',
+            multiAgentChannelEnabled:
+                process.env.SLACK_MULTI_AGENT_CHANNEL_ENABLED === 'true',
         },
         scheduler: {
             enabled: process.env.SCHEDULER_ENABLED !== 'false',
@@ -855,6 +1567,32 @@ export const parseConfig = (): LightdashConfig => {
             screenshotTimeout: process.env.SCHEDULER_SCREENSHOT_TIMEOUT
                 ? parseInt(process.env.SCHEDULER_SCREENSHOT_TIMEOUT, 10)
                 : undefined,
+            tasks: parseAndSanitizeSchedulerTasks(),
+            queryHistory: {
+                cleanup: {
+                    enabled:
+                        process.env.QUERY_HISTORY_CLEANUP_ENABLED !== 'false', // true by default
+                    retentionDays:
+                        getIntegerFromEnvironmentVariable(
+                            'QUERY_HISTORY_RETENTION_DAYS',
+                        ) || 30,
+                    batchSize:
+                        getIntegerFromEnvironmentVariable(
+                            'QUERY_HISTORY_CLEANUP_BATCH_SIZE',
+                        ) || 1000,
+                    delayMs:
+                        getIntegerFromEnvironmentVariable(
+                            'QUERY_HISTORY_CLEANUP_DELAY_MS',
+                        ) || 100,
+                    maxBatches:
+                        getIntegerFromEnvironmentVariable(
+                            'QUERY_HISTORY_CLEANUP_MAX_BATCHES',
+                        ) || 100,
+                    schedule:
+                        process.env.QUERY_HISTORY_CLEANUP_SCHEDULE ||
+                        '0 2 * * *',
+                },
+            },
         },
         groups: {
             enabled: process.env.GROUPS_ENABLED === 'true',
@@ -899,17 +1637,47 @@ export const parseConfig = (): LightdashConfig => {
             filePath: process.env.LIGHTDASH_LOG_FILE_PATH || './logs/all.log',
         },
         ai: {
-            copilot: {
-                enabled: process.env.AI_COPILOT_ENABLED === 'true',
-                embeddingSearchEnabled:
-                    process.env.AI_COPILOT_EMBEDDING_SEARCH_ENABLED === 'true',
-            },
+            copilot: copilotConfig,
+            analyticsProjectUuid: process.env.AI_ANALYTICS_PROJECT_UUID,
+            analyticsDashboardUuid: process.env.AI_ANALYTICS_DASHBOARD_UUID,
         },
         embedding: {
             enabled: process.env.EMBEDDING_ENABLED === 'true',
+            allowAll: {
+                dashboards:
+                    process.env.EMBED_ALLOW_ALL_DASHBOARDS_BY_DEFAULT ===
+                    'true',
+                charts:
+                    process.env.EMBED_ALLOW_ALL_CHARTS_BY_DEFAULT === 'true',
+            },
+            events: {
+                enabled: process.env.EMBED_EVENT_SYSTEM_ENABLED === 'true',
+                rateLimiting: {
+                    maxEventsPerWindow:
+                        getIntegerFromEnvironmentVariable(
+                            'EMBED_EVENT_RATE_LIMIT_MAX_EVENTS',
+                        ) || 10,
+                    windowDurationMs:
+                        getIntegerFromEnvironmentVariable(
+                            'EMBED_EVENT_RATE_LIMIT_WINDOW_MS',
+                        ) || 1000,
+                },
+                allowedOrigins: iframeAllowedDomains,
+                enablePostMessage:
+                    process.env.EMBED_EVENT_SYSTEM_POST_MESSAGE_ENABLED ===
+                    'true',
+            },
         },
         scim: {
             enabled: process.env.SCIM_ENABLED === 'true',
+        },
+        serviceAccount: {
+            enabled: process.env.SERVICE_ACCOUNT_ENABLED === 'true',
+        },
+        organizationWarehouseCredentials: {
+            enabled:
+                process.env.ORGANIZATION_WAREHOUSE_CREDENTIALS_ENABLED ===
+                'true',
         },
         github: {
             appName: process.env.GITHUB_APP_NAME || 'lightdash-app-dev',
@@ -917,10 +1685,45 @@ export const parseConfig = (): LightdashConfig => {
                 process.env.GITHUB_REDIRECT_DOMAIN ||
                 siteUrl.split('.')[0].split('//')[1],
         },
+        gitlab: {
+            clientId: process.env.GITLAB_CLIENT_ID,
+            clientSecret: process.env.GITLAB_CLIENT_SECRET,
+            redirectDomain:
+                process.env.GITLAB_REDIRECT_DOMAIN ||
+                siteUrl.split('.')[0].split('//')[1],
+        },
         contentAsCode: {
             maxDownloads:
                 getIntegerFromEnvironmentVariable('MAX_DOWNLOADS_AS_CODE') ||
                 100,
+        },
+        appearance: {
+            overrideColorPalette: getHexColorsFromEnvironmentVariable(
+                process.env.OVERRIDE_COLOR_PALETTE_COLORS || undefined,
+            ),
+            // not required if overrideColorPalette is set
+            overrideColorPaletteName: process.env.OVERRIDE_COLOR_PALETTE_NAME,
+        },
+        microsoftTeams: {
+            enabled: process.env.MICROSOFT_TEAMS_ENABLED === 'true',
+        },
+        googleCloudPlatform: {
+            projectId: process.env.GOOGLE_CLOUD_PROJECT_ID,
+        },
+        initialSetup: getInitialSetupConfig(),
+        updateSetup: getUpdateSetupConfig(),
+        mcp: {
+            enabled: process.env.MCP_ENABLED === 'true',
+        },
+        customRoles: {
+            enabled: process.env.CUSTOM_ROLES_ENABLED === 'true',
+        },
+        analyticsEmbedSecret: process.env.ANALYTICS_EMBED_SECRET,
+        dashboardComments: {
+            enabled: process.env.DISABLE_DASHBOARD_COMMENTS !== 'true',
+        },
+        echarts6: {
+            enabled: process.env.ECHARTS_V6_ENABLED === 'true',
         },
     };
 };

@@ -4,6 +4,7 @@ import {
     Compact,
     CustomFormatType,
     DimensionType,
+    FieldType,
     Format,
     MetricType,
     NumberSeparator,
@@ -12,6 +13,7 @@ import {
 import { TimeFrames } from '../types/timeFrames';
 import {
     applyCustomFormat,
+    applyDefaultFormat,
     convertCustomFormatToFormatExpression,
     currencies,
     formatItemValue,
@@ -149,12 +151,24 @@ describe('Formatting', () => {
         });
 
         describe('when applying round', () => {
-            test('if round is undefined it should keep up to 3 decimal places', () => {
+            test('if round is undefined and custom format is not number format it should keep up to 3 decimal places', () => {
                 expect(applyCustomFormat(5.9)).toEqual('5.9');
                 expect(applyCustomFormat(5.99)).toEqual('5.99');
                 expect(applyCustomFormat(5.999)).toEqual('5.999');
                 expect(applyCustomFormat(5.9999)).toEqual('6');
                 expect(applyCustomFormat(5.99999)).toEqual('6');
+                expect(
+                    applyCustomFormat(5.9, {
+                        type: CustomFormatType.CURRENCY,
+                        currency: Format.USD,
+                    }),
+                ).toEqual('$5.90');
+            });
+
+            test('if round is undefined and format is number it should keep up to 3 decimal places', () => {
+                expect(
+                    applyCustomFormat(5.9, { type: CustomFormatType.NUMBER }),
+                ).toEqual('5.9');
             });
 
             test('when round zero it should return the right round', () => {
@@ -831,6 +845,57 @@ describe('Formatting', () => {
                 ),
             ).toEqual('1K');
         });
+
+        describe('formatItemValue timestamp handling', () => {
+            const mockTimestampField = {
+                type: DimensionType.TIMESTAMP,
+                name: 'test_timestamp',
+                table: 'test',
+                fieldType: FieldType.DIMENSION,
+                label: 'Test Timestamp',
+                sql: 'test.timestamp',
+                tableLabel: 'Test',
+                hidden: false,
+            };
+
+            test('should handle valid timestamp formats', () => {
+                const validTimestamps = [
+                    '2020-08-11T16:44:00Z',
+                    '2020-08-11 16:44:00',
+                    '2020-08-11T16:44:00.123Z',
+                    new Date('2020-08-11T16:44:00Z'),
+                    moment('2020-08-11T16:44:00Z'),
+                ];
+
+                validTimestamps.forEach((timestamp) => {
+                    const result = formatItemValue(
+                        mockTimestampField,
+                        timestamp,
+                    );
+                    expect(result).not.toBe('NaT');
+                    expect(result).not.toContain('Invalid');
+                });
+            });
+
+            test('should return NaT for invalid formats', () => {
+                const invalidTimestamps = [
+                    'invalid-date-string',
+                    '2020-13-45',
+                    '2020-08-11T25:00:00',
+                    '',
+                    'not-a-date',
+                    '2025-07-08 23:59:58.656000 Asia/Bangkok',
+                ];
+
+                invalidTimestamps.forEach((timestamp) => {
+                    const result = formatItemValue(
+                        mockTimestampField,
+                        timestamp,
+                    );
+                    expect(result).toBe('NaT');
+                });
+            });
+        });
     });
     describe('additional metric formatting', () => {
         test('format additional metric with custom format DATE', () => {
@@ -1285,6 +1350,75 @@ describe('Formatting', () => {
                 ).toEqual(expectedValue[i]),
             );
         });
+
+        test('formatValueWithExpression handles binary byte units correctly', () => {
+            // Test KIBIBYTES (should divide by 1024)
+            const kibibyteExpression = convertCustomFormatToFormatExpression({
+                type: CustomFormatType.BYTES_IEC,
+                compact: Compact.KIBIBYTES,
+            });
+            expect(kibibyteExpression).toEqual('#,##0.00"KiB"');
+            expect(
+                formatValueWithExpression(kibibyteExpression!, 2048),
+            ).toEqual('2.00KiB');
+
+            // Test MEBIBYTES (should divide by 1048576)
+            const mebibyteExpression = convertCustomFormatToFormatExpression({
+                type: CustomFormatType.BYTES_IEC,
+                compact: Compact.MEBIBYTES,
+            });
+            expect(mebibyteExpression).toEqual('#,##0.00"MiB"');
+            expect(
+                formatValueWithExpression(mebibyteExpression!, 2097152),
+            ).toEqual('2.00MiB');
+
+            // Test with rounding
+            const roundedExpression = convertCustomFormatToFormatExpression({
+                type: CustomFormatType.BYTES_IEC,
+                compact: Compact.KIBIBYTES,
+                round: 1,
+            });
+            expect(roundedExpression).toEqual('#,##0.0"KiB"');
+            expect(formatValueWithExpression(roundedExpression!, 1536)).toEqual(
+                '1.5KiB',
+            );
+        });
+
+        test('backend scenario: formatOptions converted to format expression', () => {
+            // This simulates the exact scenario from the backend PR
+            // where formatOptions are converted to format expressions
+            const formatOptions = {
+                type: CustomFormatType.BYTES_IEC,
+                compact: Compact.KIBIBYTES,
+            };
+
+            // Backend calls convertCustomFormatToFormatExpression
+            const formatExpression =
+                convertCustomFormatToFormatExpression(formatOptions);
+            expect(formatExpression).toEqual('#,##0.00"KiB"');
+
+            // Mock metric with format expression set by backend
+            const mockMetric = {
+                fieldType: FieldType.METRIC,
+                type: MetricType.NUMBER,
+                name: 'test_metric',
+                label: 'Test Metric',
+                table: 'test_table',
+                tableLabel: 'Test Table',
+                sql: 'test_sql',
+                hidden: false,
+                // Backend sets format expression instead of formatOptions
+                format: formatExpression || undefined,
+            } as const;
+
+            // Frontend uses formatItemValue which should call formatValueWithExpression
+            const result = formatItemValue(mockMetric, 2048);
+            expect(result).toEqual('2.00KiB'); // Should be correctly divided by 1024
+
+            // Test larger values
+            expect(formatItemValue(mockMetric, 1024)).toEqual('1.00KiB');
+            expect(formatItemValue(mockMetric, 3072)).toEqual('3.00KiB');
+        });
     });
 
     describe('isMomentInput', () => {
@@ -1420,6 +1554,183 @@ describe('Formatting', () => {
                 expect(formattedValueWithFormatExpression).toEqual(
                     formattedValueWithCustomFormat,
                 );
+            });
+        });
+    });
+
+    describe('applyDefaultFormatting', () => {
+        it('should handle boolean values', () => {
+            expect(applyDefaultFormat(true)).toBe('true');
+            expect(applyDefaultFormat(false)).toBe('false');
+        });
+        it('should handle falsey values', () => {
+            expect(applyDefaultFormat(undefined)).toBe('-');
+            expect(applyDefaultFormat(null)).toBe('∅');
+            expect(applyDefaultFormat(0)).toBe('0');
+            expect(applyDefaultFormat('')).toBe('');
+        });
+        it('should handle strings', () => {
+            expect(applyDefaultFormat('foo')).toBe('foo');
+        });
+        it('should handle numbers', () => {
+            expect(applyDefaultFormat(1234567)).toBe('1,234,567');
+            expect(applyDefaultFormat(1234)).toBe('1,234');
+            expect(applyDefaultFormat(-1234)).toBe('-1,234');
+        });
+    });
+
+    describe('formatItemValue with parameters', () => {
+        describe('conditional format expressions with ternary operators', () => {
+            it('should format currency based on parameter value - USD', () => {
+                const metricWithConditionalFormat = {
+                    ...metric,
+                    type: MetricType.NUMBER,
+                    format: '${ld.parameters.currency=="USD"?"$":"€"}0,0.00',
+                };
+                const parameters = { currency: 'USD' };
+
+                expect(
+                    formatItemValue(
+                        metricWithConditionalFormat,
+                        1234.56,
+                        false,
+                        parameters,
+                    ),
+                ).toBe('$1,234.56');
+            });
+
+            it('should format currency based on parameter value - EUR', () => {
+                const metricWithConditionalFormat = {
+                    ...metric,
+                    type: MetricType.NUMBER,
+                    format: '${ld.parameters.currency=="USD"?"$":"€"}0,0.00',
+                };
+                const parameters = { currency: 'EUR' };
+
+                expect(
+                    formatItemValue(
+                        metricWithConditionalFormat,
+                        1234.56,
+                        false,
+                        parameters,
+                    ),
+                ).toBe('€1,234.56');
+            });
+
+            it('should handle simple currency parameter substitution', () => {
+                const metricWithSimpleFormat = {
+                    ...metric,
+                    type: MetricType.NUMBER,
+                    format: '${ld.parameters.symbol}0,0.00',
+                };
+
+                expect(
+                    formatItemValue(metricWithSimpleFormat, 1234.56, false, {
+                        symbol: '£',
+                    }),
+                ).toBe('£1,234.56');
+
+                expect(
+                    formatItemValue(metricWithSimpleFormat, 1234.56, false, {
+                        symbol: '¥',
+                    }),
+                ).toBe('¥1,234.56');
+            });
+
+            it('should fall back to default formatting when parameters are not provided', () => {
+                const metricWithConditionalFormat = {
+                    ...metric,
+                    type: MetricType.NUMBER,
+                    format: '${ld.parameters.currency=="USD"?"$":"€"}0,0.00',
+                };
+
+                // Without parameters, should fall back to default number formatting
+                expect(
+                    formatItemValue(
+                        metricWithConditionalFormat,
+                        1234.56,
+                        false,
+                        undefined,
+                    ),
+                ).toBe('1,234.56');
+            });
+
+            it('should handle conditional rounding precision', () => {
+                const metricWithConditionalFormat = {
+                    ...metric,
+                    type: MetricType.NUMBER,
+                    format: '${ld.parameters.precision=="high"?"$":"$"}0,0${ld.parameters.precision=="high"?".00":""}',
+                };
+
+                expect(
+                    formatItemValue(
+                        metricWithConditionalFormat,
+                        1234.567,
+                        false,
+                        { precision: 'high' },
+                    ),
+                ).toBe('$1,234.57');
+
+                expect(
+                    formatItemValue(
+                        metricWithConditionalFormat,
+                        1234.567,
+                        false,
+                        { precision: 'low' },
+                    ),
+                ).toBe('$1,235');
+            });
+
+            it('should work with both ld.parameters and lightdash.parameters prefixes', () => {
+                const metricWithLdPrefix = {
+                    ...metric,
+                    type: MetricType.NUMBER,
+                    format: '${ld.parameters.symbol}0,0.00',
+                };
+
+                const metricWithLightdashPrefix = {
+                    ...metric,
+                    type: MetricType.NUMBER,
+                    format: '${lightdash.parameters.symbol}0,0.00',
+                };
+
+                expect(
+                    formatItemValue(metricWithLdPrefix, 1234.56, false, {
+                        symbol: '$',
+                    }),
+                ).toBe('$1,234.56');
+
+                expect(
+                    formatItemValue(metricWithLightdashPrefix, 1234.56, false, {
+                        symbol: '€',
+                    }),
+                ).toBe('€1,234.56');
+            });
+
+            it('should handle different currency symbols', () => {
+                const metricWithFormat = {
+                    ...metric,
+                    type: MetricType.NUMBER,
+                    format: '${ld.parameters.symbol}0,0.00',
+                };
+
+                expect(
+                    formatItemValue(metricWithFormat, 1000.5, false, {
+                        symbol: '$',
+                    }),
+                ).toBe('$1,000.50');
+
+                expect(
+                    formatItemValue(metricWithFormat, 1000.5, false, {
+                        symbol: '€',
+                    }),
+                ).toBe('€1,000.50');
+
+                expect(
+                    formatItemValue(metricWithFormat, 1000.5, false, {
+                        symbol: '£',
+                    }),
+                ).toBe('£1,000.50');
             });
         });
     });

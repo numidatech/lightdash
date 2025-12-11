@@ -1,6 +1,9 @@
 import { subject } from '@casl/ability';
 import {
+    ChartType,
     getCustomLabelsFromColumnProperties,
+    getHiddenTableFields,
+    getPivotConfig,
     type ApiScheduledDownloadCsv,
 } from '@lightdash/common';
 import { ActionIcon, Popover } from '@mantine/core';
@@ -10,12 +13,7 @@ import useEchartsCartesianConfig from '../../../hooks/echarts/useEchartsCartesia
 import { Can } from '../../../providers/Ability';
 import useApp from '../../../providers/App/useApp';
 import ExportSelector from '../../ExportSelector';
-import {
-    isBigNumberVisualizationConfig,
-    isCartesianVisualizationConfig,
-    isCustomVisualizationConfig,
-    isTableVisualizationConfig,
-} from '../../LightdashVisualization/types';
+import { isTableVisualizationConfig } from '../../LightdashVisualization/types';
 import { useVisualizationContext } from '../../LightdashVisualization/useVisualizationContext';
 import {
     COLLAPSABLE_CARD_ACTION_ICON_PROPS,
@@ -24,38 +22,38 @@ import {
 import MantineIcon from '../MantineIcon';
 import ChartDownloadOptions from './ChartDownloadOptions';
 
-interface ChartDownloadMenuProps {
-    projectUuid: string;
-    getCsvLink?: (
+export type ChartDownloadMenuProps = {
+    getDownloadQueryUuid: (
         limit: number | null,
-        onlyRaw: boolean,
-        showTableNames: boolean,
-        columnOrder: string[],
-        customLabels?: Record<string, string>,
-    ) => Promise<ApiScheduledDownloadCsv>;
+        exportPivotedResults: boolean,
+    ) => Promise<string>;
+    projectUuid: string;
+    chartName?: string;
     getGsheetLink?: (
         columnOrder: string[],
         showTableNames: boolean,
         customLabels?: Record<string, string>,
     ) => Promise<ApiScheduledDownloadCsv>;
-}
+};
 
 const ChartDownloadMenu: React.FC<ChartDownloadMenuProps> = memo(
-    ({ getCsvLink, getGsheetLink, projectUuid }) => {
-        const { chartRef, visualizationConfig, resultsData } =
-            useVisualizationContext();
+    ({ getDownloadQueryUuid, getGsheetLink, projectUuid, chartName }) => {
+        const {
+            chartRef,
+            visualizationConfig,
+            resultsData,
+            pivotDimensions,
+            chartConfig,
+            columnOrder,
+        } = useVisualizationContext();
 
         const eChartsOptions = useEchartsCartesianConfig();
 
         const disabled =
             (isTableVisualizationConfig(visualizationConfig) &&
-                resultsData?.rows &&
-                resultsData.rows.length <= 0) ||
-            !resultsData?.metricQuery ||
-            isBigNumberVisualizationConfig(visualizationConfig) ||
-            (isCartesianVisualizationConfig(visualizationConfig) &&
-                !eChartsOptions) ||
-            isCustomVisualizationConfig(visualizationConfig);
+                !resultsData?.totalResults) ||
+            (visualizationConfig.chartType === ChartType.CARTESIAN &&
+                !eChartsOptions);
 
         const { user } = useApp();
 
@@ -64,7 +62,29 @@ const ChartDownloadMenu: React.FC<ChartDownloadMenuProps> = memo(
             [chartRef],
         );
 
-        return isTableVisualizationConfig(visualizationConfig) && getCsvLink ? (
+        // Build pivot config with pivot dimensions
+        const pivotConfig = getPivotConfig({
+            chartConfig,
+            pivotConfig: pivotDimensions
+                ? {
+                      columns: pivotDimensions,
+                  }
+                : undefined,
+            tableConfig: {
+                columnOrder,
+            },
+        });
+
+        // ChartDownloadMenu downloads pivoted results when they are available
+        const getChartDownloadQueryUuid = useCallback(
+            (limit: number | null) => {
+                return getDownloadQueryUuid(limit, true);
+            },
+            [getDownloadQueryUuid],
+        );
+
+        return isTableVisualizationConfig(visualizationConfig) &&
+            getChartDownloadQueryUuid ? (
             <Can
                 I="manage"
                 this={subject('ExportCsv', {
@@ -83,30 +103,32 @@ const ChartDownloadMenu: React.FC<ChartDownloadMenuProps> = memo(
                             {...COLLAPSABLE_CARD_ACTION_ICON_PROPS}
                             disabled={disabled}
                         >
-                            <MantineIcon icon={IconShare2} color="gray" />
+                            <MantineIcon icon={IconShare2} />
                         </ActionIcon>
                     </Popover.Target>
 
                     <Popover.Dropdown>
                         <ExportSelector
                             projectUuid={projectUuid}
-                            rows={resultsData?.rows}
-                            getCsvLink={async (
-                                limit: number | null,
-                                onlyRaw: boolean,
-                            ) =>
-                                getCsvLink(
-                                    limit,
-                                    onlyRaw,
-                                    visualizationConfig.chartConfig
-                                        .showTableNames,
-                                    visualizationConfig.chartConfig.columnOrder,
-                                    getCustomLabelsFromColumnProperties(
-                                        visualizationConfig.chartConfig
-                                            .columnProperties,
-                                    ),
-                                )
+                            totalResults={resultsData?.totalResults}
+                            getDownloadQueryUuid={getChartDownloadQueryUuid}
+                            columnOrder={
+                                visualizationConfig.chartConfig.columnOrder
                             }
+                            customLabels={getCustomLabelsFromColumnProperties(
+                                visualizationConfig.chartConfig
+                                    .columnProperties,
+                            )}
+                            hiddenFields={getHiddenTableFields({
+                                type: ChartType.TABLE,
+                                config: visualizationConfig.chartConfig
+                                    .validConfig,
+                            })}
+                            showTableNames={
+                                visualizationConfig.chartConfig.showTableNames
+                            }
+                            chartName={chartName}
+                            pivotConfig={pivotConfig}
                             getGsheetLink={
                                 getGsheetLink === undefined
                                     ? undefined
@@ -128,7 +150,7 @@ const ChartDownloadMenu: React.FC<ChartDownloadMenuProps> = memo(
                 </Popover>
             </Can>
         ) : isTableVisualizationConfig(visualizationConfig) &&
-          !getCsvLink ? null : (
+          !getDownloadQueryUuid ? null : (
             <Popover
                 {...COLLAPSABLE_CARD_POPOVER_PROPS}
                 disabled={disabled}
@@ -140,7 +162,7 @@ const ChartDownloadMenu: React.FC<ChartDownloadMenuProps> = memo(
                         {...COLLAPSABLE_CARD_ACTION_ICON_PROPS}
                         disabled={disabled}
                     >
-                        <MantineIcon icon={IconShare2} color="gray" />
+                        <MantineIcon icon={IconShare2} />
                     </ActionIcon>
                 </Popover.Target>
 

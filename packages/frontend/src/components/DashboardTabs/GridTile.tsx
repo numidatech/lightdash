@@ -5,12 +5,10 @@ import {
     type Dashboard as IDashboard,
 } from '@lightdash/common';
 import { Box } from '@mantine/core';
-import { useProfiler } from '@sentry/react';
 import { memo, type FC } from 'react';
 import ChartTile from '../DashboardTiles/DashboardChartTile';
 import LoomTile from '../DashboardTiles/DashboardLoomTile';
 import MarkdownTile from '../DashboardTiles/DashboardMarkdownTile';
-import SemanticViewerChartTile from '../DashboardTiles/DashboardSemanticViewerChartTile';
 import SqlChartTile from '../DashboardTiles/DashboardSqlChartTile';
 import TileBase from '../DashboardTiles/TileBase';
 
@@ -26,9 +24,16 @@ const GridTile: FC<
     }
 > = memo((props) => {
     const { tile } = props;
-    useProfiler(`Dashboard-${tile.type}`);
 
     if (props.locked) {
+        // Allow markdown and loom tiles to show even when locked since they are not filterable
+        if (tile.type === DashboardTileTypes.MARKDOWN) {
+            return <MarkdownTile {...props} tile={tile} />;
+        }
+        if (tile.type === DashboardTileTypes.LOOM) {
+            return <LoomTile {...props} tile={tile} />;
+        }
+
         return (
             <Box h="100%">
                 <TileBase isLoading={false} title={''} {...props} />
@@ -45,8 +50,6 @@ const GridTile: FC<
             return <LoomTile {...props} tile={tile} />;
         case DashboardTileTypes.SQL_CHART:
             return <SqlChartTile {...props} tile={tile} />;
-        case DashboardTileTypes.SEMANTIC_VIEWER_CHART:
-            return <SemanticViewerChartTile {...props} tile={tile} />;
         default: {
             return assertUnreachable(
                 tile,

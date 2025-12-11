@@ -24,10 +24,16 @@ import {
 } from '@mantine/core';
 import { useForm, zodResolver } from '@mantine/form';
 import { IconX } from '@tabler/icons-react';
+import cloneDeep from 'lodash/cloneDeep';
 import { useEffect, useMemo, type FC } from 'react';
 import { z } from 'zod';
+import {
+    explorerActions,
+    selectCustomDimensions,
+    useExplorerDispatch,
+    useExplorerSelector,
+} from '../../../features/explorer/store';
 import useToaster from '../../../hooks/toaster/useToaster';
-import useExplorerContext from '../../../providers/Explorer/useExplorerContext';
 import MantineIcon from '../../common/MantineIcon';
 
 // TODO: preview custom dimension results
@@ -46,19 +52,11 @@ export const CustomBinDimensionModal: FC<{
     item: Dimension | CustomBinDimension;
 }> = ({ isEditing, item }) => {
     const { showToastSuccess } = useToaster();
-    const toggleModal = useExplorerContext(
-        (context) => context.actions.toggleCustomDimensionModal,
-    );
-    const customDimensions = useExplorerContext(
-        (context) =>
-            context.state.unsavedChartVersion.metricQuery.customDimensions,
-    );
-    const addCustomDimension = useExplorerContext(
-        (context) => context.actions.addCustomDimension,
-    );
-    const editCustomDimension = useExplorerContext(
-        (context) => context.actions.editCustomDimension,
-    );
+    const dispatch = useExplorerDispatch();
+    const customDimensions = useExplorerSelector(selectCustomDimensions);
+
+    const toggleModal = () =>
+        dispatch(explorerActions.toggleCustomDimensionModal());
 
     const formSchema = z.object({
         customDimensionLabel: z.string().refine(
@@ -144,7 +142,9 @@ export const CustomBinDimensionModal: FC<{
 
             setFieldValue(
                 'binConfig.customRange',
-                item.customRange ? item.customRange : DEFAULT_CUSTOM_RANGE,
+                item.customRange
+                    ? cloneDeep(item.customRange)
+                    : DEFAULT_CUSTOM_RANGE,
             );
         }
     }, [setFieldValue, item, isEditing]);
@@ -164,36 +164,42 @@ export const CustomBinDimensionModal: FC<{
             );
 
             if (isEditing && isCustomDimension(item)) {
-                editCustomDimension(
-                    {
-                        id: item.id,
-                        name: values.customDimensionLabel,
-                        type: CustomDimensionType.BIN,
-                        dimensionId: item.dimensionId,
-                        binType: values.binType,
-                        binNumber: values.binConfig.fixedNumber.binNumber,
-                        binWidth: values.binConfig.fixedWidth.binWidth,
-                        table: item.table,
-                        customRange: values.binConfig.customRange,
-                    },
-                    item.id,
+                // Edit by updating the entire array
+                const updatedDimension: CustomBinDimension = {
+                    id: item.id,
+                    name: values.customDimensionLabel,
+                    type: CustomDimensionType.BIN,
+                    dimensionId: item.dimensionId,
+                    binType: values.binType,
+                    binNumber: values.binConfig.fixedNumber.binNumber,
+                    binWidth: values.binConfig.fixedWidth.binWidth,
+                    table: item.table,
+                    customRange: values.binConfig.customRange,
+                };
+                const updatedDimensions = (customDimensions ?? []).map((dim) =>
+                    dim.id === item.id ? updatedDimension : dim,
+                );
+                dispatch(
+                    explorerActions.setCustomDimensions(updatedDimensions),
                 );
 
                 showToastSuccess({
                     title: 'Custom dimension edited successfully',
                 });
             } else {
-                addCustomDimension({
-                    id: sanitizedId,
-                    name: values.customDimensionLabel,
-                    type: CustomDimensionType.BIN,
-                    dimensionId: getItemId(item),
-                    binType: values.binType,
-                    binNumber: values.binConfig.fixedNumber.binNumber,
-                    binWidth: values.binConfig.fixedWidth.binWidth,
-                    table: item.table,
-                    customRange: values.binConfig.customRange,
-                });
+                dispatch(
+                    explorerActions.addCustomDimension({
+                        id: sanitizedId,
+                        name: values.customDimensionLabel,
+                        type: CustomDimensionType.BIN,
+                        dimensionId: getItemId(item),
+                        binType: values.binType,
+                        binNumber: values.binConfig.fixedNumber.binNumber,
+                        binWidth: values.binConfig.fixedWidth.binWidth,
+                        table: item.table,
+                        customRange: values.binConfig.customRange,
+                    }),
+                );
 
                 showToastSuccess({
                     title: 'Custom dimension added successfully',
@@ -223,7 +229,7 @@ export const CustomBinDimensionModal: FC<{
             onClick={(e) => e.stopPropagation()}
             opened={true}
             onClose={() => {
-                toggleModal(undefined);
+                toggleModal();
                 form.reset();
             }}
             title={
@@ -316,7 +322,7 @@ export const CustomBinDimensionModal: FC<{
                                             >
                                                 <Text
                                                     w={100}
-                                                    color="gray.6"
+                                                    color="ldGray.6"
                                                     fw="400"
                                                 >
                                                     &lt;{toProps.value}{' '}
@@ -344,7 +350,7 @@ export const CustomBinDimensionModal: FC<{
                                             >
                                                 <Text
                                                     w={100}
-                                                    color="gray.6"
+                                                    color="ldGray.6"
                                                     fw="400"
                                                 >
                                                     ≥{fromProps.value}{' '}
@@ -356,7 +362,7 @@ export const CustomBinDimensionModal: FC<{
                                                     type="number"
                                                     {...fromProps}
                                                 />
-                                                <Text color="gray.6" fw="400">
+                                                <Text color="ldGray.6" fw="400">
                                                     and above{' '}
                                                 </Text>
                                             </Flex>
@@ -370,7 +376,7 @@ export const CustomBinDimensionModal: FC<{
                                             >
                                                 <Text
                                                     w={100}
-                                                    color="gray.6"
+                                                    color="ldGray.6"
                                                     fw="400"
                                                 >
                                                     ≥{fromProps.value} and &lt;
@@ -383,7 +389,7 @@ export const CustomBinDimensionModal: FC<{
                                                     type="number"
                                                     {...fromProps}
                                                 />
-                                                <Text color="gray.6" fw="400">
+                                                <Text color="ldGray.6" fw="400">
                                                     to{' '}
                                                 </Text>
 

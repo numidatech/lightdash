@@ -1,5 +1,5 @@
 import { type DashboardMarkdownTile } from '@lightdash/common';
-import { Menu, Text } from '@mantine/core';
+import { Menu, Text, useMantineTheme } from '@mantine/core';
 import { IconCopy } from '@tabler/icons-react';
 import MarkdownPreview from '@uiw/react-markdown-preview';
 import React, { useCallback, useMemo, useState, type FC } from 'react';
@@ -20,6 +20,8 @@ export type Props = Pick<
 };
 
 const MarkdownTile: FC<Props> = (props) => {
+    const theme = useMantineTheme();
+
     const {
         tile: {
             properties: { title, content },
@@ -105,16 +107,19 @@ const MarkdownTile: FC<Props> = (props) => {
                     overflow: 'auto',
                     '.wmde-markdown': {
                         fontSize: '14px',
+                        backgroundColor: 'transparent',
                     },
                 }}
             >
-                <MarkdownPreview
-                    className="markdown-tile"
-                    source={content}
-                    rehypePlugins={[
-                        [rehypeExternalLinks, { target: '_blank' }],
-                    ]}
-                />
+                <div data-color-mode={theme.colorScheme}>
+                    <MarkdownPreview
+                        className="markdown-tile"
+                        source={content}
+                        rehypePlugins={[
+                            [rehypeExternalLinks, { target: '_blank' }],
+                        ]}
+                    />
+                </div>
             </Text>
         </TileBase>
     );

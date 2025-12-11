@@ -93,12 +93,14 @@ const Sidebar: FC<React.PropsWithChildren<Props>> = ({
                                 pb={0}
                                 w={sidebarWidth}
                                 style={style}
+                                radius={0}
                                 sx={{
                                     display: 'flex',
                                     flexGrow: 1,
                                     flexDirection: 'column',
                                     overflowY: 'auto',
                                 }}
+                                data-testid="common-sidebar"
                             >
                                 {children}
                             </Paper>
@@ -120,7 +122,11 @@ const Sidebar: FC<React.PropsWithChildren<Props>> = ({
                                               background:
                                                   theme.fn.linearGradient(
                                                       90,
-                                                      theme.colors.blue[3],
+                                                      theme.colorScheme ===
+                                                          'dark'
+                                                          ? theme.colors.blue[5]
+                                                          : theme.colors
+                                                                .blue[3],
                                                       'transparent',
                                                   ),
                                           }
@@ -129,7 +135,12 @@ const Sidebar: FC<React.PropsWithChildren<Props>> = ({
                                                   background:
                                                       theme.fn.linearGradient(
                                                           90,
-                                                          theme.colors.blue[1],
+                                                          theme.colorScheme ===
+                                                              'dark'
+                                                              ? theme.colors
+                                                                    .blue[7]
+                                                              : theme.colors
+                                                                    .blue[1],
                                                           'transparent',
                                                       ),
                                               }),

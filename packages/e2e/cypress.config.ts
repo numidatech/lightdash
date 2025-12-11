@@ -2,6 +2,10 @@ import { defineConfig } from 'cypress';
 import cypressSplit from 'cypress-split';
 import { unlinkSync } from 'fs';
 
+// If running natively, we want to use environment variables from the host machine
+// to be added to Cypress.env()
+const env = process.env.RUNTIME === 'native' ? process.env : {};
+
 export default defineConfig({
     viewportWidth: 1920,
     viewportHeight: 1080,
@@ -35,12 +39,10 @@ export default defineConfig({
                         );
                         launchOptions.args.push('--disable-gpu');
                     }
-
                     launchOptions.args.push(
                         '--js-flags=--max-old-space-size=3500',
                     );
                 }
-
                 return launchOptions;
             });
 
@@ -54,6 +56,7 @@ export default defineConfig({
                             (attempt) => attempt.state === 'failed',
                         ),
                     );
+
                     if (!failures) {
                         // delete the video if the spec passed and no tests retried
                         unlinkSync(results.video);
@@ -65,6 +68,7 @@ export default defineConfig({
             return config;
         },
     },
+    env,
 
     video: true,
     videoCompression: true,

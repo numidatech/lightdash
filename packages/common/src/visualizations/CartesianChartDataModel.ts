@@ -1,4 +1,5 @@
-import { intersectionBy } from 'lodash';
+import intersectionBy from 'lodash/intersectionBy';
+import { getFirstIndexColumns } from '../pivot/utils';
 import { type AnyType } from '../types/any';
 import {
     capitalize,
@@ -10,19 +11,46 @@ import {
 import { type Organization } from '../types/organization';
 import { type RawResultRow } from '../types/results';
 import {
+    CartesianSeriesType,
     ChartKind,
     ECHARTS_DEFAULT_COLORS,
-    type CartesianSeriesType,
 } from '../types/savedCharts';
-import { type SemanticLayerQuery } from '../types/semanticLayer';
-import { applyCustomFormat } from '../utils/formatting';
+import { type SqlRunnerQuery } from '../types/sqlRunner';
+import { applyCustomFormat, formatNumberValue } from '../utils/formatting';
+import {
+    getAxisLabelStyle,
+    getAxisLineStyle,
+    getAxisPointerStyle,
+    getAxisTickStyle,
+    getAxisTitleStyle,
+} from './helpers/styles/axisStyles';
+import {
+    applyRoundedCornersToSqlRunnerStackData,
+    calculateDynamicBorderRadius,
+    getBarBorderRadius,
+    getBarStyle,
+} from './helpers/styles/barChartStyles';
+import {
+    getBarChartGridStyle,
+    getLineChartGridStyle,
+} from './helpers/styles/gridStyles';
+import { getLegendStyle } from './helpers/styles/legendStyles';
+import { getTooltipStyle } from './helpers/styles/tooltipStyles';
+import { getValueLabelStyle } from './helpers/styles/valueLabelStyles';
+import {
+    buildSqlRunnerCartesianTooltipFormatter,
+    createStack100TooltipFormatter,
+    transformToPercentageStacking,
+} from './helpers/tooltipFormatter';
 import {
     SortByDirection,
+    StackType,
     VizAggregationOptions,
     VizIndexType,
     type AxisSide,
     type PivotChartData,
     type PivotChartLayout,
+    type SqlRunnerEChartsSeries,
     type VizCartesianChartConfig,
     type VizCartesianChartOptions,
     type VizConfigErrors,
@@ -49,6 +77,15 @@ type CartesianChartKind = Extract<
     ChartKind,
     ChartKind.LINE | ChartKind.VERTICAL_BAR
 >;
+
+export enum ValueLabelPositionOptions {
+    HIDDEN = 'hidden',
+    TOP = 'top',
+    BOTTOM = 'bottom',
+    LEFT = 'left',
+    RIGHT = 'right',
+    INSIDE = 'inside',
+}
 
 export class CartesianChartDataModel {
     private readonly resultsRunner: IResultsRunner;
@@ -82,7 +119,25 @@ export class CartesianChartDataModel {
 
     // Get the formatter for the value label,
     // which has more complex inputs
-    static getValueFormatter(format: Format | undefined) {
+    static getValueFormatter(
+        format: Format | undefined,
+        isStack100: boolean = false,
+    ) {
+        // For 100% stacked charts, always format as percentage
+        // because all values are already converted to 0-100 range
+        if (isStack100) {
+            return (params: AnyType) => {
+                const value =
+                    params.value[params.dimensionNames[params.encode.y[0]]];
+                return typeof value === 'number'
+                    ? `${formatNumberValue(value, {
+                          type: CustomFormatType.NUMBER,
+                          round: 1,
+                      })}%`
+                    : `${value}%`;
+            };
+        }
+
         if (format === Format.PERCENT) {
             // Echarts doesn't export the types for this function
             return (params: AnyType) => {
@@ -348,7 +403,7 @@ export class CartesianChartDataModel {
         return color;
     }
 
-    async getTransformedData(query?: SemanticLayerQuery) {
+    async getTransformedData(query?: SqlRunnerQuery) {
         if (!query) {
             return undefined;
         }
@@ -362,10 +417,9 @@ export class CartesianChartDataModel {
         filters,
         limit,
         sql,
-    }: Pick<
-        SemanticLayerQuery,
-        'sortBy' | 'filters' | 'limit' | 'sql'
-    >): Promise<PivotChartData | undefined> {
+    }: Pick<SqlRunnerQuery, 'sortBy' | 'filters' | 'limit' | 'sql'>): Promise<
+        PivotChartData | undefined
+    > {
         const allDimensionNames = new Set(
             this.resultsRunner
                 .getPivotQueryDimensions()
@@ -403,8 +457,8 @@ export class CartesianChartDataModel {
                 [[], []],
             );
         const { customMetrics, metrics } = this.fieldConfig?.y?.reduce<{
-            customMetrics: Required<SemanticLayerQuery>['customMetrics'];
-            metrics: SemanticLayerQuery['metrics'];
+            customMetrics: Required<SqlRunnerQuery>['customMetrics'];
+            metrics: SqlRunnerQuery['metrics'];
         }>(
             (acc, field) => {
                 if (allDimensionNames.has(field.reference)) {
@@ -433,7 +487,7 @@ export class CartesianChartDataModel {
                 ) ?? [],
             values: metrics.map((metric) => metric.name),
         };
-        const semanticQuery: SemanticLayerQuery = {
+        const query: SqlRunnerQuery = {
             sql,
             limit,
             filters,
@@ -444,7 +498,7 @@ export class CartesianChartDataModel {
             pivot,
             customMetrics,
         };
-        const pivotedChartData = await this.getTransformedData(semanticQuery);
+        const pivotedChartData = await this.getTransformedData(query);
 
         this.pivotedChartData = pivotedChartData;
 
@@ -458,9 +512,12 @@ export class CartesianChartDataModel {
           }
         | undefined {
         const transformedData = this.pivotedChartData;
+        const firstIndexColumn = getFirstIndexColumns(
+            transformedData?.indexColumn,
+        );
         if (
             !transformedData ||
-            !transformedData.indexColumn ||
+            !firstIndexColumn ||
             !transformedData.results ||
             !transformedData.results.length
         ) {
@@ -469,7 +526,7 @@ export class CartesianChartDataModel {
 
         return {
             columns: [
-                transformedData.indexColumn.reference,
+                firstIndexColumn.reference,
                 ...transformedData.valuesColumns.map(
                     (valueColumn) => valueColumn.pivotColumnName,
                 ),
@@ -485,6 +542,25 @@ export class CartesianChartDataModel {
         }
 
         return transformedData.fileUrl;
+    }
+
+    // Helper function to convert data to percentages for 100% stacking
+    private static convertToPercentageStacking(
+        transformedData: PivotChartData,
+        xAxisReference: string,
+    ): {
+        transformedResults: RawResultRow[];
+        originalValues: Map<string, Map<string, number>>;
+    } {
+        const yFieldRefs = transformedData.valuesColumns.map(
+            (col) => col.pivotColumnName,
+        );
+
+        return transformToPercentageStacking(
+            transformedData.results,
+            xAxisReference,
+            yFieldRefs,
+        );
     }
 
     getSpec(
@@ -505,15 +581,53 @@ export class CartesianChartDataModel {
         const defaultSeriesType =
             type === ChartKind.VERTICAL_BAR ? 'bar' : 'line';
 
-        const shouldStack = display?.stack === true;
+        // Handle both old boolean format and new StackType string format
+        const stackValue = display?.stack;
+        const shouldStack =
+            stackValue === true ||
+            stackValue === StackType.NORMAL ||
+            stackValue === StackType.PERCENT;
+        const shouldStack100 = stackValue === StackType.PERCENT;
 
-        const xAxisReference = transformedData.indexColumn?.reference;
+        const xAxisReference = getFirstIndexColumns(
+            transformedData?.indexColumn,
+        )?.reference;
+
+        // Apply 100% stacking transformation if needed
+        let dataToRender = transformedData.results;
+        let originalValues: Map<string, Map<string, number>> | undefined;
+
+        if (shouldStack100 && xAxisReference) {
+            const result = CartesianChartDataModel.convertToPercentageStacking(
+                transformedData,
+                xAxisReference,
+            );
+            dataToRender = result.transformedResults;
+            originalValues = result.originalValues;
+        }
 
         const leftYAxisSeriesReferences: string[] = [];
         const rightYAxisSeriesReferences: string[] = [];
 
-        const series = transformedData.valuesColumns.map(
-            (seriesColumn, index) => {
+        // Calculate dynamic border radius for non-stacked bars
+        const barSeriesCount = transformedData.valuesColumns.filter(
+            (col) =>
+                (display?.series?.[col.pivotColumnName]?.type ??
+                    display?.series?.[col.referenceField]?.type ??
+                    defaultSeriesType) === 'bar',
+        ).length;
+        const isHorizontal = false; // CartesianChartDataModel doesn't support flipAxes
+        const nonStackedBorderRadius = !shouldStack
+            ? calculateDynamicBorderRadius(
+                  dataToRender.length,
+                  barSeriesCount,
+                  false, // isStacked
+                  isHorizontal,
+              )
+            : undefined;
+
+        let series: SqlRunnerEChartsSeries[] =
+            transformedData.valuesColumns.map((seriesColumn, index) => {
                 const seriesColumnId = seriesColumn.pivotColumnName;
 
                 // NOTE: seriesColumnId is the post pivoted column name and we now store the display based on that.
@@ -548,6 +662,35 @@ export class CartesianChartDataModel {
                     leftYAxisSeriesReferences.push(seriesColumnId);
                 }
 
+                // Apply value label styling
+                const valueLabelStyle = seriesValueLabelPosition
+                    ? getValueLabelStyle(
+                          seriesValueLabelPosition as
+                              | 'left'
+                              | 'right'
+                              | 'top'
+                              | 'bottom'
+                              | 'inside',
+                          seriesType as CartesianSeriesType,
+                      )
+                    : {};
+
+                // For non-stacked bars, apply border radius directly
+                const itemStyle =
+                    seriesType === 'bar' && !shouldStack
+                        ? {
+                              borderRadius: getBarBorderRadius(
+                                  isHorizontal,
+                                  true, // isStackEnd - always true for non-stacked bars
+                                  nonStackedBorderRadius,
+                              ),
+                          }
+                        : undefined;
+
+                // Determine if symbols should be shown for line/area charts
+                const isLineOrArea = seriesType === CartesianSeriesType.LINE;
+                const showSymbol = isLineOrArea && dataToRender.length <= 100;
+
                 return {
                     dimensions: [xAxisReference, seriesColumnId],
                     type: seriesType ?? defaultSeriesType,
@@ -568,6 +711,16 @@ export class CartesianChartDataModel {
                     // NOTE: this yAxisIndex is the echarts option, NOT the yAxisIndex
                     // we had been storing in the display object.
                     yAxisIndex: whichYAxis,
+                    emphasis: { focus: 'series' },
+                    // Connect nulls for line/area series
+                    ...(isLineOrArea ? { connectNulls: true } : {}),
+                    // Show symbols for line/area series based on data point count
+                    ...(isLineOrArea
+                        ? {
+                              showSymbol,
+                              symbolSize: showSymbol ? 4 : 0,
+                          }
+                        : {}),
                     tooltip: {
                         valueFormatter: seriesFormat
                             ? CartesianChartDataModel.getTooltipFormatter(
@@ -579,11 +732,15 @@ export class CartesianChartDataModel {
                         ? {
                               show: seriesValueLabelPosition !== 'hidden',
                               position: seriesValueLabelPosition,
-                              formatter: seriesFormat
-                                  ? CartesianChartDataModel.getValueFormatter(
-                                        seriesFormat,
-                                    )
-                                  : undefined,
+                              ...valueLabelStyle,
+                              // For stack100, always apply formatter even without seriesFormat
+                              formatter:
+                                  shouldStack100 || seriesFormat
+                                      ? CartesianChartDataModel.getValueFormatter(
+                                            seriesFormat,
+                                            shouldStack100,
+                                        )
+                                      : undefined,
                           }
                         : undefined,
                     labelLayout: {
@@ -595,42 +752,144 @@ export class CartesianChartDataModel {
                             index,
                             orgColors,
                         ),
+                    ...(seriesType === 'bar' ? getBarStyle() : {}),
+                    // Apply border radius for non-stacked bars
+                    ...(itemStyle ? { itemStyle } : {}),
                 };
-            },
-        );
+            });
+
+        // Apply rounded corners to stacked bars
+        // Skip for 100% stacking to keep data in dataset mode for tooltips
+        if (shouldStack && !shouldStack100 && defaultSeriesType === 'bar') {
+            const stackedBarSeriesCount = series.filter(
+                (s) => s.type === 'bar',
+            ).length;
+            const dataPointCount = dataToRender.length;
+            const isStacked = true;
+
+            // Calculate dynamic border radius based on bar width
+            const radius = calculateDynamicBorderRadius(
+                dataPointCount,
+                stackedBarSeriesCount,
+                isStacked,
+                isHorizontal,
+            );
+
+            // Apply rounded corners to stack data
+            // This converts to tuple mode but tooltips don't need dataset mode for regular stacking
+            series = applyRoundedCornersToSqlRunnerStackData(
+                series,
+                dataToRender,
+                {
+                    radius,
+                    isHorizontal,
+                    legendSelected: undefined,
+                },
+            );
+        }
 
         const xAxisType =
             display?.xAxis?.type ||
-            transformedData.indexColumn?.type ||
+            getFirstIndexColumns(transformedData.indexColumn)?.type ||
             DEFAULT_X_AXIS_TYPE;
+
+        // Determine tooltip configuration
+        let tooltipConfig = {};
+        if (shouldStack100 && xAxisReference && originalValues) {
+            // Custom formatter for 100% stacking: show percentage and actual count
+            tooltipConfig = {
+                formatter: createStack100TooltipFormatter(
+                    originalValues,
+                    (param) => {
+                        const { encode, dimensionNames } = param;
+                        if (!encode) return undefined;
+
+                        // For SQL Runner dataset mode, encode.y is a string (field name)
+                        // For tuple mode, it could be a number (index)
+                        const yField = encode.y;
+
+                        if (typeof yField === 'string') {
+                            // Dataset mode - return the field name directly
+                            return yField;
+                        }
+
+                        if (!dimensionNames) return undefined;
+
+                        // Tuple mode - get field name from dimensionNames using index
+                        const yFieldIndex = Array.isArray(yField)
+                            ? yField[0]
+                            : yField;
+
+                        if (typeof yFieldIndex === 'number') {
+                            return dimensionNames[yFieldIndex];
+                        }
+
+                        return undefined;
+                    },
+                    xAxisReference,
+                ),
+            };
+        } else if (xAxisType === VizIndexType.TIME && xAxisReference) {
+            tooltipConfig = {
+                axisPointer: {
+                    label: {
+                        // ECharts converts timezone values to local time
+                        // so we need to show the original value in the tooltip
+                        // this function is loosely typed because we don't have ECharts types in common
+                        formatter: (params: {
+                            seriesData: {
+                                value: Record<string, unknown>;
+                            }[];
+                        }) => params.seriesData[0]?.value[xAxisReference],
+                    },
+                },
+            };
+        }
+
+        // Determine legend icon type - use 'line' only when ALL series are line/area
+        const allSeriesAreLineOrArea = series.every(
+            (s) => s.type === 'line' || s.type === 'area',
+        );
+        const legendIconType = allSeriesAreLineOrArea ? 'line' : 'square';
+
+        // Determine grid style based on chart type
+        const isBarChart = defaultSeriesType === 'bar';
+        const gridStyle = isBarChart
+            ? getBarChartGridStyle()
+            : getLineChartGridStyle();
+
+        // Show legend when there are multiple series
+        const showLegend = transformedData.valuesColumns.length > 1;
 
         const spec = {
             tooltip: {
+                ...getTooltipStyle(),
                 trigger: 'axis',
                 appendToBody: true, // Similar to rendering a tooltip in a Portal
-                ...(xAxisType === VizIndexType.TIME && xAxisReference
-                    ? {
-                          axisPointer: {
-                              label: {
-                                  // ECharts converts timezone values to local time
-                                  // so we need to show the original value in the tooltip
-                                  // this function is loosely typed because we don't have ECharts types in common
-                                  formatter: (params: {
-                                      seriesData: {
-                                          value: Record<string, unknown>;
-                                      }[];
-                                  }) =>
-                                      params.seriesData[0]?.value[
-                                          xAxisReference
-                                      ],
-                              },
-                          },
-                      }
-                    : {}),
+                axisPointer: getAxisPointerStyle(),
+                ...tooltipConfig,
+                formatter: buildSqlRunnerCartesianTooltipFormatter({
+                    stackValue: display?.stack,
+                    flipAxes: false,
+                    xFieldId: xAxisReference,
+                    originalValues,
+                }),
+                extraCssText: `overflow-y: auto; max-height:280px; ${
+                    getTooltipStyle().extraCssText
+                }`,
             },
             legend: {
-                show: !!(transformedData.valuesColumns.length > 1),
+                show: showLegend,
                 type: 'scroll',
+                ...getLegendStyle(legendIconType),
+            },
+            grid: {
+                left: 60,
+                right: 60,
+                top: showLegend ? 70 : 60, // Add more space when legend is shown
+                bottom: 60,
+                containLabel: true,
+                ...gridStyle,
             },
             xAxis: {
                 type: xAxisType,
@@ -639,9 +898,11 @@ export class CartesianChartDataModel {
                     friendlyName(xAxisReference || 'xAxisColumn'),
                 nameLocation: 'center',
                 nameGap: 30,
-                nameTextStyle: {
-                    fontWeight: 'bold',
-                },
+                nameTextStyle: getAxisTitleStyle(),
+                axisLabel: getAxisLabelStyle(),
+                axisLine: getAxisLineStyle(),
+                axisTick: getAxisTickStyle(),
+                axisPointer: getAxisPointerStyle(),
             },
             yAxis: [
                 {
@@ -655,19 +916,31 @@ export class CartesianChartDataModel {
                     nameLocation: 'center',
                     nameGap: 50,
                     nameRotate: 90,
-                    nameTextStyle: {
-                        fontWeight: 'bold',
+                    nameTextStyle: getAxisTitleStyle(),
+                    axisLabel: {
+                        ...getAxisLabelStyle(),
+                        ...(() => {
+                            if (shouldStack100) {
+                                // For 100% stacking, show percentage on y-axis
+                                return {
+                                    formatter: '{value}%',
+                                };
+                            }
+                            if (display?.yAxis?.[0]?.format) {
+                                return {
+                                    formatter:
+                                        CartesianChartDataModel.getTooltipFormatter(
+                                            display.yAxis[0].format,
+                                        ),
+                                };
+                            }
+                            return {};
+                        })(),
                     },
-                    ...(display?.yAxis?.[0]?.format
-                        ? {
-                              axisLabel: {
-                                  formatter:
-                                      CartesianChartDataModel.getTooltipFormatter(
-                                          display?.yAxis?.[0].format,
-                                      ),
-                              },
-                          }
-                        : {}),
+                    axisLine: getAxisLineStyle(),
+                    axisTick: getAxisTickStyle(),
+                    axisPointer: getAxisPointerStyle(),
+                    ...(shouldStack100 ? { max: 100 } : {}),
                 },
                 {
                     type: 'value',
@@ -680,39 +953,35 @@ export class CartesianChartDataModel {
                     nameLocation: 'center',
                     nameGap: 50,
                     nameRotate: -90,
-                    nameTextStyle: {
-                        fontWeight: 'bold',
-                    },
-                    ...(display?.yAxis?.[1]?.format
-                        ? {
-                              axisLabel: {
+                    nameTextStyle: getAxisTitleStyle(),
+                    axisLabel: {
+                        ...getAxisLabelStyle(),
+                        ...(display?.yAxis?.[1]?.format
+                            ? {
                                   formatter:
                                       CartesianChartDataModel.getTooltipFormatter(
                                           display?.yAxis?.[1].format,
                                       ),
-                              },
-                          }
-                        : {}),
+                              }
+                            : {}),
+                    },
+                    axisLine: getAxisLineStyle(),
+                    axisTick: getAxisTickStyle(),
+                    axisPointer: getAxisPointerStyle(),
                 },
             ],
             dataset: {
                 id: 'dataset',
-                source: transformedData.results,
+                source: dataToRender, // Use transformed data for 100% stacking
             },
             series,
+            textStyle: {
+                fontFamily: 'Inter, sans-serif',
+            },
         };
 
         return spec;
     }
-}
-
-export enum ValueLabelPositionOptions {
-    HIDDEN = 'hidden',
-    TOP = 'top',
-    BOTTOM = 'bottom',
-    LEFT = 'left',
-    RIGHT = 'right',
-    INSIDE = 'inside',
 }
 
 export type CartesianChartDisplay = {
@@ -746,5 +1015,5 @@ export type CartesianChartDisplay = {
         position: 'top' | 'bottom' | 'left' | 'right';
         align: 'start' | 'center' | 'end';
     };
-    stack?: boolean;
+    stack?: boolean | StackType; // Support both old boolean and new StackType for backward compatibility
 };

@@ -6,6 +6,9 @@ import sanitize from 'sanitize-html';
  * changing colors, etc).
  */
 const tagNamesAllowingTextStyling = [
+    'div',
+    'nav',
+    'img',
     'span', // Also required for comment @mentions to be styled appropriately
     'a',
     'p',
@@ -23,6 +26,13 @@ const tagNamesAllowingTextStyling = [
     'h6',
 ];
 
+const colorRegexes = [
+    /^[a-zA-Z]+$/, // Color names: red, blue, green, etc.
+    /^#[0-9a-fA-F]{3}$/, // Hex colors: #000 Note: we don't allow alpha hex colors (4 digits)
+    /^#[0-9a-fA-F]{6}$/, // Hex colors: #000000 Note: we don't allow alpha hex colors (8 digits)
+    /^rgb\(\d{1,3},\s*\d{1,3},\s*\d{1,3}\)$/, // RGB colors: rgb(0, 0, 0) Note: we don't allow rgba
+];
+
 /**
  * Defines a list of CSS properties and value RegExps, which will be allowed as part of the
  * style attribute in the above tags.
@@ -38,12 +48,28 @@ const allowedTextStylingProperties: NonNullable<
     'word-spacing': [/^\d+(?:px|em|rem|%)$/], // 1px, 0.2em, 10%
     'text-align': [/^(?:left|right|center|justify)$/], //  left, right, center, justify
     'text-decoration': [/^(?:none|underline|overline|line-through)$/], //  none, underline, overline, line-through
-    color: [
-        /^[a-zA-Z]+$/, // Color names: red, blue, green, etc.
-        /^#[0-9a-fA-F]{3}$/, // Hex colors: #000 Note: we don't allow alpha hex colors (4 digits)
-        /^#[0-9a-fA-F]{6}$/, // Hex colors: #000000 Note: we don't allow alpha hex colors (8 digits)
-        /^rgb\(\d{1,3},\s*\d{1,3},\s*\d{1,3}\)$/, // RGB colors: rgb(0, 0, 0) Note: we don't allow rgba
-    ],
+    color: colorRegexes,
+    'background-color': colorRegexes,
+    background: [...colorRegexes, /^transparent$/, /^none$/],
+    'border-radius': [/^(\d+(?:px|em|rem|%))(\s+\d+(?:px|em|rem|%))*$/],
+    'border-top-left-radius': [/^\d+(?:px|em|rem|%)$/],
+    'border-top-right-radius': [/^\d+(?:px|em|rem|%)$/],
+    'border-bottom-left-radius': [/^\d+(?:px|em|rem|%)$/],
+    'border-bottom-right-radius': [/^\d+(?:px|em|rem|%)$/],
+    height: [/^\d+(?:px|em|rem|%)$/],
+    width: [/^\d+(?:px|em|rem|%)$/],
+    margin: [/^(\d+(?:px|em|rem|%))(\s+\d+(?:px|em|rem|%))*$/],
+    'margin-bottom': [/^\d+(?:px|em|rem|%)$/],
+    'margin-top': [/^\d+(?:px|em|rem|%)$/],
+    'margin-left': [/^\d+(?:px|em|rem|%)$/],
+    'margin-right': [/^\d+(?:px|em|rem|%)$/],
+    padding: [/^(\d+(?:px|em|rem|%))(\s+\d+(?:px|em|rem|%))*$/],
+    'padding-bottom': [/^\d+(?:px|em|rem|%)$/],
+    'padding-top': [/^\d+(?:px|em|rem|%)$/],
+    'padding-left': [/^\d+(?:px|em|rem|%)$/],
+    'padding-right': [/^\d+(?:px|em|rem|%)$/],
+    float: [/^(?:left|right|none)$/],
+    clear: [/^(?:left|right|both|none)$/],
 };
 
 /**

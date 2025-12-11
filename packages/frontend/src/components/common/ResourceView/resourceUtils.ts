@@ -33,12 +33,18 @@ export const getResourceTypeName = (item: ResourceViewItem) => {
                     return 'Pie chart';
                 case ChartKind.FUNNEL:
                     return 'Funnel chart';
+                case ChartKind.TREEMAP:
+                    return 'Treemap';
+                case ChartKind.GAUGE:
+                    return 'Gauge';
                 case ChartKind.TABLE:
                     return 'Table';
                 case ChartKind.BIG_NUMBER:
                     return 'Big number';
                 case ChartKind.CUSTOM:
                     return 'Custom visualization';
+                case ChartKind.MAP:
+                    return 'Map';
                 default:
                     return assertUnreachable(
                         item.data.chartKind,
@@ -57,8 +63,6 @@ const getChartResourceUrl = (
     switch (item.data.source) {
         case ChartSourceType.SQL:
             return `/projects/${projectUuid}/sql-runner/${item.data.slug}`;
-        case ChartSourceType.SEMANTIC_LAYER:
-            return `/projects/${projectUuid}/semantic-viewer/${item.data.slug}`;
         case ChartSourceType.DBT_EXPLORE:
         case undefined:
             return `/projects/${projectUuid}/saved/${item.data.uuid}`;

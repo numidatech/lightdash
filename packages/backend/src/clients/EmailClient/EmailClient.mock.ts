@@ -1,4 +1,5 @@
 import { LightdashConfig, SmtpConfig } from '../../config/parseConfig';
+import { SMTP_CONNECTION_CONFIG } from './EmailClient';
 
 export const passwordResetLinkMock = {
     code: 'code',
@@ -15,10 +16,12 @@ export const lightdashConfigWithNoSMTP: Pick<
     smtp: undefined,
     siteUrl: 'https://test.lightdash.cloud',
     query: {
+        maxPageSize: 500,
         maxLimit: 100,
         defaultLimit: 500,
         csvCellsLimit: 100,
         timezone: undefined,
+        useSqlPivotResults: false,
     },
 };
 
@@ -26,6 +29,7 @@ const smtpBase: SmtpConfig = {
     host: 'host',
     secure: true,
     port: 587,
+    useAuth: true,
     auth: {
         user: 'user',
         pass: 'pass',
@@ -47,10 +51,12 @@ export const lightdashConfigWithBasicSMTP: Pick<
     },
     siteUrl: 'https://test.lightdash.cloud',
     query: {
+        maxPageSize: 500,
         maxLimit: 100,
         defaultLimit: 500,
         csvCellsLimit: 100,
         timezone: undefined,
+        useSqlPivotResults: false,
     },
 };
 
@@ -68,10 +74,12 @@ export const lightdashConfigWithOauth2SMTP: Pick<
     },
     siteUrl: 'https://test.lightdash.cloud',
     query: {
+        maxPageSize: 500,
         maxLimit: 100,
         defaultLimit: 500,
         csvCellsLimit: 100,
         timezone: undefined,
+        useSqlPivotResults: false,
     },
 };
 
@@ -85,10 +93,12 @@ export const lightdashConfigWithSecurePortSMTP: Pick<
     },
     siteUrl: 'https://test.lightdash.cloud',
     query: {
+        maxPageSize: 500,
         maxLimit: 100,
         defaultLimit: 500,
         csvCellsLimit: 100,
         timezone: undefined,
+        useSqlPivotResults: false,
     },
 };
 
@@ -103,6 +113,12 @@ export const expectedTransporterArgs = [
         },
         requireTLS: true,
         tls: undefined,
+        pool: true,
+        maxConnections: 5,
+        maxMessages: 100,
+        connectionTimeout: SMTP_CONNECTION_CONFIG.connectionTimeout,
+        greetingTimeout: SMTP_CONNECTION_CONFIG.greetingTimeout,
+        socketTimeout: SMTP_CONNECTION_CONFIG.socketTimeout,
     },
     {
         from: `"${smtpBase.sender.name}" <${smtpBase.sender.email}>`,

@@ -1,5 +1,6 @@
 import { type ApiError, type Dashboard } from '@lightdash/common';
 import {
+    ActionIcon,
     Box,
     Button,
     Card,
@@ -11,9 +12,13 @@ import {
     Stack,
     Text,
 } from '@mantine/core';
-import { IconEye, IconEyeClosed } from '@tabler/icons-react';
+import {
+    IconArrowsDiagonal,
+    IconEye,
+    IconEyeClosed,
+} from '@tabler/icons-react';
 import { type UseMutationResult } from '@tanstack/react-query';
-import { useState, type Dispatch, type FC, type SetStateAction } from 'react';
+import { useState, type FC } from 'react';
 import MantineIcon from '../../../components/common/MantineIcon';
 import { CUSTOM_WIDTH_OPTIONS } from '../../scheduler/constants';
 
@@ -27,15 +32,16 @@ type PreviewAndCustomizeScreenshotProps = {
             gridWidth: number | undefined;
             queryFilters: string;
             isPreview?: boolean | undefined;
+            selectedTabs: string[] | null;
         }
     >;
-    previews: Record<string, string>;
-    setPreviews: Dispatch<SetStateAction<Record<string, string>>>;
     previewChoice: typeof CUSTOM_WIDTH_OPTIONS[number]['value'] | undefined;
     setPreviewChoice: (
         prev: typeof CUSTOM_WIDTH_OPTIONS[number]['value'] | undefined,
     ) => void;
     onPreviewClick?: () => Promise<void>;
+    currentPreview?: string;
+    disabled?: boolean;
 };
 
 export const PreviewAndCustomizeScreenshot: FC<
@@ -43,10 +49,11 @@ export const PreviewAndCustomizeScreenshot: FC<
 > = ({
     containerWidth,
     exportMutation,
-    previews,
     previewChoice,
     setPreviewChoice,
     onPreviewClick,
+    currentPreview,
+    disabled = false,
 }) => {
     const [isImageModalOpen, setIsImageModalOpen] = useState(false);
 
@@ -88,43 +95,58 @@ export const PreviewAndCustomizeScreenshot: FC<
 
                     <Stack>
                         <Card withBorder p={0}>
-                            <Image
-                                src={previewChoice && previews[previewChoice]}
-                                onClick={() => {
-                                    if (
-                                        previewChoice &&
-                                        previews[previewChoice]
-                                    )
-                                        setIsImageModalOpen(true);
-                                }}
-                                width={350}
-                                height={350}
-                                styles={{
-                                    root: {
-                                        objectPosition: 'top',
-                                        cursor:
-                                            previewChoice &&
-                                            previews[previewChoice]
+                            <Box pos="relative">
+                                <Image
+                                    src={currentPreview}
+                                    onClick={() => {
+                                        if (currentPreview)
+                                            setIsImageModalOpen(true);
+                                    }}
+                                    width={350}
+                                    height={350}
+                                    styles={{
+                                        root: {
+                                            objectPosition: 'top',
+                                            cursor: currentPreview
                                                 ? 'pointer'
                                                 : 'default',
-                                    },
-                                }}
-                                withPlaceholder
-                                placeholder={
-                                    <Flex
-                                        gap="md"
-                                        align="center"
-                                        direction="column"
+                                        },
+                                    }}
+                                    withPlaceholder
+                                    placeholder={
+                                        <Flex
+                                            gap="md"
+                                            align="center"
+                                            direction="column"
+                                        >
+                                            <MantineIcon
+                                                icon={IconEyeClosed}
+                                                size={30}
+                                            />
+
+                                            <Text>No preview yet</Text>
+                                        </Flex>
+                                    }
+                                />
+                                {currentPreview && (
+                                    <ActionIcon
+                                        pos="absolute"
+                                        top={5}
+                                        right={5}
+                                        variant="light"
+                                        color="blue"
+                                        size="sm"
+                                        onClick={() => {
+                                            if (currentPreview)
+                                                setIsImageModalOpen(true);
+                                        }}
                                     >
                                         <MantineIcon
-                                            icon={IconEyeClosed}
-                                            size={30}
+                                            icon={IconArrowsDiagonal}
                                         />
-
-                                        <Text>No preview yet</Text>
-                                    </Flex>
-                                }
-                            />
+                                    </ActionIcon>
+                                )}
+                            </Box>
                         </Card>
                         <Button
                             mx="auto"
@@ -132,8 +154,12 @@ export const PreviewAndCustomizeScreenshot: FC<
                             size="xs"
                             variant="default"
                             leftIcon={<MantineIcon icon={IconEye} />}
-                            disabled={!previewChoice}
-                            onClick={onPreviewClick}
+                            disabled={!previewChoice || disabled}
+                            onClick={async () => {
+                                if (onPreviewClick) {
+                                    await onPreviewClick();
+                                }
+                            }}
                         >
                             Generate preview
                         </Button>
@@ -147,7 +173,7 @@ export const PreviewAndCustomizeScreenshot: FC<
                 opened={isImageModalOpen}
             >
                 <Image
-                    src={exportMutation.data}
+                    src={currentPreview}
                     onClick={() => {
                         setIsImageModalOpen(false);
                     }}

@@ -3,14 +3,13 @@ import {
     DownloadFileType,
     NotFoundError,
     ResultRow,
-    SemanticLayerResultRow,
     UnexpectedServerError,
 } from '@lightdash/common';
 import * as fs from 'fs';
 import { Knex } from 'knex';
 import { nanoid } from 'nanoid';
 import { PassThrough } from 'stream';
-import { S3Client } from '../clients/Aws/s3';
+import { S3Client } from '../clients/Aws/S3Client';
 import { DownloadFileTableName } from '../database/entities/downloadFile';
 import Logger from '../logging/logger';
 
@@ -54,11 +53,10 @@ export class DownloadFileModel {
         };
     }
 
+    // TODO: consider removing this method in milestone #212
     async streamResultsToCloudStorage(
         urlPrefix: string,
-        callback: (
-            writer: (data: ResultRow | SemanticLayerResultRow) => void,
-        ) => Promise<void>,
+        callback: (writer: (data: ResultRow) => void) => Promise<void>,
         s3Client?: S3Client,
     ): Promise<string> {
         const downloadFileId = nanoid();
@@ -66,7 +64,7 @@ export class DownloadFileModel {
         const s3FileId = `${downloadFileId}.jsonl`;
         const endUpload = await s3Client!.streamResults(passThrough, s3FileId);
         try {
-            const writer = (data: ResultRow | SemanticLayerResultRow) => {
+            const writer = (data: ResultRow) => {
                 passThrough.write(`${JSON.stringify(data)}\n`);
             };
 
@@ -93,6 +91,7 @@ export class DownloadFileModel {
         return serverUrl;
     }
 
+    // TODO: consider removing in milestone #212
     streamFunction(s3Client: S3Client) {
         return s3Client.isEnabled()
             ? this.streamResultsToCloudStorage.bind(this)
@@ -101,9 +100,7 @@ export class DownloadFileModel {
 
     async streamResultsToLocalFile(
         urlPrefix: string,
-        callback: (
-            writer: (data: ResultRow | SemanticLayerResultRow) => void,
-        ) => Promise<void>,
+        callback: (writer: (data: ResultRow) => void) => Promise<void>,
     ): Promise<string> {
         const downloadFileId = nanoid(); // Creates a new nanoid for the download file because the jobId is already exposed
         const filePath = `/tmp/${downloadFileId}.jsonl`;
@@ -122,7 +119,7 @@ export class DownloadFileModel {
             throw new UnexpectedServerError('Error writing to file');
         });
 
-        const writer = (data: ResultRow | SemanticLayerResultRow) => {
+        const writer = (data: ResultRow) => {
             writeStream.write(`${JSON.stringify(data)}\n`);
         };
 

@@ -12,13 +12,31 @@ import {
     type MetricQuery,
 } from '@lightdash/common';
 import { useEffect, useMemo } from 'react';
-import { useLocation, useNavigate, useParams } from 'react-router';
+import {
+    useLocation,
+    useNavigate,
+    useParams,
+    useSearchParams,
+} from 'react-router';
+import {
+    explorerActions,
+    selectMetricQuery,
+    selectTableName,
+    selectUnsavedChartVersion,
+    useExplorerDispatch,
+    useExplorerSelector,
+} from '../features/explorer/store';
+import useApp from '../providers/App/useApp';
+import {
+    defaultQueryExecution,
+    defaultState,
+} from '../providers/Explorer/defaultState';
 import {
     ExplorerSection,
     type ExplorerReduceState,
 } from '../providers/Explorer/types';
-import useExplorerContext from '../providers/Explorer/useExplorerContext';
 import useToaster from './toaster/useToaster';
+
 export const DEFAULT_EMPTY_EXPLORE_CONFIG: CreateSavedChartVersion = {
     tableName: '',
     metricQuery: {
@@ -54,7 +72,8 @@ export const getExplorerUrlFromCreateSavedChartVersion = (
     if (!projectUuid) {
         return { pathname: '', search: '' };
     }
-    const newParams = new URLSearchParams();
+    // Preserve existing search params (like fromSpace, fromDashboard, etc)
+    const newParams = new URLSearchParams(window.location.search);
 
     let stringifiedChart = JSON.stringify(createSavedChart);
     const stringifiedChartSize = stringifiedChart.length;
@@ -83,6 +102,9 @@ export const getExplorerUrlFromCreateSavedChartVersion = (
     }
     newParams.set('create_saved_chart_version', stringifiedChart);
 
+    // Always set isExploreFromHere to true when creating the url for shareable links this ensures the query is executed when the url is loaded
+    newParams.set('isExploreFromHere', 'true');
+
     return {
         pathname: `/projects/${projectUuid}/tables/${createSavedChart.tableName}`,
         search: newParams.toString(),
@@ -109,7 +131,7 @@ type BackwardsCompatibleCreateSavedChartVersionUrlParam = Omit<
     metricQuery: Omit<MetricQuery, 'exploreName'> & { exploreName?: string };
 };
 
-const parseExplorerSearchParams = (
+const parseChartFromExplorerSearchParams = (
     search: string,
 ): CreateSavedChartVersion | undefined => {
     const searchParams = new URLSearchParams(search);
@@ -151,30 +173,20 @@ export const useExplorerRoute = () => {
         tableId: string | undefined;
     }>();
 
-    const dateZoom = useDateZoomGranularitySearch();
-    const unsavedChartVersion = useExplorerContext(
-        (context) => context.state.unsavedChartVersion,
-    );
-    const metricQuery = useExplorerContext(
-        (context) => context.state.unsavedChartVersion.metricQuery,
-    );
-    const clearExplore = useExplorerContext(
-        (context) => context.actions.clearExplore,
-    );
-    const setTableName = useExplorerContext(
-        (context) => context.actions.setTableName,
-    );
+    const dispatch = useExplorerDispatch();
+
+    const unsavedChartVersion = useExplorerSelector(selectUnsavedChartVersion);
+    const metricQuery = useExplorerSelector(selectMetricQuery);
+    const tableName = useExplorerSelector(selectTableName);
 
     // Update url params based on pristine state
+    // Only sync URL when we're actually on a table page (pathParams.tableId exists)
     useEffect(() => {
-        if (metricQuery && unsavedChartVersion.tableName) {
+        if (pathParams.tableId && metricQuery && tableName) {
             void navigate(
                 getExplorerUrlFromCreateSavedChartVersion(
                     pathParams.projectUuid,
-                    {
-                        ...unsavedChartVersion,
-                        metricQuery,
-                    },
+                    unsavedChartVersion,
                 ),
                 { replace: true },
             );
@@ -183,41 +195,49 @@ export const useExplorerRoute = () => {
         metricQuery,
         navigate,
         pathParams.projectUuid,
+        pathParams.tableId,
         unsavedChartVersion,
-        dateZoom,
+        tableName,
     ]);
 
     useEffect(() => {
         if (!pathParams.tableId) {
-            clearExplore();
+            dispatch(explorerActions.reset(defaultState));
+            dispatch(explorerActions.resetQueryExecution());
         } else {
-            setTableName(pathParams.tableId);
+            dispatch(explorerActions.setTableName(pathParams.tableId));
         }
-    }, [pathParams.tableId, clearExplore, setTableName]);
+    }, [pathParams.tableId, dispatch]);
 };
 
 export const useExplorerUrlState = (): ExplorerReduceState | undefined => {
     const { showToastError } = useToaster();
     const { search } = useLocation();
+    const { health } = useApp();
     const pathParams = useParams<{
         projectUuid: string;
         tableId: string | undefined;
     }>();
 
+    const [searchParams] = useSearchParams();
+    const fromDashboard = searchParams.get('fromDashboard');
+    const isExploreFromHere = useMemo(() => {
+        return searchParams.get('isExploreFromHere') === 'true';
+    }, [searchParams]);
+
     return useMemo(() => {
         if (pathParams.tableId) {
             try {
-                const unsavedChartVersion = parseExplorerSearchParams(
-                    search,
-                ) || {
-                    tableName: '',
+                const parsedChart = parseChartFromExplorerSearchParams(search);
+                const unsavedChartVersion = parsedChart || {
+                    tableName: pathParams.tableId,
                     metricQuery: {
-                        exploreName: '',
+                        exploreName: pathParams.tableId,
                         dimensions: [],
                         metrics: [],
                         filters: {},
                         sorts: [],
-                        limit: 500,
+                        limit: health.data?.query.defaultLimit ?? 500,
                         tableCalculations: [],
                         additionalMetrics: [],
                     },
@@ -232,8 +252,10 @@ export const useExplorerUrlState = (): ExplorerReduceState | undefined => {
                 };
 
                 return {
-                    shouldFetchResults: true,
-                    expandedSections: unsavedChartVersion
+                    parameterReferences: [],
+                    parameterDefinitions: {},
+                    cachedChartConfigs: {},
+                    expandedSections: parsedChart
                         ? [
                               ExplorerSection.VISUALIZATION,
                               ExplorerSection.RESULTS,
@@ -250,11 +272,17 @@ export const useExplorerUrlState = (): ExplorerReduceState | undefined => {
                         customDimension: {
                             isOpen: false,
                         },
-                        additionalMetricWriteBack: {
+                        writeBack: {
                             isOpen: false,
-                            item: undefined,
+                        },
+                        itemDetail: {
+                            isOpen: false,
                         },
                     },
+                    parameters: {},
+                    fromDashboard: fromDashboard ?? undefined,
+                    isExploreFromHere: isExploreFromHere,
+                    queryExecution: defaultQueryExecution,
                 };
             } catch (e: any) {
                 const errorMessage = e.message ? ` Error: "${e.message}"` : '';
@@ -264,7 +292,14 @@ export const useExplorerUrlState = (): ExplorerReduceState | undefined => {
                 });
             }
         }
-    }, [pathParams, search, showToastError]);
+    }, [
+        pathParams,
+        search,
+        showToastError,
+        fromDashboard,
+        isExploreFromHere,
+        health.data?.query.defaultLimit,
+    ]);
 };
 
 export const createMetricPreviewUnsavedChartVersion = (

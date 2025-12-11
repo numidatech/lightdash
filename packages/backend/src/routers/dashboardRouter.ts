@@ -1,14 +1,14 @@
-import express from 'express';
+import express, { type Router } from 'express';
 import {
     allowApiKeyAuthentication,
     isAuthenticated,
     unauthorisedInDemo,
 } from '../controllers/authentication';
 
-export const dashboardRouter = express.Router({ mergeParams: true });
+export const dashboardRouter: Router = express.Router({ mergeParams: true });
 
 dashboardRouter.get(
-    '/:dashboardUuid',
+    '/:dashboardUuidOrSlug',
     allowApiKeyAuthentication,
     isAuthenticated,
     async (req, res, next) => {
@@ -17,7 +17,7 @@ dashboardRouter.get(
                 status: 'ok',
                 results: await req.services
                     .getDashboardService()
-                    .getById(req.user!, req.params.dashboardUuid),
+                    .getByIdOrSlug(req.user!, req.params.dashboardUuidOrSlug),
             });
         } catch (e) {
             next(e);
@@ -44,7 +44,7 @@ dashboardRouter.get(
 );
 
 dashboardRouter.patch(
-    '/:dashboardUuid',
+    '/:dashboardUuidOrSlug',
     allowApiKeyAuthentication,
     isAuthenticated,
     unauthorisedInDemo,
@@ -54,7 +54,11 @@ dashboardRouter.patch(
                 status: 'ok',
                 results: await req.services
                     .getDashboardService()
-                    .update(req.user!, req.params.dashboardUuid, req.body),
+                    .update(
+                        req.user!,
+                        req.params.dashboardUuidOrSlug,
+                        req.body,
+                    ),
             });
         } catch (e) {
             next(e);
@@ -150,7 +154,7 @@ dashboardRouter.post(
         try {
             const results = await req.services
                 .getProjectService()
-                .getAvailableFiltersForSavedQueries(req.user!, req.body);
+                .getAvailableFiltersForSavedQueries(req.account!, req.body);
 
             res.json({
                 status: 'ok',
@@ -175,6 +179,7 @@ dashboardRouter.post(
                     req.body.queryFilters,
                     req.body.gridWidth,
                     req.user!,
+                    req.body.selectedTabs,
                 );
 
             res.json({
@@ -195,7 +200,7 @@ dashboardRouter.post(
         try {
             const results = await req.services
                 .getCsvService()
-                .exportCsvDashboard(
+                .scheduleExportCsvDashboard(
                     req.user!,
                     req.params.dashboardUuid,
                     req.body.filters,

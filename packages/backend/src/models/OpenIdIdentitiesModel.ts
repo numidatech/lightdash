@@ -74,6 +74,27 @@ export class OpenIdIdentityModel {
         return OpenIdIdentityModel._parseDbIdentity(identity);
     }
 
+    async findIdentityByOpenId(
+        issuerType: OpenIdIdentityIssuerType,
+        subject: string,
+        teamId?: string,
+    ): Promise<OpenIdIdentity | null> {
+        const query = this.getOpenIdQueryBuilder()
+            .where('issuer_type', issuerType)
+            .andWhere('subject', subject);
+
+        if (teamId) {
+            void query.andWhere(`${OpenIdIdentitiesTableName}.team_id`, teamId);
+        }
+
+        const [identity] = await query;
+
+        if (identity === undefined) {
+            return null;
+        }
+        return OpenIdIdentityModel._parseDbIdentity(identity);
+    }
+
     async updateIdentityByOpenId({
         email,
         subject,
@@ -137,6 +158,7 @@ export class OpenIdIdentityModel {
                 user_id: createIdentity.userId,
                 email: createIdentity.email,
                 refresh_token: createIdentity.refreshToken,
+                team_id: createIdentity.teamId,
             })
             .returning('*');
         return this.getIdentityByOpenId(identity.issuer, identity.subject);
@@ -159,10 +181,11 @@ export class OpenIdIdentityModel {
 
     async deleteIdentity(userId: number, issuer: string, email: string) {
         await this.database.transaction(async (trx) => {
-            const identities = await this.database(
-                OpenIdIdentitiesTableName,
-            ).where('openid_identities.user_id', userId);
-            const passwords = await this.database(PasswordLoginTableName).where(
+            const identities = await trx(OpenIdIdentitiesTableName).where(
+                'openid_identities.user_id',
+                userId,
+            );
+            const passwords = await trx(PasswordLoginTableName).where(
                 'user_id',
                 userId,
             );

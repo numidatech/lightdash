@@ -7,20 +7,10 @@ import { StringOutputParser } from '@langchain/core/output_parsers';
 import { LLMResult } from '@langchain/core/outputs';
 import { ChatPromptTemplate } from '@langchain/core/prompts';
 import { Runnable } from '@langchain/core/runnables';
-import {
-    ChatOpenAI,
-    ChatOpenAICallOptions,
-    OpenAIEmbeddings,
-} from '@langchain/openai';
-import { UnexpectedServerError } from '@lightdash/common';
+import { ChatOpenAI, ChatOpenAICallOptions } from '@langchain/openai';
+import { sleep, UnexpectedServerError } from '@lightdash/common';
 
 const DEFAULT_RETRY_TIMEOUT_MS = 5000;
-
-async function sleep(ms: number) {
-    return new Promise((resolve) => {
-        setTimeout(resolve, ms);
-    });
-}
 
 class TokenUsageHandler extends BaseCallbackHandler {
     tokenUsage: TokenUsage | undefined;
@@ -42,25 +32,14 @@ export default class OpenAi {
 
     model: ChatOpenAI<ChatOpenAICallOptions> | undefined;
 
-    embedder: OpenAIEmbeddings | undefined;
-
     constructor() {
         this.openAiApiKey = process.env.OPENAI_API_KEY;
 
         this.model = this.openAiApiKey
             ? new ChatOpenAI({
                   openAIApiKey: this.openAiApiKey,
-                  modelName: process.env.OPENAI_MODEL_NAME ?? 'gpt-4o',
+                  modelName: 'gpt-4.1',
                   temperature: 0.2,
-              })
-            : undefined;
-
-        this.embedder = this.openAiApiKey
-            ? new OpenAIEmbeddings({
-                  apiKey: this.openAiApiKey,
-                  modelName:
-                      process.env.OPENAI_EMBEDDING_MODEL_NAME ??
-                      'text-embedding-3-small',
               })
             : undefined;
     }

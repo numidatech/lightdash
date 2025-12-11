@@ -1,6 +1,9 @@
 import {
+    formatDate,
     type ApiError,
+    type ApiJobScheduledResponse,
     type CreateDashboard,
+    type CreateDashboardWithCharts,
     type Dashboard,
     type DashboardAvailableFilters,
     type DashboardFilters,
@@ -18,8 +21,10 @@ import {
 } from '@tanstack/react-query';
 import { useNavigate, useParams } from 'react-router';
 import { lightdashApi } from '../../api';
+import { pollJobStatus } from '../../features/scheduler/hooks/useScheduler';
 import useToaster from '../toaster/useToaster';
 import useQueryError from '../useQueryError';
+import useDashboardStorage from './useDashboardStorage';
 
 const getDashboard = async (id: string) =>
     lightdashApi<Dashboard>({
@@ -31,6 +36,16 @@ const getDashboard = async (id: string) =>
 const createDashboard = async (projectUuid: string, data: CreateDashboard) =>
     lightdashApi<Dashboard>({
         url: `/projects/${projectUuid}/dashboards`,
+        method: 'POST',
+        body: JSON.stringify(data),
+    });
+
+const createDashboardWithCharts = async (
+    projectUuid: string,
+    data: CreateDashboardWithCharts,
+) =>
+    lightdashApi<Dashboard>({
+        url: `/projects/${projectUuid}/dashboards/with-charts`,
         method: 'POST',
         body: JSON.stringify(data),
     });
@@ -70,16 +85,12 @@ const postDashboardsAvailableFilters = async (
     });
 
 const postEmbedDashboardsAvailableFilters = async (
-    embedToken: string,
     projectUuid: string,
     savedChartUuidsAndTileUuids: SavedChartsInfoForDashboardAvailableFilters,
 ) =>
     lightdashApi<DashboardAvailableFilters>({
         url: `/embed/${projectUuid}/dashboard/availableFilters`,
         method: 'POST',
-        headers: {
-            'Lightdash-Embed-Token': embedToken!,
-        },
         body: JSON.stringify(savedChartUuidsAndTileUuids),
     });
 
@@ -87,11 +98,12 @@ const exportDashboard = async (
     id: string,
     gridWidth: number | undefined,
     queryFilters: string,
+    selectedTabs: string[] | null,
 ) =>
     lightdashApi<string>({
         url: `/dashboards/${id}/export`,
         method: 'POST',
-        body: JSON.stringify({ queryFilters, gridWidth }),
+        body: JSON.stringify({ queryFilters, gridWidth, selectedTabs }),
     });
 
 export const useDashboardsAvailableFilters = (
@@ -104,7 +116,6 @@ export const useDashboardsAvailableFilters = (
         () =>
             embedToken && projectUuid
                 ? postEmbedDashboardsAvailableFilters(
-                      embedToken,
                       projectUuid,
                       savedChartUuidsAndTileUuids,
                   )
@@ -129,6 +140,53 @@ export const useDashboardQuery = (
     });
 };
 
+/**
+ * Checks if the dashboard version is up to date and returns the latest dashboard if it is not
+ * Helpful for refreshing the dashboard when the user wants to make changes to the dashboard
+ * This is to avoid one user or multiple users overwriting each other's changes
+ * @param dashboardUuid The dashboard uuid
+ * @returns The latest dashboard or null if the dashboard is up to date
+ */
+export const useDashboardVersionRefresh = (dashboardUuid: string) => {
+    const queryClient = useQueryClient();
+
+    return useMutation<Dashboard | null, ApiError, Dashboard | undefined>({
+        mutationKey: ['dashboard_version_refresh', dashboardUuid],
+        mutationFn: async (currentDashboard) => {
+            try {
+                if (!currentDashboard) {
+                    throw new Error('Current dashboard is undefined');
+                }
+
+                const latestDashboard = await getDashboard(dashboardUuid);
+
+                const currentTime = new Date(
+                    currentDashboard.updatedAt,
+                ).getTime();
+                const latestTime = new Date(
+                    latestDashboard.updatedAt,
+                ).getTime();
+
+                const isUpToDate = latestTime <= currentTime;
+
+                if (isUpToDate) {
+                    return null;
+                }
+
+                queryClient.setQueryData(
+                    ['saved_dashboard_query', dashboardUuid],
+                    latestDashboard,
+                );
+
+                return latestDashboard;
+            } catch (error) {
+                console.warn('Failed to check dashboard timestamp:', error);
+                return null;
+            }
+        },
+    });
+};
+
 export const useExportDashboard = () => {
     const { showToastSuccess, showToastApiError, showToastInfo } = useToaster();
     return useMutation<
@@ -139,6 +197,7 @@ export const useExportDashboard = () => {
             gridWidth: number | undefined;
             queryFilters: string;
             isPreview?: boolean;
+            selectedTabs: string[] | null;
         }
     >(
         (data) =>
@@ -146,6 +205,7 @@ export const useExportDashboard = () => {
                 data.dashboard.uuid,
                 data.gridWidth,
                 data.queryFilters,
+                data.selectedTabs,
             ),
         {
             mutationKey: ['export_dashboard'],
@@ -188,16 +248,22 @@ const exportCsvDashboard = async (
     filters: DashboardFilters,
     dateZoomGranularity: DateGranularity | undefined,
 ) =>
-    lightdashApi<string>({
+    lightdashApi<ApiJobScheduledResponse['results']>({
         url: `/dashboards/${id}/exportCsv`,
         method: 'POST',
         body: JSON.stringify({ filters, dateZoomGranularity }),
     });
 
 export const useExportCsvDashboard = () => {
-    const { showToastSuccess, showToastApiError, showToastInfo } = useToaster();
+    const {
+        showToastSuccess,
+        showToastError,
+        showToastApiError,
+        showToastInfo,
+    } = useToaster();
+
     return useMutation<
-        string,
+        ApiJobScheduledResponse['results'],
         ApiError,
         {
             dashboard: Dashboard;
@@ -221,14 +287,41 @@ export const useExportCsvDashboard = () => {
                     loading: true,
                 });
             },
-            onSuccess: async (url, data) => {
-                if (url) {
-                    window.open(url, '_blank');
-                    showToastSuccess({
-                        key: 'dashboard_export_toast',
-                        title: `Success! ${data.dashboard.name} was exported.`,
+            onSuccess: async (job, data) => {
+                // Wait until validation is complete
+                pollJobStatus(job.jobId)
+                    .then(async (details) => {
+                        if (details?.url) {
+                            const link = document.createElement('a');
+                            link.href = details.url;
+                            link.setAttribute(
+                                'download',
+                                `${data.dashboard.name}-${formatDate(
+                                    Date.now(),
+                                )}`,
+                            );
+                            document.body.appendChild(link);
+                            link.click();
+                            link.remove(); // Remove the link from the DOM
+                            showToastSuccess({
+                                key: 'dashboard_export_toast',
+                                title: `Success! ${data.dashboard.name} was exported.`,
+                            });
+                        } else {
+                            showToastError({
+                                key: 'dashboard_export_toast',
+                                title: `Missing file url for ${data.dashboard.name}`,
+                                subtitle: 'Something went wrong',
+                            });
+                        }
+                    })
+                    .catch((error: Error) => {
+                        showToastError({
+                            key: 'dashboard_export_toast',
+                            title: `Failed to export ${data.dashboard.name}`,
+                            subtitle: error.message,
+                        });
                     });
-                }
             },
             onError: ({ error }, data) => {
                 showToastApiError({
@@ -249,6 +342,7 @@ export const useUpdateDashboard = (
     const { projectUuid } = useParams<{ projectUuid: string }>();
     const queryClient = useQueryClient();
     const { showToastSuccess, showToastApiError } = useToaster();
+    const { clearDashboardStorage } = useDashboardStorage();
     return useMutation<Dashboard, ApiError, UpdateDashboard>(
         (data) => {
             if (id === undefined) {
@@ -260,6 +354,7 @@ export const useUpdateDashboard = (
         {
             mutationKey: ['dashboard_update'],
             onSuccess: async (_, variables) => {
+                clearDashboardStorage();
                 await queryClient.invalidateQueries(['space', projectUuid]);
                 await queryClient.invalidateQueries([
                     'most-popular-and-recently-updated',
@@ -301,56 +396,10 @@ export const useUpdateDashboard = (
     );
 };
 
-export const useMoveDashboardMutation = () => {
-    const navigate = useNavigate();
-    const { projectUuid } = useParams<{ projectUuid: string }>();
-    const queryClient = useQueryClient();
-    const { showToastSuccess, showToastApiError } = useToaster();
-    return useMutation<
-        Dashboard,
-        ApiError,
-        Pick<Dashboard, 'uuid' | 'name' | 'spaceUuid'>
-    >(
-        ({ uuid, name, spaceUuid }) =>
-            updateDashboard(uuid, { name, spaceUuid }),
-        {
-            mutationKey: ['dashboard_move'],
-            onSuccess: async (data) => {
-                await queryClient.invalidateQueries(['space']);
-                await queryClient.invalidateQueries(['dashboards']);
-                await queryClient.invalidateQueries([
-                    'most-popular-and-recently-updated',
-                ]);
-                await queryClient.invalidateQueries(['content']);
-                queryClient.setQueryData(
-                    ['saved_dashboard_query', data.uuid],
-                    data,
-                );
-                showToastSuccess({
-                    title: `Dashboard has been moved to ${data.spaceName}`,
-                    action: {
-                        children: 'Go to space',
-                        icon: IconArrowRight,
-                        onClick: () =>
-                            navigate(
-                                `/projects/${projectUuid}/spaces/${data.spaceUuid}`,
-                            ),
-                    },
-                });
-            },
-            onError: ({ error }) => {
-                showToastApiError({
-                    title: `Failed to move dashboard`,
-                    apiError: error,
-                });
-            },
-        },
-    );
-};
-
 export const useCreateMutation = (
     projectUuid: string | undefined,
     showRedirectButton: boolean = false,
+    { showToastOnSuccess = true }: { showToastOnSuccess?: boolean } = {},
 ) => {
     const navigate = useNavigate();
     const { showToastSuccess, showToastApiError } = useToaster();
@@ -368,23 +417,74 @@ export const useCreateMutation = (
                 await queryClient.invalidateQueries([
                     'most-popular-and-recently-updated',
                 ]);
-                showToastSuccess({
-                    title: `Success! Dashboard was created.`,
-                    action: showRedirectButton
-                        ? {
-                              children: 'Open dashboard',
-                              icon: IconArrowRight,
-                              onClick: () =>
-                                  navigate(
-                                      `/projects/${projectUuid}/dashboards/${result.uuid}`,
-                                  ),
-                          }
-                        : undefined,
-                });
+                await queryClient.invalidateQueries(['content']);
+
+                if (showToastOnSuccess) {
+                    showToastSuccess({
+                        title: `Success! Dashboard was created.`,
+                        action: showRedirectButton
+                            ? {
+                                  children: 'Open dashboard',
+                                  icon: IconArrowRight,
+                                  onClick: () =>
+                                      navigate(
+                                          `/projects/${projectUuid}/dashboards/${result.uuid}`,
+                                      ),
+                              }
+                            : undefined,
+                    });
+                }
             },
             onError: ({ error }) => {
                 showToastApiError({
                     title: `Failed to create dashboard`,
+                    apiError: error,
+                });
+            },
+        },
+    );
+};
+
+export const useCreateDashboardWithChartsMutation = (
+    projectUuid: string | undefined,
+    { showToastOnSuccess = true }: { showToastOnSuccess?: boolean } = {},
+) => {
+    const navigate = useNavigate();
+    const { showToastSuccess, showToastApiError } = useToaster();
+    const queryClient = useQueryClient();
+    return useMutation<Dashboard, ApiError, CreateDashboardWithCharts>(
+        (data) =>
+            projectUuid
+                ? createDashboardWithCharts(projectUuid, data)
+                : Promise.reject(),
+        {
+            mutationKey: ['dashboard_create_with_charts', projectUuid],
+            onSuccess: async (result) => {
+                await queryClient.invalidateQueries(['dashboards']);
+                await queryClient.invalidateQueries([
+                    'dashboards-containing-chart',
+                ]);
+                await queryClient.invalidateQueries([
+                    'most-popular-and-recently-updated',
+                ]);
+                await queryClient.invalidateQueries(['content']);
+
+                if (showToastOnSuccess) {
+                    showToastSuccess({
+                        title: 'Dashboard created successfully!',
+                        action: {
+                            children: 'Open dashboard',
+                            onClick: () =>
+                                navigate(
+                                    `/projects/${projectUuid}/dashboards/${result.uuid}`,
+                                ),
+                        },
+                    });
+                }
+            },
+            onError: ({ error }) => {
+                showToastApiError({
+                    title: 'Failed to create dashboard',
                     apiError: error,
                 });
             },

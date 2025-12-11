@@ -20,6 +20,7 @@ import MantineIcon from '../common/MantineIcon';
 import { LockedDashboardModal } from '../common/modal/LockedDashboardModal';
 import { TabAddModal } from './AddTabModal';
 import { TabDeleteModal } from './DeleteTabModal';
+import DuplicateTabModal from './DuplicateTabModal';
 import { TabEditModal } from './EditTabModal';
 import GridTile from './GridTile';
 import DraggableTab from './Tab';
@@ -41,9 +42,6 @@ type DashboardTabsProps = {
     handleDeleteTile: (tile: IDashboard['tiles'][number]) => Promise<void>;
     handleBatchDeleteTiles: (tile: IDashboard['tiles'][number][]) => void;
     handleEditTile: (tiles: IDashboard['tiles'][number]) => void;
-    setActiveTab: (
-        value: React.SetStateAction<DashboardTab | undefined>,
-    ) => void;
     setAddingTab: (value: React.SetStateAction<boolean>) => void;
     setGridWidth: (value: React.SetStateAction<number>) => void;
 };
@@ -54,7 +52,6 @@ const DashboardTabs: FC<DashboardTabsProps> = ({
     addingTab,
     dashboardTiles,
     activeTab,
-    setActiveTab,
     handleAddTiles,
     handleUpdateTiles,
     handleDeleteTile,
@@ -63,14 +60,35 @@ const DashboardTabs: FC<DashboardTabsProps> = ({
     setGridWidth,
     setAddingTab,
 }) => {
+    const gridProps = getResponsiveGridLayoutProps();
     const layouts = useMemo(
         () => ({
             lg:
                 dashboardTiles?.map<Layout>((tile) =>
-                    getReactGridLayoutConfig(tile, isEditMode),
+                    getReactGridLayoutConfig(
+                        tile,
+                        isEditMode,
+                        gridProps.cols.lg,
+                    ),
+                ) ?? [],
+            md:
+                dashboardTiles?.map<Layout>((tile) =>
+                    getReactGridLayoutConfig(
+                        tile,
+                        isEditMode,
+                        gridProps.cols.md,
+                    ),
+                ) ?? [],
+            sm:
+                dashboardTiles?.map<Layout>((tile) =>
+                    getReactGridLayoutConfig(
+                        tile,
+                        isEditMode,
+                        gridProps.cols.sm,
+                    ),
                 ) ?? [],
         }),
-        [dashboardTiles, isEditMode],
+        [dashboardTiles, isEditMode, gridProps],
     );
 
     const { search } = useLocation();
@@ -81,15 +99,28 @@ const DashboardTabs: FC<DashboardTabsProps> = ({
     const setHaveTabsChanged = useDashboardContext((c) => c.setHaveTabsChanged);
     const dashboardTabs = useDashboardContext((c) => c.dashboardTabs);
     const setDashboardTabs = useDashboardContext((c) => c.setDashboardTabs);
+    const setDashboardTiles = useDashboardContext((c) => c.setDashboardTiles);
+    const setHaveTilesChanged = useDashboardContext(
+        (c) => c.setHaveTilesChanged,
+    );
 
     // tabs state
     const [isEditingTab, setEditingTab] = useState<boolean>(false);
     const [isDeletingTab, setDeletingTab] = useState<boolean>(false);
+    const [isDuplicatingTab, setDuplicatingTab] = useState<boolean>(false);
+    const [tabToDuplicate, setTabToDuplicate] = useState<DashboardTab | null>(
+        null,
+    );
 
     const defaultTab = dashboardTabs?.[0];
-    const sortedTabs = dashboardTabs?.sort((a, b) => a.order - b.order);
+    // Context: We don't want to show the "tabs mode" if there is only one tab in state
+    // This is because the tabs mode is only useful when there are multiple tabs
+    const sortedTabs =
+        dashboardTabs.length > 1
+            ? dashboardTabs?.sort((a, b) => a.order - b.order)
+            : [];
     const hasDashboardTiles = dashboardTiles && dashboardTiles.length > 0;
-    const tabsEnabled = dashboardTabs && dashboardTabs.length > 0;
+    const tabsEnabled = dashboardTabs && dashboardTabs.length > 1;
 
     const sortedTiles = dashboardTiles?.sort((a, b) => {
         if (a.y === b.y) {
@@ -118,6 +149,21 @@ const DashboardTabs: FC<DashboardTabsProps> = ({
         isActiveTile(tile),
     );
 
+    const handleChangeTab = (tab: DashboardTab) => {
+        const newParams = new URLSearchParams(search);
+        // Change tabs by navigating to the new tab
+        // the provider sets the active tab based on the URL
+        void navigate(
+            {
+                pathname: isEditMode
+                    ? `/projects/${projectUuid}/dashboards/${dashboardUuid}/edit/tabs/${tab?.uuid}`
+                    : `/projects/${projectUuid}/dashboards/${dashboardUuid}/view/tabs/${tab?.uuid}`,
+                search: newParams.toString(),
+            },
+            { replace: true },
+        );
+    };
+
     const handleAddTab = (name: string) => {
         if (name) {
             const newTabs = dashboardTabs ? [...dashboardTabs] : [];
@@ -142,8 +188,10 @@ const DashboardTabs: FC<DashboardTabsProps> = ({
             };
             newTabs.push(newTab);
             setDashboardTabs(newTabs);
-            setActiveTab(newTab);
             setHaveTabsChanged(true);
+
+            // Navigate to the new tab
+            handleChangeTab(newTab);
         }
         setAddingTab(false);
     };
@@ -167,12 +215,12 @@ const DashboardTabs: FC<DashboardTabsProps> = ({
     const handleDeleteTab = (tabUuid: string) => {
         setDashboardTabs((currentTabs) => {
             const newTabs: DashboardTab[] = currentTabs?.filter(
-                (tab) => tab.uuid !== tabUuid,
+                (t) => t.uuid !== tabUuid,
             );
             return newTabs;
         });
         if (activeTab?.uuid === tabUuid) {
-            setActiveTab(
+            handleChangeTab(
                 dashboardTabs.filter((tab) => tab.uuid !== tabUuid)?.[0],
             );
         }
@@ -183,16 +231,74 @@ const DashboardTabs: FC<DashboardTabsProps> = ({
             dashboardTiles?.forEach((tile) => {
                 tile.tabUuid = undefined; // set tab uuid back to null to avoid foreign key constraint error
             });
-            return; // keep all tiles if its the last tab
+            // If this is the last tab, navigate to the non-tab URL.
+            // See `const = sortedTabs` for more context.
+            void navigate(
+                `/projects/${projectUuid}/dashboards/${dashboardUuid}/edit`,
+                { replace: true },
+            );
+
+            return;
         }
 
         const tilesToDelete = dashboardTiles?.filter(
-            (tile) => tile.tabUuid == tabUuid,
+            (tile) => tile.tabUuid === tabUuid,
         );
         if (tilesToDelete) {
             handleBatchDeleteTiles(tilesToDelete);
         }
     };
+
+    const handleDuplicateTab = (tabUuid: string) => {
+        const tab = dashboardTabs.find((t) => t.uuid === tabUuid);
+        if (tab) {
+            setTabToDuplicate(tab);
+            setDuplicatingTab(true);
+        }
+    };
+
+    const handleConfirmDuplicateTab = (name: string) => {
+        if (tabToDuplicate) {
+            const lastOrd =
+                dashboardTabs.length > 0
+                    ? Math.max(...dashboardTabs.map((t) => t.order ?? 0))
+                    : -1;
+            const newTab = {
+                name: name,
+                uuid: uuid4(),
+                isDefault: false,
+                order: lastOrd + 1,
+            };
+
+            setDashboardTabs((currentTabs) => [...currentTabs, newTab]);
+            handleChangeTab(newTab);
+            setHaveTabsChanged(true);
+
+            // Duplicate tiles from the original tab
+            const tilesToDuplicate = dashboardTiles?.filter(
+                (tile) => tile.tabUuid === tabToDuplicate.uuid,
+            );
+
+            if (tilesToDuplicate && tilesToDuplicate.length > 0) {
+                const duplicatedTiles = tilesToDuplicate.map((tile) => ({
+                    ...tile,
+                    uuid: uuid4(),
+                    tabUuid: newTab.uuid,
+                }));
+
+                // Directly add tiles to the dashboard without using handleAddTiles
+                // to avoid automatic assignment to current active tab
+                setDashboardTiles((currentTiles) => [
+                    ...(currentTiles ?? []),
+                    ...duplicatedTiles,
+                ]);
+                setHaveTilesChanged(true);
+            }
+        }
+        setDuplicatingTab(false);
+        setTabToDuplicate(null);
+    };
+    const MAGIC_SCROLL_AREA_HEIGHT = 40;
 
     return (
         <DragDropContext
@@ -224,56 +330,41 @@ const DashboardTabs: FC<DashboardTabsProps> = ({
                                         (t) => t.uuid === e,
                                     );
                                     if (tab) {
-                                        setActiveTab(tab);
-                                    }
-                                    if (!isEditMode) {
-                                        const newParams = new URLSearchParams(
-                                            search,
-                                        );
-                                        void navigate(
-                                            {
-                                                pathname: `/projects/${projectUuid}/dashboards/${dashboardUuid}/view/tabs/${tab?.uuid}`,
-                                                search: newParams.toString(),
-                                            },
-                                            { replace: true },
-                                        );
+                                        handleChangeTab(tab);
                                     }
                                 }}
                                 mt={tabsEnabled ? 'sm' : 'xs'}
-                                styles={
-                                    tabsEnabled
-                                        ? {
-                                              root: {
-                                                  backgroundColor: 'white',
-                                                  flexGrow: 1,
-                                              },
-                                              tabsList: {
-                                                  flexWrap: 'nowrap',
-                                              },
-                                              tab: {
-                                                  borderBottom:
-                                                      '1px solid var(--mantine-color-gray-3)',
-                                              },
-                                          }
-                                        : undefined
-                                }
+                                styles={{
+                                    tabsList: {
+                                        flexWrap: 'nowrap',
+                                        height: MAGIC_SCROLL_AREA_HEIGHT - 1,
+                                    },
+                                }}
                                 variant="outline"
                             >
                                 {sortedTabs && sortedTabs?.length > 0 && (
-                                    <Tabs.List bg="gray.0" px="lg">
+                                    <Tabs.List bg="ldGray.0" px="lg">
                                         <ScrollArea
                                             type="hover"
                                             offsetScrollbars
                                             scrollHideDelay={200}
                                             variant="primary"
                                             scrollbarSize={6}
+                                            h={MAGIC_SCROLL_AREA_HEIGHT}
                                             styles={{
                                                 viewport: {
                                                     paddingBottom: 0,
                                                 },
                                             }}
                                         >
-                                            <Group noWrap spacing={0}>
+                                            <Group
+                                                noWrap
+                                                styles={(theme) => ({
+                                                    root: {
+                                                        gap: theme.spacing.xl,
+                                                    },
+                                                })}
+                                            >
                                                 {sortedTabs?.map((tab, idx) => {
                                                     return (
                                                         <DraggableTab
@@ -298,6 +389,9 @@ const DashboardTabs: FC<DashboardTabsProps> = ({
                                                             }
                                                             handleDeleteTab={
                                                                 handleDeleteTab
+                                                            }
+                                                            handleDuplicateTab={
+                                                                handleDuplicateTab
                                                             }
                                                             setDeletingTab={
                                                                 setDeletingTab
@@ -328,12 +422,12 @@ const DashboardTabs: FC<DashboardTabsProps> = ({
                                 )}
                                 <Group
                                     grow
-                                    pt={tabsEnabled ? 'lg' : undefined}
+                                    pt={tabsEnabled ? 'sm' : undefined}
                                     pb="lg"
                                     px="xs"
                                 >
                                     <ResponsiveGridLayout
-                                        {...getResponsiveGridLayoutProps()}
+                                        {...gridProps}
                                         className={`${
                                             hasRequiredDashboardFiltersToSet
                                                 ? 'locked'
@@ -416,9 +510,21 @@ const DashboardTabs: FC<DashboardTabsProps> = ({
                                         handleAddTab(name);
                                     }}
                                 />
+                                {tabToDuplicate && (
+                                    <DuplicateTabModal
+                                        tab={tabToDuplicate}
+                                        onClose={() => {
+                                            setDuplicatingTab(false);
+                                            setTabToDuplicate(null);
+                                        }}
+                                        opened={isDuplicatingTab}
+                                        onConfirm={handleConfirmDuplicateTab}
+                                    />
+                                )}
                                 {activeTab && (
                                     <>
                                         <TabEditModal
+                                            key={activeTab.uuid}
                                             tab={activeTab}
                                             onClose={() => setEditingTab(false)}
                                             opened={isEditingTab}
@@ -430,6 +536,7 @@ const DashboardTabs: FC<DashboardTabsProps> = ({
                                             tab={activeTab}
                                             dashboardTiles={dashboardTiles}
                                             dashboardTabs={dashboardTabs}
+                                            dashboardUuid={dashboardUuid!}
                                             onClose={() =>
                                                 setDeletingTab(false)
                                             }

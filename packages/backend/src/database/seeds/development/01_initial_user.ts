@@ -3,15 +3,26 @@ import {
     DbtLocalProjectConfig,
     DbtProjectType,
     generateSlug,
+    getLtreePathFromSlug,
     OrganizationMemberRole,
     SEED_ORG_1,
     SEED_ORG_1_ADMIN,
     SEED_ORG_1_ADMIN_EMAIL,
     SEED_ORG_1_ADMIN_PASSWORD,
+    SEED_ORG_1_ADMIN_ROLE,
+    SEED_ORG_1_EDITOR,
+    SEED_ORG_1_EDITOR_EMAIL,
+    SEED_ORG_1_EDITOR_PASSWORD,
+    SEED_ORG_1_EDITOR_ROLE,
+    SEED_ORG_1_VIEWER,
+    SEED_ORG_1_VIEWER_EMAIL,
+    SEED_ORG_1_VIEWER_PASSWORD,
+    SEED_ORG_1_VIEWER_ROLE,
     SEED_ORG_2,
     SEED_ORG_2_ADMIN,
     SEED_ORG_2_ADMIN_EMAIL,
     SEED_ORG_2_ADMIN_PASSWORD,
+    SEED_ORG_2_ADMIN_ROLE,
     SEED_PROJECT,
     SEED_SPACE,
     SupportedDbtVersions,
@@ -21,7 +32,10 @@ import bcrypt from 'bcrypt';
 import { Knex } from 'knex';
 import path from 'path';
 import { lightdashConfig } from '../../../config/lightdashConfig';
+import { ChangesetModel } from '../../../models/ChangesetModel';
 import { ProjectModel } from '../../../models/ProjectModel/ProjectModel';
+import { ProjectParametersModel } from '../../../models/ProjectParametersModel';
+import { UserAttributesModel } from '../../../models/UserAttributesModel';
 import { projectAdapterFromConfig } from '../../../projectAdapters/projectAdapter';
 import { EncryptionUtil } from '../../../utils/EncryptionUtil/EncryptionUtil';
 import { DbEmailIn } from '../../entities/emails';
@@ -34,30 +48,52 @@ export async function seed(knex: Knex): Promise<void> {
     await knex('users').del();
     await knex('organizations').del();
 
-    const addUser = async (
-        seedOrganization: DbOrganizationIn,
-        seedUser: DbUserIn,
-        seedEmail: Omit<DbEmailIn, 'user_id'>,
-        seedPassword: { password: string },
-    ) => {
-        const [
-            {
-                organization_id: organizationId,
-                organization_uuid: organizationUuid,
-            },
-        ] = await knex('organizations')
+    const addOrganization = async (seedOrganization: DbOrganizationIn) => {
+        const [organization] = await knex('organizations')
             .insert(seedOrganization)
             .returning(['organization_id', 'organization_uuid']);
-        if (organizationId === undefined) {
+
+        if (organization === undefined) {
             throw new Error('Organization was not created');
         }
 
+        return {
+            organizationId: organization.organization_id,
+            organizationUuid: organization.organization_uuid,
+        };
+    };
+
+    const addUser = async (
+        {
+            organizationId,
+            organizationUuid,
+        }: {
+            organizationId: number;
+            organizationUuid: string;
+        },
+        seedUser: DbUserIn,
+        seedEmail: Omit<DbEmailIn, 'user_id'>,
+        seedPassword: { password: string },
+        seedUserRole: OrganizationMemberRole,
+    ) => {
         const [user] = await knex('users').insert(seedUser).returning('*');
         if (user.user_id === undefined) {
             throw new Error('User was not created');
         }
 
-        await knex('emails').insert({ ...seedEmail, user_id: user.user_id });
+        await knex('emails').insert({
+            ...seedEmail,
+            user_id: user.user_id,
+        });
+
+        await knex('emails')
+            .update({
+                is_verified: true,
+            })
+            .where({
+                user_id: user.user_id,
+                email: seedEmail.email,
+            });
 
         await knex('password_logins').insert({
             user_id: user.user_id,
@@ -70,7 +106,7 @@ export async function seed(knex: Knex): Promise<void> {
         await knex('organization_memberships').insert({
             user_id: user.user_id,
             organization_id: organizationId,
-            role: OrganizationMemberRole.ADMIN,
+            role: seedUserRole,
         });
 
         await knex(OnboardingTableName).insert({
@@ -82,17 +118,52 @@ export async function seed(knex: Knex): Promise<void> {
         return { organizationId, user, organizationUuid };
     };
 
-    const { organizationId, organizationUuid, user } = await addUser(
+    const { organizationId, organizationUuid } = await addOrganization(
         SEED_ORG_1,
+    );
+
+    // Add user attribute
+    await new UserAttributesModel({ database: knex }).create(
+        SEED_ORG_1.organization_uuid,
+        {
+            name: 'is_admin_saas_demo',
+            description: 'Provides access to all SAAS and fanout models',
+            attributeDefault: 'true',
+            users: [],
+            groups: [],
+        },
+    );
+
+    const { user } = await addUser(
+        { organizationId, organizationUuid },
         SEED_ORG_1_ADMIN,
         SEED_ORG_1_ADMIN_EMAIL,
         SEED_ORG_1_ADMIN_PASSWORD,
+        SEED_ORG_1_ADMIN_ROLE,
     );
     await addUser(
-        SEED_ORG_2,
+        { organizationId, organizationUuid },
+        SEED_ORG_1_EDITOR,
+        SEED_ORG_1_EDITOR_EMAIL,
+        SEED_ORG_1_EDITOR_PASSWORD,
+        SEED_ORG_1_EDITOR_ROLE,
+    );
+    await addUser(
+        { organizationId, organizationUuid },
+        SEED_ORG_1_VIEWER,
+        SEED_ORG_1_VIEWER_EMAIL,
+        SEED_ORG_1_VIEWER_PASSWORD,
+        SEED_ORG_1_VIEWER_ROLE,
+    );
+
+    const org2 = await addOrganization(SEED_ORG_2);
+
+    await addUser(
+        org2,
         SEED_ORG_2_ADMIN,
         SEED_ORG_2_ADMIN_EMAIL,
         SEED_ORG_2_ADMIN_PASSWORD,
+        SEED_ORG_2_ADMIN_ROLE,
     );
 
     // Try this with relative path
@@ -119,8 +190,7 @@ export async function seed(knex: Knex): Promise<void> {
             ...SEED_PROJECT,
             organization_id: organizationId,
             dbt_connection: encryptedProjectSettings,
-            dbt_version: SupportedDbtVersions.V1_4,
-            semantic_layer_connection: null,
+            dbt_version: SupportedDbtVersions.V1_7,
             created_by_user_uuid: user.user_uuid,
         })
         .returning(['project_id', 'project_uuid']);
@@ -165,12 +235,16 @@ export async function seed(knex: Knex): Promise<void> {
         warehouse_type: 'postgres',
     });
 
-    const [{ space_id: spaceId, space_uuid: spaceUuid }] = await knex('spaces')
+    const spaceSlug = generateSlug(SEED_SPACE.name);
+
+    const [{ space_uuid: spaceUuid }] = await knex('spaces')
         .insert({
             ...SEED_SPACE,
             is_private: false,
             project_id: projectId,
-            slug: generateSlug(SEED_SPACE.name),
+            slug: spaceSlug,
+            parent_space_uuid: null,
+            path: getLtreePathFromSlug(spaceSlug),
         })
         .returning(['space_id', 'space_uuid']);
 
@@ -188,18 +262,32 @@ export async function seed(knex: Knex): Promise<void> {
                 warehouseCatalog: undefined,
                 onWarehouseCatalogChange: () => {},
             },
-            SupportedDbtVersions.V1_4,
+            SupportedDbtVersions.V1_7,
         );
         const explores = await adapter.compileAllExplores({
             userUuid: user.user_uuid,
             organizationUuid,
             projectUuid,
         });
+
+        const changesetModel = new ChangesetModel({ database: knex });
+
         await new ProjectModel({
             database: knex,
             lightdashConfig,
             encryptionUtil: enc,
+            changesetModel,
         }).saveExploresToCache(SEED_PROJECT.project_uuid, explores);
+
+        // Seed parameters
+        const lightdashProjectConfig = await adapter.getLightdashProjectConfig({
+            projectUuid,
+            organizationUuid,
+            userUuid: user.user_uuid,
+        });
+        await new ProjectParametersModel({
+            database: knex,
+        }).replace(projectUuid, lightdashProjectConfig.parameters ?? {});
     } catch (e) {
         console.error(e);
         throw e;

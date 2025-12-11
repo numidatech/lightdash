@@ -9,9 +9,11 @@ import {
     NotFoundError,
     ParameterError,
     ProjectGroupAccess,
+    ProjectMemberRole,
     UnexpectedDatabaseError,
     UpdateGroupWithMembers,
     getErrorMessage,
+    isSystemRole,
     type KnexPaginateArgs,
     type KnexPaginatedData,
 } from '@lightdash/common';
@@ -232,6 +234,46 @@ export class GroupsModel {
         };
     }
 
+    async findUserInGroups(filters: {
+        userUuid: string;
+        organizationUuid: string;
+        groupUuids?: string[];
+    }): Promise<GroupMembership[]> {
+        const query = this.database(GroupMembershipTableName)
+            .innerJoin(
+                UserTableName,
+                `${GroupMembershipTableName}.user_id`,
+                `${UserTableName}.user_id`,
+            )
+            .where(`${UserTableName}.user_uuid`, filters.userUuid);
+
+        if (filters.organizationUuid) {
+            void query
+                .innerJoin(
+                    OrganizationTableName,
+                    `${GroupMembershipTableName}.organization_id`,
+                    `${OrganizationTableName}.organization_id`,
+                )
+                .where(
+                    `${OrganizationTableName}.organization_uuid`,
+                    filters.organizationUuid,
+                );
+        }
+
+        if (filters.groupUuids && filters.groupUuids.length > 0) {
+            void query.whereIn(
+                `${GroupMembershipTableName}.group_uuid`,
+                filters.groupUuids,
+            );
+        }
+
+        const rows = await query;
+        return rows.map((row) => ({
+            groupUuid: row.group_uuid,
+            userUuid: row.user_uuid,
+        }));
+    }
+
     async createGroup({
         createdByUserUuid,
         createGroup,
@@ -386,13 +428,44 @@ export class GroupsModel {
     }
 
     async removeGroupMember(member: GroupMembership): Promise<boolean> {
-        const deletedRows = await this.database('group_memberships')
-            .innerJoin('users', 'group_memberships.user_id', 'users.user_id')
+        const deletedRows = await this.database(GroupMembershipTableName)
+            .innerJoin(
+                UserTableName,
+                `${GroupMembershipTableName}.user_id`,
+                `${UserTableName}.user_id`,
+            )
             .where('group_uuid', member.groupUuid)
-            .andWhere('users.user_uuid', member.userUuid)
+            .andWhere(`${UserTableName}.user_uuid`, member.userUuid)
             .del()
             .returning('*');
         return deletedRows.length > 0;
+    }
+
+    async removeUserFromAllGroups({
+        userUuid,
+        organizationUuid,
+    }: {
+        userUuid: string;
+        organizationUuid: string;
+    }): Promise<number> {
+        // Delete all group memberships for a given user under a specific organization
+        return this.database(GroupMembershipTableName)
+            .innerJoin(
+                UserTableName,
+                `${GroupMembershipTableName}.user_id`,
+                `${UserTableName}.user_id`,
+            )
+            .innerJoin(
+                OrganizationTableName,
+                `${GroupMembershipTableName}.organization_id`,
+                `${OrganizationTableName}.organization_id`,
+            )
+            .where(`${UserTableName}.user_uuid`, userUuid)
+            .andWhere(
+                `${OrganizationTableName}.organization_uuid`,
+                organizationUuid,
+            )
+            .del();
     }
 
     async updateGroup({
@@ -504,7 +577,16 @@ export class GroupsModel {
         role,
     }: ProjectGroupAccess): Promise<DBProjectGroupAccess> {
         const query = this.database(ProjectGroupAccessTableName)
-            .insert({ group_uuid: groupUuid, project_uuid: projectUuid, role })
+            .insert({
+                group_uuid: groupUuid,
+                project_uuid: projectUuid,
+                ...(isSystemRole(role)
+                    ? { role }
+                    : {
+                          role: ProjectMemberRole.VIEWER,
+                          role_uuid: role,
+                      }),
+            })
             .onConflict()
             .ignore()
             .returning('*');

@@ -1,12 +1,13 @@
 import {
     formatItemValue,
+    getSubtotalKey,
     isCustomDimension,
+    isDimension,
     isField,
-    type ApiQueryResults,
     type ItemsMap,
+    type ParametersValuesMap,
     type ResultRow,
 } from '@lightdash/common';
-import { getSubtotalKey } from '@lightdash/common/src/utils/subtotals';
 import { Text } from '@mantine/core';
 import type { CellContext } from '@tanstack/react-table';
 import {
@@ -24,7 +25,6 @@ import { getFormattedValueCell } from '../useColumns';
 type Args = {
     itemsMap: ItemsMap;
     selectedItemIds: string[];
-    resultsData: ApiQueryResults;
     isColumnVisible: (key: string) => boolean;
     isColumnFrozen: (key: string) => boolean;
     showTableNames: boolean;
@@ -32,6 +32,7 @@ type Args = {
     columnOrder: string[];
     totals?: Record<string, number>;
     groupedSubtotals?: Record<string, Record<string, number>[]>;
+    parameters?: ParametersValuesMap;
 };
 
 export function getGroupingValuesAndSubtotalKey(
@@ -75,10 +76,26 @@ export function getSubtotalValueFromGroup(
     return subtotal?.[columnId];
 }
 
+const getImageSize = (item: ItemsMap[string] | undefined) => {
+    if (isDimension(item) && item.image?.url) {
+        const defaultWidth = 100;
+        const defaultPadding = 8 * 2;
+        const width = (item.image?.width || defaultWidth) + defaultPadding;
+
+        return {
+            style: {
+                width,
+                minWidth: width,
+                maxWidth: width,
+            },
+        };
+    }
+    return {};
+};
+
 const getDataAndColumns = ({
     itemsMap,
     selectedItemIds,
-    resultsData,
     isColumnVisible,
     isColumnFrozen,
     showTableNames,
@@ -86,24 +103,21 @@ const getDataAndColumns = ({
     columnOrder,
     totals,
     groupedSubtotals,
-}: Args): {
-    rows: ResultRow[];
-    columns: Array<TableHeader | TableColumn>;
-    error?: string;
-} => {
-    const columns = selectedItemIds.reduce<Array<TableHeader | TableColumn>>(
+    parameters,
+}: Args): Array<TableHeader | TableColumn> => {
+    return columnOrder.reduce<Array<TableHeader | TableColumn>>(
         (acc, itemId) => {
             const item = itemsMap[itemId] as
                 | typeof itemsMap[number]
                 | undefined;
 
-            if (!columnOrder.includes(itemId)) {
+            if (!selectedItemIds.includes(itemId)) {
                 return acc;
             }
             const headerOverride = getFieldLabelOverride(itemId);
 
             const column: TableHeader | TableColumn = columnHelper.accessor(
-                (row) => row[itemId],
+                (row: ResultRow) => row[itemId],
                 {
                     id: itemId,
                     header: () => (
@@ -137,16 +151,23 @@ const getDataAndColumns = ({
                             )}
                         </TableHeaderLabelContainer>
                     ),
-                    cell: getFormattedValueCell,
+                    cell: (info) => getFormattedValueCell(info, parameters),
 
                     footer: () =>
                         totals?.[itemId]
-                            ? formatItemValue(item, totals[itemId])
+                            ? formatItemValue(
+                                  item,
+                                  totals[itemId],
+                                  false,
+                                  parameters,
+                              )
                             : null,
                     meta: {
                         item,
                         isVisible: isColumnVisible(itemId),
                         frozen: isColumnFrozen(itemId),
+                        // For image columns with explicit width: set fixed width constraints
+                        ...getImageSize(item),
                     },
                     // Some features work in the TanStack Table demos but not here, for unknown reasons.
                     // For example, setting grouping value here does not work. The workaround is to use
@@ -173,14 +194,19 @@ const getDataAndColumns = ({
                             const subtotal = groupedSubtotals?.[
                                 subtotalGroupKey
                             ]?.find((sub) => {
-                                return Object.keys(groupingValues).every(
-                                    (key) => {
-                                        return (
-                                            groupingValues[key]?.value.raw ===
-                                            sub[key]
-                                        );
-                                    },
-                                );
+                                try {
+                                    return Object.keys(groupingValues).every(
+                                        (key) => {
+                                            return (
+                                                groupingValues[key]?.value
+                                                    .raw === sub[key]
+                                            );
+                                        },
+                                    );
+                                } catch (e) {
+                                    console.error(e);
+                                    return false;
+                                }
                             });
 
                             const subtotalValue = getSubtotalValueFromGroup(
@@ -194,7 +220,12 @@ const getDataAndColumns = ({
 
                             return (
                                 <Text span fw={600}>
-                                    {formatItemValue(item, subtotalValue)}
+                                    {formatItemValue(
+                                        item,
+                                        subtotalValue,
+                                        false,
+                                        parameters,
+                                    )}
                                 </Text>
                             );
                         }
@@ -205,10 +236,6 @@ const getDataAndColumns = ({
         },
         [],
     );
-    return {
-        rows: resultsData.rows,
-        columns,
-    };
 };
 
 export default getDataAndColumns;

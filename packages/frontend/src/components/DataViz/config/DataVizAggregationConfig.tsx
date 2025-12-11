@@ -20,7 +20,7 @@ import {
     IconSum,
     IconTrendingUp,
 } from '@tabler/icons-react';
-import { capitalize } from 'lodash';
+import capitalize from 'lodash/capitalize';
 import { forwardRef, type ComponentPropsWithoutRef, type FC } from 'react';
 import MantineIcon from '../../common/MantineIcon';
 import { usePillSelectStyles } from '../hooks/usePillSelectStyles';
@@ -80,10 +80,18 @@ export const DataVizAggregationConfig: FC<Props> = ({
     onChangeAggregation,
     aggregation,
 }) => {
-    const { colors } = useMantineTheme();
+    const {
+        colors,
+        colorScheme,
+        fn: { lighten },
+    } = useMantineTheme();
     const { classes } = usePillSelectStyles({
-        backgroundColor: colors.indigo[0],
-        textColor: colors.indigo[4],
+        backgroundColor:
+            colorScheme === 'light'
+                ? lighten(colors.indigo[0], 0.5)
+                : colors.indigo[5],
+        textColor:
+            colorScheme === 'light' ? colors.indigo[4] : colors.indigo[0],
     });
     const aggregationOptionsWithNone = options ?? [];
 

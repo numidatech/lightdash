@@ -2,12 +2,13 @@ import { type Ability, type ForcedSubject } from '@casl/ability';
 import { type OrganizationMemberProfile } from '../types/organizationMemberProfile';
 
 export type AbilityAction =
-    | 'manage'
-    | 'update'
-    | 'view'
     | 'create'
     | 'delete'
-    | 'promote';
+    | 'export'
+    | 'manage'
+    | 'promote'
+    | 'update'
+    | 'view';
 
 interface Project {
     organizationUuid: string;
@@ -18,39 +19,49 @@ interface Organization {
     organizationUuid: string;
 }
 
-type Subject =
+export type CaslSubjectNames =
+    | 'AiAgent'
+    | 'AiAgentThread'
+    | 'Analytics'
+    | 'ChangeCsvResults'
+    | 'CompileProject'
+    | 'ContentAsCode'
+    | 'CustomSql'
+    | 'Dashboard'
+    | 'DashboardComments'
+    | 'DashboardCsv'
+    | 'DashboardImage'
+    | 'DashboardPdf'
+    | 'Explore'
+    | 'ExportCsv'
+    | 'GoogleSheets'
+    | 'Group'
+    | 'InviteLink'
+    | 'Job'
+    | 'JobStatus'
+    | 'MetricsTree'
+    | 'Organization'
+    | 'OrganizationMemberProfile'
+    | 'OrganizationWarehouseCredentials'
+    | 'PersonalAccessToken'
+    | 'PinnedItems'
+    | 'Project'
+    | 'SavedChart'
+    | 'ScheduledDeliveries'
+    | 'SemanticViewer'
+    | 'Space'
+    | 'SpotlightTableConfig'
+    | 'SqlRunner'
+    | 'Tags'
+    | 'UnderlyingData'
+    | 'Validation'
+    | 'VirtualView';
+
+export type Subject =
+    | CaslSubjectNames
     | Project
     | Organization
     | OrganizationMemberProfile
-    | 'Project'
-    | 'Organization'
-    | 'OrganizationMemberProfile'
-    | 'Dashboard'
-    | 'Space'
-    | 'SavedChart'
-    | 'InviteLink'
-    | 'Job'
-    | 'SqlRunner'
-    | 'Analytics'
-    | 'Explore'
-    | 'UnderlyingData'
-    | 'ExportCsv'
-    | 'CsvJobResult'
-    | 'PinnedItems'
-    | 'Validation'
-    | 'Group'
-    | 'ChangeCsvResults'
-    | 'ScheduledDeliveries'
-    | 'DashboardComments'
-    | 'CustomSql'
-    | 'CompileProject'
-    | 'SemanticViewer'
-    | 'VirtualView'
-    | 'Tags'
-    | 'PersonalAccessToken'
-    | 'MetricsTree'
-    | 'SpotlightTableConfig'
-    | 'ContentAsCode'
     | 'all';
 
 export type PossibleAbilities = [

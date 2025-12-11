@@ -2,6 +2,7 @@ import {
     CreateSnowflakeCredentials,
     getErrorMessage,
     ParseError,
+    SnowflakeAuthenticationType,
     WarehouseTypes,
 } from '@lightdash/common';
 import { JSONSchemaType } from 'ajv';
@@ -15,7 +16,9 @@ type SnowflakeTarget = {
     account: string;
     user: string;
     password?: string;
+    authenticator?: string;
     private_key_path?: string;
+    private_key?: string;
     private_key_passphrase?: string;
     role?: string;
     database: string;
@@ -47,7 +50,15 @@ const snowflakeSchema: JSONSchemaType<SnowflakeTarget> = {
             type: 'string',
             nullable: true,
         },
+        authenticator: {
+            type: 'string',
+            nullable: true,
+        },
         private_key_path: {
+            type: 'string',
+            nullable: true,
+        },
+        private_key: {
             type: 'string',
             nullable: true,
         },
@@ -117,6 +128,22 @@ export const convertSnowflakeSchema = async (
                 );
             }
         }
+        if (target.private_key) {
+            privateKey = target.private_key;
+        }
+
+        // Determine authentication type based on authenticator field or credentials present
+        let authenticationType: SnowflakeAuthenticationType;
+        if (
+            target.authenticator &&
+            target.authenticator.toLowerCase() === 'externalbrowser'
+        ) {
+            authenticationType = SnowflakeAuthenticationType.EXTERNAL_BROWSER;
+        } else if (privateKey) {
+            authenticationType = SnowflakeAuthenticationType.PRIVATE_KEY;
+        } else {
+            authenticationType = SnowflakeAuthenticationType.PASSWORD;
+        }
 
         return {
             type: WarehouseTypes.SNOWFLAKE,
@@ -125,6 +152,7 @@ export const convertSnowflakeSchema = async (
             password: target.password,
             privateKey,
             privateKeyPass: target.private_key_passphrase,
+            authenticationType,
             role: target.role,
             warehouse: target.warehouse,
             database: target.database,

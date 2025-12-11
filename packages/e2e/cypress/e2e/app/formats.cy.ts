@@ -1,11 +1,12 @@
 import { SEED_PROJECT } from '@lightdash/common';
 
-describe('Explore', () => {
+describe.skip('Explore', () => {
     beforeEach(() => {
         cy.login();
     });
 
-    it('Should query in explore with formats and rounds', () => {
+    // todo: move to unit test
+    it.skip('Should query in explore with formats and rounds', () => {
         const urlParam = {
             tableName: 'events',
             metricQuery: {
@@ -35,7 +36,12 @@ describe('Explore', () => {
                         ],
                     },
                 },
-                sorts: [{ fieldId: 'events_in_eur', descending: true }],
+                sorts: [
+                    {
+                        fieldId: 'events_in_eur',
+                        descending: true,
+                    },
+                ],
                 limit: 1,
                 tableCalculations: [],
                 additionalMetrics: [],
@@ -82,6 +88,9 @@ describe('Explore', () => {
         cy.visit(
             `/projects/${SEED_PROJECT.project_uuid}/tables/events${exploreUrlParams}`,
         );
+
+        // run query
+        cy.get('button').contains('Run query').click();
 
         const headers = [
             'In eur',

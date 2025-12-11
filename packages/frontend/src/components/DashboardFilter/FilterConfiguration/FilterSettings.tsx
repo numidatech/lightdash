@@ -1,14 +1,15 @@
 import {
     FilterOperator,
-    FilterType,
     getFilterRuleWithDefaultValue,
-    getFilterTypeFromItem,
+    supportsSingleValue,
     type DashboardFilterRule,
     type FilterRule,
+    type FilterType,
     type FilterableDimension,
 } from '@lightdash/common';
 import {
     Box,
+    Button,
     Checkbox,
     Select,
     Stack,
@@ -18,15 +19,18 @@ import {
     Tooltip,
     type PopoverProps,
 } from '@mantine/core';
+import { IconHelpCircle } from '@tabler/icons-react';
 import { useEffect, useMemo, useState, type FC } from 'react';
 import FilterInputComponent from '../../common/Filters/FilterInputs';
 import { getFilterOperatorOptions } from '../../common/Filters/FilterInputs/utils';
 import { getPlaceholderByFilterTypeAndOperator } from '../../common/Filters/utils/getPlaceholderByFilterTypeAndOperator';
+import MantineIcon from '../../common/MantineIcon';
 
 interface FilterSettingsProps {
     isEditMode: boolean;
     isCreatingNew: boolean;
-    field: FilterableDimension;
+    filterType: FilterType;
+    field?: FilterableDimension;
     filterRule: DashboardFilterRule;
     popoverProps?: Omit<PopoverProps, 'children'>;
     onChangeFilterRule: (value: DashboardFilterRule) => void;
@@ -36,15 +40,12 @@ const FilterSettings: FC<FilterSettingsProps> = ({
     isEditMode,
     isCreatingNew,
     field,
+    filterType,
     filterRule,
     popoverProps,
     onChangeFilterRule,
 }) => {
     const [filterLabel, setFilterLabel] = useState<string>();
-
-    const filterType = useMemo(() => {
-        return field ? getFilterTypeFromItem(field) : FilterType.STRING;
-    }, [field]);
 
     const filterOperatorOptions = useMemo(
         () => getFilterOperatorOptions(filterType),
@@ -54,13 +55,13 @@ const FilterSettings: FC<FilterSettingsProps> = ({
     // Set default label when using revert (undo) button
     useEffect(() => {
         if (filterLabel !== '') {
-            setFilterLabel(filterRule.label ?? field.label);
+            setFilterLabel(filterRule.label ?? field?.label);
         }
-    }, [filterLabel, filterRule.label, field.label]);
+    }, [filterLabel, filterRule.label, field?.label]);
 
     const handleChangeFilterOperator = (operator: FilterRule['operator']) => {
         onChangeFilterRule(
-            getFilterRuleWithDefaultValue(field, {
+            getFilterRuleWithDefaultValue(filterType, field, {
                 ...filterRule,
                 operator,
             }),
@@ -106,7 +107,9 @@ const FilterSettings: FC<FilterSettingsProps> = ({
                                 label: e.target.value || undefined,
                             });
                         }}
-                        placeholder={`Label for ${field.label}`}
+                        placeholder={
+                            field ? `Label for ${field.label}` : 'Filter label'
+                        }
                         value={filterLabel}
                     />
                 )}
@@ -115,6 +118,7 @@ const FilterSettings: FC<FilterSettingsProps> = ({
                         Value
                     </Text>
                 )}
+
                 <Select
                     size="xs"
                     data={filterOperatorOptions}
@@ -123,6 +127,48 @@ const FilterSettings: FC<FilterSettingsProps> = ({
                     onDropdownClose={popoverProps?.onClose}
                     onChange={handleChangeFilterOperator}
                     value={filterRule.operator}
+                    rightSectionWidth={140}
+                    rightSectionProps={{
+                        style: {
+                            justifyContent: 'flex-end',
+                            marginRight: '8px',
+                        },
+                    }}
+                    rightSection={
+                        supportsSingleValue(filterType, filterRule.operator) &&
+                        isEditMode && (
+                            <Button
+                                compact
+                                size="xs"
+                                variant={'light'}
+                                rightIcon={
+                                    <Tooltip
+                                        variant="xs"
+                                        label={
+                                            filterRule.singleValue
+                                                ? 'Prevent selection of multiple values'
+                                                : 'Allow selection of multiple values'
+                                        }
+                                    >
+                                        <MantineIcon
+                                            size="sm"
+                                            icon={IconHelpCircle}
+                                        />
+                                    </Tooltip>
+                                }
+                                onClick={() => {
+                                    onChangeFilterRule({
+                                        ...filterRule,
+                                        singleValue: !filterRule.singleValue,
+                                    });
+                                }}
+                            >
+                                {filterRule.singleValue
+                                    ? 'Single value'
+                                    : 'Multiple values'}
+                            </Button>
+                        )
+                    }
                 />
                 {showAnyValueDisabledInput && !filterRule.required && (
                     <TextInput
@@ -135,6 +181,7 @@ const FilterSettings: FC<FilterSettingsProps> = ({
                         })}
                     />
                 )}
+
                 {(showValueInput || filterRule.required) && (
                     <FilterInputComponent
                         popoverProps={popoverProps}
@@ -153,7 +200,7 @@ const FilterSettings: FC<FilterSettingsProps> = ({
                     <>
                         {filterRule.required &&
                             (filterRule?.values || []).length > 0 && (
-                                <Text size="xs" color={'gray.7'}>
+                                <Text size="xs" color={'ldGray.7'}>
                                     Temporary filter values for required filters
                                     will be removed on dashboard save
                                 </Text>
@@ -197,6 +244,7 @@ const FilterSettings: FC<FilterSettingsProps> = ({
                                                 e.currentTarget.checked
                                                     ? newFilter
                                                     : getFilterRuleWithDefaultValue(
+                                                          filterType,
                                                           field,
                                                           newFilter,
                                                           null,
@@ -221,6 +269,7 @@ const FilterSettings: FC<FilterSettingsProps> = ({
                                     e.currentTarget.checked
                                         ? newFilter
                                         : getFilterRuleWithDefaultValue(
+                                              filterType,
                                               field,
                                               newFilter,
                                               null,

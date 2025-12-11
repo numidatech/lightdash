@@ -12,12 +12,19 @@ import {
     Text,
     Tooltip,
 } from '@mantine/core';
-import { IconCircleFilled, IconPencil, IconTrash } from '@tabler/icons-react';
-import { useCallback, type FC } from 'react';
+import {
+    IconCircleFilled,
+    IconPencil,
+    IconSend,
+    IconTrash,
+} from '@tabler/icons-react';
+import { useCallback, useState, type FC } from 'react';
 import MantineIcon from '../../../components/common/MantineIcon';
 import { useActiveProjectUuid } from '../../../hooks/useActiveProject';
 import { useProject } from '../../../hooks/useProject';
+import { useSendNowSchedulerByUuid } from '../hooks/useScheduler';
 import { useSchedulersEnabledUpdateMutation } from '../hooks/useSchedulersUpdateMutation';
+import ConfirmSendNowModal from './ConfirmSendNowModal';
 
 type SchedulersListItemProps = {
     scheduler: SchedulerAndTargets;
@@ -32,6 +39,9 @@ const SchedulersListItem: FC<SchedulersListItemProps> = ({
 }) => {
     const { mutate: mutateSchedulerEnabled } =
         useSchedulersEnabledUpdateMutation(scheduler.schedulerUuid);
+
+    const sendNowMutation = useSendNowSchedulerByUuid(scheduler.schedulerUuid);
+    const [isConfirmOpen, setIsConfirmOpen] = useState(false);
 
     const handleToggle = useCallback(
         (enabled: boolean) => {
@@ -55,18 +65,18 @@ const SchedulersListItem: FC<SchedulersListItemProps> = ({
                         {scheduler.name}
                     </Text>
                     <Group spacing="sm">
-                        <Text color="gray" size={12}>
+                        <Text color="ldGray" size={12}>
                             {getHumanReadableCronExpression(
                                 scheduler.cron,
                                 scheduler.timezone || project.schedulerTimezone,
                             )}
                         </Text>
 
-                        <Box c="gray.4">
+                        <Box c="ldGray.4">
                             <MantineIcon icon={IconCircleFilled} size={5} />
                         </Box>
 
-                        <Text color="gray" size={12}>
+                        <Text color="ldGray" size={12}>
                             {scheduler.targets.length} recipients
                         </Text>
                     </Group>
@@ -90,7 +100,14 @@ const SchedulersListItem: FC<SchedulersListItemProps> = ({
                             />
                         </Box>
                     </Tooltip>
-
+                    <Tooltip withinPortal label="Send now">
+                        <ActionIcon
+                            variant="light"
+                            onClick={() => setIsConfirmOpen(true)}
+                        >
+                            <MantineIcon icon={IconSend} />
+                        </ActionIcon>
+                    </Tooltip>
                     <Tooltip withinPortal label="Edit">
                         <ActionIcon
                             variant="light"
@@ -110,6 +127,16 @@ const SchedulersListItem: FC<SchedulersListItemProps> = ({
                     </Tooltip>
                 </Group>
             </Group>
+            <ConfirmSendNowModal
+                opened={isConfirmOpen}
+                onClose={() => setIsConfirmOpen(false)}
+                schedulerName={scheduler.name}
+                loading={sendNowMutation.isLoading}
+                onConfirm={() => {
+                    sendNowMutation.mutate();
+                    setIsConfirmOpen(false);
+                }}
+            />
         </Paper>
     );
 };

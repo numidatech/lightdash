@@ -22,13 +22,13 @@ const PaginateControl: FC<PaginateControlProps> = ({
 }) => {
     return (
         <Group {...rest}>
-            <Text color="gray.7" size="xs">
+            <Text color="ldGray.7" size="xs">
                 Page{' '}
-                <Text span fw={600} color="black">
+                <Text span fw={600}>
                     {currentPage}
                 </Text>{' '}
                 of{' '}
-                <Text span fw={600} color="black">
+                <Text span fw={600}>
                     {totalPages}
                 </Text>
             </Text>
@@ -39,8 +39,14 @@ const PaginateControl: FC<PaginateControlProps> = ({
                 onPreviousPage={onPreviousPage}
             >
                 <Group spacing="xs" position="center">
-                    <Pagination.Previous icon={IconChevronLeft} />
-                    <Pagination.Next icon={IconChevronRight} />
+                    <Pagination.Previous
+                        icon={IconChevronLeft}
+                        disabled={!hasPreviousPage}
+                    />
+                    <Pagination.Next
+                        icon={IconChevronRight}
+                        disabled={!hasNextPage}
+                    />
                 </Group>
             </Pagination.Root>
         </Group>

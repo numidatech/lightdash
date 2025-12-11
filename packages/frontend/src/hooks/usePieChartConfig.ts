@@ -3,13 +3,14 @@ import {
     PieChartLegendPositionDefault,
     formatItemValue,
     isField,
+    isHexCodeColor,
     isMetric,
     isTableCalculation,
-    type ApiQueryResults,
     type CustomDimension,
     type Dimension,
     type ItemsMap,
     type Metric,
+    type ParametersValuesMap,
     type PieChart,
     type PieChartLegendPosition,
     type PieChartValueOptions,
@@ -26,7 +27,7 @@ import omitBy from 'lodash/omitBy';
 import pick from 'lodash/pick';
 import pickBy from 'lodash/pickBy';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { isHexCodeColor } from '../utils/colorUtils';
+import { type InfiniteQueryResults } from './useQueryResults';
 
 type PieChartConfig = {
     validConfig: PieChart;
@@ -85,13 +86,14 @@ type PieChartConfig = {
 };
 
 export type PieChartConfigFn = (
-    resultsData: ApiQueryResults | undefined,
+    resultsData: InfiniteQueryResults | undefined,
     pieChartConfig: PieChart | undefined,
     itemsMap: ItemsMap | undefined,
     dimensions: Record<string, CustomDimension | Dimension>,
     numericMetrics: Record<string, Metric | TableCalculation>,
     colorPalette: string[],
     tableCalculationsMetadata?: TableCalculationMetadata[],
+    parameters?: ParametersValuesMap,
 ) => PieChartConfig;
 
 const usePieChartConfig: PieChartConfigFn = (
@@ -102,6 +104,7 @@ const usePieChartConfig: PieChartConfigFn = (
     numericMetrics,
     colorPalette,
     tableCalculationsMetadata,
+    parameters,
 ) => {
     const [groupFieldIds, setGroupFieldIds] = useState(
         pieChartConfig?.groupFieldIds ?? [],
@@ -295,14 +298,19 @@ const usePieChartConfig: PieChartConfigFn = (
                 value,
                 meta: {
                     value: {
-                        formatted: formatItemValue(selectedMetric, value),
+                        formatted: formatItemValue(
+                            selectedMetric,
+                            value,
+                            false,
+                            parameters,
+                        ),
                         raw: value,
                     },
                     rows,
                 },
             }))
             .sort((a, b) => b.value - a.value);
-    }, [resultsData, groupFieldIds, selectedMetric, metricId]);
+    }, [resultsData, groupFieldIds, selectedMetric, metricId, parameters]);
 
     const groupLabels = useMemo(() => {
         return data.map(({ name }) => name);

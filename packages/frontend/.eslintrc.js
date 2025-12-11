@@ -11,7 +11,7 @@ module.exports = {
         project: './tsconfig.json',
         createDefaultProgram: true,
     },
-    ignorePatterns: ['**/styles/*.css', '.eslintrc.js'],
+    ignorePatterns: ['**/*.css', '.eslintrc.js'],
     extends: [
         './../../.eslintrc.js',
         'plugin:@typescript-eslint/recommended',
@@ -25,6 +25,7 @@ module.exports = {
         'prettier',
         'plugin:jest-dom/recommended',
         'plugin:testing-library/react',
+        'plugin:storybook/recommended',
     ],
     plugins: [
         'css-modules',
@@ -37,6 +38,7 @@ module.exports = {
         'jest-dom',
         'testing-library',
         'react-refresh',
+        'lodash',
     ],
 
     settings: {
@@ -109,5 +111,6 @@ module.exports = {
             },
         ],
         'react-refresh/only-export-components': 'error',
+        'lodash/import-scope': [2, 'method'],
     },
 };

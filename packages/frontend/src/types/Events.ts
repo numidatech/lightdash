@@ -48,6 +48,7 @@ export enum PageName {
     VERIFY_EMAIL = 'verify_email',
     JOIN_ORGANIZATION = 'join_organization',
     EMBED_DASHBOARD = 'embed_dashboard',
+    EMBED_EXPLORE = 'embed_explore',
     CATALOG = 'catalog',
     METRICS_CATALOG = 'metrics_catalog',
 }
@@ -145,5 +146,18 @@ export enum EventName {
     // Write back to dbt
     WRITE_BACK_FROM_CUSTOM_METRIC_CLICKED = 'write_back_from_custom_metric.clicked',
     WRITE_BACK_FROM_CUSTOM_METRIC_HEADER_CLICKED = 'write_back_from_custom_metric_header.clicked',
+    WRITE_BACK_FROM_CUSTOM_DIMENSION_CLICKED = 'write_back_from_custom_dimension.clicked',
+    WRITE_BACK_FROM_CUSTOM_DIMENSION_HEADER_CLICKED = 'write_back_from_custom_dimension_header.clicked',
     CUSTOM_FIELDS_REPLACEMENT_APPLIED = 'custom_fields_replacement.applied',
+
+    DASHBOARD_CHART_LOADED = 'dashboard_chart.loaded',
+
+    // Spaces
+    SPACE_BREADCRUMB_CLICKED = 'space_breadcrumb.clicked',
+
+    // AI Agents
+
+    AI_AGENT_CHART_HOW_ITS_CALCULATED_CLICKED = 'ai_agent_chart_how_its_calculated.clicked',
+    AI_AGENT_CHART_CREATED = 'ai_agent_chart.created',
+    AI_AGENT_CHART_EXPLORED = 'ai_agent_chart.explored',
 }

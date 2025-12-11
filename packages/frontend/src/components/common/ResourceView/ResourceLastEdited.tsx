@@ -21,16 +21,17 @@ const ResourceLastEdited: FC<ResourceLastEditedProps> = ({
     return (
         <div>
             <Tooltip
+                withinPortal
                 position="top-start"
                 label={dayjs(updatedAt).format('YYYY-MM-DD HH:mm:ss')}
             >
-                <Text fz={12} fw={500} color="gray.7">
+                <Text fz={12} fw={500} color="ldGray.7">
                     {timeAgo}
                 </Text>
             </Tooltip>
 
             {user && user.firstName ? (
-                <Text fz={12} color="gray.6">
+                <Text fz={12} color="ldGray.6">
                     by {user.firstName} {user.lastName}
                 </Text>
             ) : null}

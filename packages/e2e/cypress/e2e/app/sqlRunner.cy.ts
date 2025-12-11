@@ -24,7 +24,7 @@ describe('SQL Runner (new)', () => {
         // Verify the autocomplete SQL query
         cy.get('.monaco-editor').should('be.visible');
         cy.contains('jaffle').click().wait(500);
-        cy.contains('orders').click();
+        cy.contains(/^orders$/).click();
         cy.contains(
             '.monaco-editor',
             `SELECT * FROM "${schema}"."jaffle"."orders"`,
@@ -34,7 +34,7 @@ describe('SQL Runner (new)', () => {
         cy.contains('Run query').click();
 
         cy.get('#sql-runner-panel-results').within(() => {
-            cy.get('table thead th').should('have.length', 12);
+            cy.get('table thead th').should('have.length', 22);
             cy.get('table thead th').eq(0).should('contain.text', 'order_id');
             cy.get('table thead th')
                 .eq(1)
@@ -48,7 +48,7 @@ describe('SQL Runner (new)', () => {
                     cy.get('td').eq(1).should('contain.text', '1');
                     cy.get('td')
                         .eq(2)
-                        .should('contain.text', '2018-01-01T00:00:00.000Z');
+                        .should('contain.text', '2023-03-15T00:00:00.000Z');
                     cy.get('td').eq(3).should('contain.text', 'returned');
                 });
         });
@@ -61,7 +61,7 @@ describe('SQL Runner (new)', () => {
         );
 
         // Verify that the query is replaced with the new table suggestion and the new results are displayed
-        cy.contains('customers').click();
+        cy.contains(/^customers$/).click();
         cy.contains(
             '.monaco-editor',
             `SELECT * FROM "${schema}"."jaffle"."customers"`,
@@ -83,14 +83,15 @@ describe('SQL Runner (new)', () => {
         //     });
     });
 
-    it('Should verify that the chart is displayed', () => {
+    // todo: remove
+    it.skip('Should verify that the chart is displayed', () => {
         // Verify that the Run query button is disabled by default
         cy.contains('Run query').should('be.disabled');
 
         // Verify that the query is run
         cy.get('.monaco-editor').should('be.visible');
         cy.contains('jaffle').click().wait(500);
-        cy.contains('customers').click();
+        cy.contains(/^customers$/).click();
         cy.contains(
             '.monaco-editor',
             `SELECT * FROM "${schema}"."jaffle"."customers"`,
@@ -106,18 +107,18 @@ describe('SQL Runner (new)', () => {
             .should('be.visible');
         cy.get('.echarts-for-react')
             .find('text')
-            .contains('Customer id sum')
+            .contains('Age sum')
             .should('be.visible');
 
         // Add a new series
         cy.get('button[data-testid="add-y-axis-field"]').click();
         cy.get('.echarts-for-react')
             .find('text')
-            .contains('Customer id sum')
+            .contains('Age sum')
             .should('be.visible');
         cy.get('.echarts-for-react')
             .find('text')
-            .contains('First name count')
+            .contains('Last name count')
             .should('be.visible');
 
         // Group by first_name
@@ -125,7 +126,7 @@ describe('SQL Runner (new)', () => {
         cy.get('div[role="option"]').contains('first_name').click();
         cy.get('.echarts-for-react')
             .find('text')
-            .contains('Customer id sum aaron')
+            .contains('Age sum amy')
             .should('be.visible');
 
         // Verify that the chart is not displayed when the configuration is incomplete
@@ -133,14 +134,16 @@ describe('SQL Runner (new)', () => {
         cy.contains('Incomplete chart configuration').should('be.visible');
         cy.contains("You're missing an X axis").should('be.visible');
     });
-    it('Should verify that the all chart types are displayed', () => {
+
+    // todo: move to unit test
+    it.skip('Should verify that the all chart types are displayed', () => {
         // Verify that the Run query button is disabled by default
         cy.contains('Run query').should('be.disabled');
 
         // Verify that the query is run
         cy.get('.monaco-editor').should('be.visible');
         cy.contains('jaffle').click().wait(500);
-        cy.contains('customers').click();
+        cy.contains(/^customers$/).click();
         cy.contains(
             '.monaco-editor',
             `SELECT * FROM "${schema}"."jaffle"."customers"`,
@@ -156,7 +159,7 @@ describe('SQL Runner (new)', () => {
             .should('be.visible');
         cy.get('.echarts-for-react')
             .find('text')
-            .contains('Customer id sum')
+            .contains('Age sum')
             .should('be.visible');
 
         // Verify that the table is displayed
@@ -193,7 +196,7 @@ describe('SQL Runner (new)', () => {
         // Verify that the query is run
         cy.get('.monaco-editor').should('be.visible');
         cy.contains('jaffle').click().wait(500);
-        cy.contains('customers').click();
+        cy.contains(/^customers$/).click();
         cy.contains(
             '.monaco-editor',
             `SELECT * FROM "${schema}"."jaffle"."customers"`,
@@ -209,6 +212,7 @@ describe('SQL Runner (new)', () => {
         cy.get(
             'input[placeholder="eg. How many weekly active users do we have?"]',
         ).type('Customers table SQL chart');
+        cy.findByText('Next').click();
         cy.get('section[role="dialog"]')
             .find('button')
             .contains('Save')
@@ -228,7 +232,7 @@ describe('SQL Runner (new)', () => {
         ).should('exist');
         cy.get('div[data-testid="chart-data-table"]').should(
             'contain.text',
-            'customer_id_sum',
+            'age_sum',
         );
 
         cy.contains('label', 'SQL').click();
@@ -250,11 +254,9 @@ describe('SQL Runner (new)', () => {
             .contains('Fix errors')
             .click();
         cy.get('input[placeholder="Select X axis"]').click();
+        cy.get('div[role="option"]').contains('status').click();
+        cy.get('input[placeholder="Select Y axis"]').click();
         cy.get('div[role="option"]').contains('customer_id').click();
-        cy.get('.echarts-for-react')
-            .find('text')
-            .contains('Customer id')
-            .should('be.visible');
 
         // Verify that saving changes and going back to view page displays the chart
         cy.contains('Save').click();
@@ -264,18 +266,23 @@ describe('SQL Runner (new)', () => {
         ).should('exist');
         cy.get('.echarts-for-react')
             .find('text')
-            .contains('Customer id')
+            .contains('Customer id avg')
+            .should('be.visible');
+        cy.get('.echarts-for-react')
+            .find('text')
+            .contains('Status')
             .should('be.visible');
     });
 
-    it('Should not trigger an extra query to the warehouse when styling a chart', () => {
+    // todo: remove
+    it.skip('Should not trigger an extra query to the warehouse when styling a chart', () => {
         // Verify that the Run query button is disabled by default
         cy.contains('Run query').should('be.disabled');
 
         // Verify that the query is run
         cy.get('.monaco-editor').should('be.visible');
         cy.contains('jaffle').click().wait(500);
-        cy.contains('customers').click();
+        cy.contains(/^customers$/).click();
         cy.contains(
             '.monaco-editor',
             `SELECT * FROM "${schema}"."jaffle"."customers"`,

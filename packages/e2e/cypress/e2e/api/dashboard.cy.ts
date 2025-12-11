@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unused-expressions */
 import {
     ApiChartSummaryListResponse,
     CreateChartInDashboard,
@@ -251,6 +252,206 @@ describe('Lightdash dashboard', () => {
                     });
                 },
             );
+        });
+    });
+
+    it('Should create dashboard with parameters and retrieve them correctly', () => {
+        const testParameters = {
+            time_zoom: {
+                parameterName: 'time_zoom',
+                value: 'weekly',
+            },
+            region: {
+                parameterName: 'region',
+                value: ['US', 'EU'],
+            },
+        };
+
+        const dashboardWithParameters: CreateDashboard = {
+            ...dashboardMock,
+            name: `${dashboardName} with Parameters`,
+            parameters: testParameters,
+        };
+
+        createDashboard(
+            SEED_PROJECT.project_uuid,
+            dashboardWithParameters,
+        ).then((createdDashboard) => {
+            expect(createdDashboard.name).to.eq(dashboardWithParameters.name);
+
+            // Get the dashboard via API to verify parameters are stored and retrieved correctly
+            cy.request<{ results: Dashboard }>({
+                method: 'GET',
+                url: `${apiUrl}/dashboards/${createdDashboard.uuid}`,
+            }).then((response) => {
+                expect(response.status).to.eq(200);
+                const retrievedDashboard = response.body.results as Dashboard;
+
+                // Verify parameters are present and correct
+                expect(retrievedDashboard.parameters).to.exist;
+
+                // Check first parameter
+                const firstParam = retrievedDashboard?.parameters?.time_zoom;
+                expect(firstParam).to.exist;
+                expect(firstParam?.parameterName).to.eq('time_zoom');
+                expect(firstParam?.value).to.eq('weekly');
+
+                // Check second parameter
+                const secondParam = retrievedDashboard?.parameters?.region;
+                expect(secondParam).to.exist;
+                expect(secondParam?.parameterName).to.eq('region');
+                expect(secondParam?.value).to.deep.eq(['US', 'EU']);
+
+                // Now update the dashboard with different parameters
+                const updatedParameters = {
+                    time_period: {
+                        parameterName: 'time_period',
+                        value: 'monthly',
+                    },
+                    category: {
+                        parameterName: 'category',
+                        value: 'premium',
+                    },
+                    markets: {
+                        parameterName: 'markets',
+                        value: ['APAC', 'Americas'],
+                    },
+                };
+
+                const updatePayload: UpdateDashboard = {
+                    ...retrievedDashboard,
+                    parameters: updatedParameters,
+                };
+
+                updateDashboard(createdDashboard.uuid, updatePayload).then(
+                    () => {
+                        // Fetch the updated dashboard to verify changes persisted
+                        cy.request<{ results: Dashboard }>({
+                            method: 'GET',
+                            url: `${apiUrl}/dashboards/${createdDashboard.uuid}`,
+                        }).then((finalResponse) => {
+                            expect(finalResponse.status).to.eq(200);
+                            const finalDashboard = finalResponse.body.results;
+
+                            // Verify updated parameters
+                            expect(finalDashboard.parameters).to.exist;
+                            expect(
+                                Object.keys(finalDashboard.parameters ?? {}),
+                            ).to.have.length(3);
+
+                            // Check first updated parameter
+                            const updatedFirstParam =
+                                finalDashboard?.parameters?.time_period;
+                            expect(updatedFirstParam).to.exist;
+                            expect(updatedFirstParam?.parameterName).to.eq(
+                                'time_period',
+                            );
+                            expect(updatedFirstParam?.value).to.eq('monthly');
+
+                            // Check second updated parameter
+                            const updatedSecondParam =
+                                finalDashboard?.parameters?.category;
+                            expect(updatedSecondParam).to.exist;
+                            expect(updatedSecondParam?.parameterName).to.eq(
+                                'category',
+                            );
+                            expect(updatedSecondParam?.value).to.eq('premium');
+
+                            // Check third updated parameter (array value)
+                            const updatedThirdParam =
+                                finalDashboard?.parameters?.markets;
+                            expect(updatedThirdParam).to.exist;
+                            expect(updatedThirdParam?.parameterName).to.eq(
+                                'markets',
+                            );
+                            expect(updatedThirdParam?.value).to.deep.eq([
+                                'APAC',
+                                'Americas',
+                            ]);
+                        });
+                    },
+                );
+            });
+        });
+    });
+
+    describe('Dashboard slug support', () => {
+        it('Should get dashboard by slug', () => {
+            const slug = 'jaffle-dashboard';
+
+            cy.request({
+                method: 'GET',
+                url: `${apiUrl}/dashboards/${slug}`,
+            }).then((response) => {
+                expect(response.status).to.eq(200);
+                expect(response.body.status).to.eq('ok');
+                expect(response.body.results.name).to.eq('Jaffle dashboard');
+                expect(response.body.results.slug).to.eq(slug);
+            });
+        });
+
+        it('Should create and access dashboard by slug', () => {
+            const projectUuid = SEED_PROJECT.project_uuid;
+            const testDashboardName = `Test Dashboard ${Date.now()}`;
+
+            createDashboard(projectUuid, {
+                ...dashboardMock,
+                name: testDashboardName,
+            }).then((newDashboard) => {
+                expect(newDashboard.slug).to.exist;
+
+                // Access the dashboard by slug
+                cy.request({
+                    method: 'GET',
+                    url: `${apiUrl}/dashboards/${newDashboard.slug}`,
+                }).then((response) => {
+                    expect(response.status).to.eq(200);
+                    expect(response.body.results.uuid).to.eq(newDashboard.uuid);
+                    expect(response.body.results.name).to.eq(testDashboardName);
+                });
+
+                // Clean up
+                cy.deleteDashboardsByName([testDashboardName]);
+            });
+        });
+
+        it('Should update dashboard accessed by slug', () => {
+            const projectUuid = SEED_PROJECT.project_uuid;
+            const testDashboardName = `Test Dashboard ${Date.now()}`;
+            const updatedDescription = 'Updated via slug test';
+
+            createDashboard(projectUuid, {
+                ...dashboardMock,
+                name: testDashboardName,
+            }).then((newDashboard) => {
+                // Update dashboard using slug
+                cy.request({
+                    method: 'PATCH',
+                    url: `${apiUrl}/dashboards/${newDashboard.slug}`,
+                    body: {
+                        name: testDashboardName,
+                        description: updatedDescription,
+                    },
+                }).then((updateResponse) => {
+                    expect(updateResponse.status).to.eq(200);
+                    expect(updateResponse.body.results.description).to.eq(
+                        updatedDescription,
+                    );
+
+                    // Verify via UUID
+                    cy.request({
+                        method: 'GET',
+                        url: `${apiUrl}/dashboards/${newDashboard.uuid}`,
+                    }).then((verifyResponse) => {
+                        expect(verifyResponse.body.results.description).to.eq(
+                            updatedDescription,
+                        );
+                    });
+                });
+
+                // Clean up
+                cy.deleteDashboardsByName([testDashboardName]);
+            });
         });
     });
 });

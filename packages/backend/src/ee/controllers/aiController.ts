@@ -1,11 +1,10 @@
 import {
-    ApiAiConversationMessages,
-    ApiAiConversationResponse,
-    ApiAiConversations,
     ApiAiDashboardSummaryResponse,
+    ApiAiGenerateCustomVizResponse,
     ApiAiGetDashboardSummaryResponse,
     ApiErrorPayload,
     DashboardSummary,
+    ItemsMap,
 } from '@lightdash/common';
 import {
     Body,
@@ -56,12 +55,12 @@ export class AiController extends BaseController {
 
     @Middlewares([allowApiKeyAuthentication, isAuthenticated])
     @SuccessResponse('200', 'Success')
-    @Get('/dashboard/:dashboardUuid/summary')
+    @Get('/dashboard/:dashboardUuidOrSlug/summary')
     @OperationId('getDashboardSummary')
     async getDashboardSummary(
         @Request() req: express.Request,
         @Path() projectUuid: string,
-        @Path() dashboardUuid: string,
+        @Path() dashboardUuidOrSlug: string,
     ): Promise<ApiAiGetDashboardSummaryResponse> {
         this.setStatus(200);
         return {
@@ -69,66 +68,36 @@ export class AiController extends BaseController {
             results: await this.getAiService().getDashboardSummary(
                 req.user!,
                 projectUuid,
-                dashboardUuid,
+                dashboardUuidOrSlug,
             ),
         };
     }
 
     @Middlewares([allowApiKeyAuthentication, isAuthenticated])
     @SuccessResponse('200', 'Success')
-    @Get('/conversations')
-    @OperationId('getConversations')
-    async getConversations(
+    @Post('/custom-viz')
+    @OperationId('generateCustomViz')
+    async generateCustomViz(
         @Request() req: express.Request,
         @Path() projectUuid: string,
-    ): Promise<ApiAiConversations> {
+        @Body()
+        body: {
+            prompt: string;
+            itemsMap: ItemsMap;
+            sampleResults: {
+                [k: string]: unknown;
+            }[];
+            currentVizConfig: string;
+        },
+    ): Promise<ApiAiGenerateCustomVizResponse> {
         this.setStatus(200);
         return {
             status: 'ok',
-            results: await this.getAiService().getConversations(
-                req.user!,
+            results: await this.getAiService().generateCustomViz({
+                user: req.user!,
                 projectUuid,
-            ),
-        };
-    }
-
-    @Middlewares([allowApiKeyAuthentication, isAuthenticated])
-    @SuccessResponse('200', 'Success')
-    @Get('/conversations/:aiThreadUuid/messages')
-    @OperationId('getMessages')
-    async getMessages(
-        @Request() req: express.Request,
-        @Path() projectUuid: string,
-        @Path() aiThreadUuid: string,
-    ): Promise<ApiAiConversationMessages> {
-        this.setStatus(200);
-        return {
-            status: 'ok',
-            results: await this.getAiService().getConversationMessages(
-                req.user!,
-                projectUuid,
-                aiThreadUuid,
-            ),
-        };
-    }
-
-    @Middlewares([allowApiKeyAuthentication, isAuthenticated])
-    @SuccessResponse('200', 'Success')
-    @Post('/conversations')
-    @OperationId('createConversation')
-    async createConversation(
-        @Request() req: express.Request,
-        @Path() projectUuid: string,
-        @Body() body: { question: string },
-    ): Promise<ApiAiConversationResponse> {
-        this.setStatus(200);
-        return {
-            status: 'ok',
-            results: await this.getAiService().createWebAppConversation(
-                req.user!,
-                projectUuid,
-                body.question,
-            ),
+                ...body,
+            }),
         };
     }
 

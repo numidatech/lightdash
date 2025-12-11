@@ -203,7 +203,9 @@ export const SyncModalForm: FC<{ chartUuid: string }> = ({ chartUuid }) => {
                             searchable
                             clearable
                             variant="default"
-                            withinPortal
+                            comboboxProps={{
+                                withinPortal: true,
+                            }}
                             {...methods.register('timezone')}
                             onChange={(value) => {
                                 methods.setValue(
@@ -231,7 +233,10 @@ export const SyncModalForm: FC<{ chartUuid: string }> = ({ chartUuid }) => {
                             position="right"
                             maw={400}
                         >
-                            <MantineIcon icon={IconInfoCircle} color="gray.6" />
+                            <MantineIcon
+                                icon={IconInfoCircle}
+                                color="ldGray.6"
+                            />
                         </Tooltip>
                     </Group>
                     {saveInNewTab && (

@@ -360,12 +360,15 @@ type MetricsCatalogTreesCanvasModeClickedEvent = {
 type WriteBackEvent = {
     name:
         | EventName.WRITE_BACK_FROM_CUSTOM_METRIC_HEADER_CLICKED
-        | EventName.WRITE_BACK_FROM_CUSTOM_METRIC_CLICKED;
+        | EventName.WRITE_BACK_FROM_CUSTOM_METRIC_CLICKED
+        | EventName.WRITE_BACK_FROM_CUSTOM_DIMENSION_HEADER_CLICKED
+        | EventName.WRITE_BACK_FROM_CUSTOM_DIMENSION_CLICKED;
     properties: {
         userId: string;
         organizationId: string;
         projectId: string;
-        customMetricsCount: number;
+        customMetricsCount?: number;
+        customDimensionsCount?: number;
     };
 };
 
@@ -377,6 +380,71 @@ type CustomMetricReplacementEvent = {
         projectId: string;
         chartId?: string;
         customMetricIds: string[];
+    };
+};
+
+type DashboardChartLoadedEvent = {
+    name: EventName.DASHBOARD_CHART_LOADED;
+    properties: {
+        userId: string;
+        organizationId: string;
+        projectId: string;
+        dashboardId: string;
+        chartId: string;
+        queryId: string;
+        warehouseExecutionTimeMs: number | undefined;
+        totalTimeMs: number | undefined;
+        totalResults: number;
+        loadedRows: number;
+        // cacheMetadata: CacheMetadata;
+    };
+};
+
+type SpaceBreadcrumbClickedEvent = {
+    name: EventName.SPACE_BREADCRUMB_CLICKED;
+    properties: {
+        userId: string;
+        organizationId: string;
+        projectId: string;
+    };
+};
+
+type AiAgentChartHowItsCalculatedClickedEvent = {
+    name: EventName.AI_AGENT_CHART_HOW_ITS_CALCULATED_CLICKED;
+    properties: {
+        userId: string;
+        organizationId: string;
+        projectId: string;
+        aiAgentId: string;
+        threadId: string;
+        messageId: string;
+        chartType: string;
+    };
+};
+
+type AiAgentChartCreatedEvent = {
+    name: EventName.AI_AGENT_CHART_CREATED;
+    properties: {
+        userId: string;
+        organizationId: string;
+        projectId: string;
+        aiAgentId: string;
+        threadId: string;
+        messageId: string;
+        tableName: string;
+    };
+};
+
+type AiAgentChartExploredEvent = {
+    name: EventName.AI_AGENT_CHART_EXPLORED;
+    properties: {
+        userId: string;
+        organizationId: string;
+        projectId: string;
+        aiAgentId: string;
+        threadId: string;
+        messageId: string;
+        tableName: string;
     };
 };
 
@@ -412,7 +480,12 @@ export type EventData =
     | MetricsCatalogTreesEdgeRemovedEvent
     | MetricsCatalogTreesCanvasModeClickedEvent
     | WriteBackEvent
-    | CustomMetricReplacementEvent;
+    | DashboardChartLoadedEvent
+    | CustomMetricReplacementEvent
+    | SpaceBreadcrumbClickedEvent
+    | AiAgentChartHowItsCalculatedClickedEvent
+    | AiAgentChartCreatedEvent
+    | AiAgentChartExploredEvent;
 
 export type IdentifyData = {
     id: string;

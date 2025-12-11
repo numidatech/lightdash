@@ -2,7 +2,17 @@ import * as peg from 'pegjs';
 import { v4 as uuidv4 } from 'uuid';
 import { type AnyType } from './any';
 import { UnexpectedServerError } from './errors';
-import { FilterOperator, type MetricFilterRule } from './filter';
+import {
+    FilterOperator,
+    type MetricFilterRule,
+    type ModelRequiredFilterRule,
+} from './filter';
+
+export type RequiredFilter = {
+    [key: string]: AnyType;
+} & {
+    required?: boolean;
+};
 
 export type ParsedFilter = {
     type: string;
@@ -22,8 +32,23 @@ EMPTY_STRING = '' {
   }
 
 EXPRESSION
-= NUMERICAL / DATE_RESTRICTION / LIST / TERM
+= BETWEEN_DATE / BETWEEN_NUMERICAL / NUMERICAL / DATE_RESTRICTION / LIST / TERM
 
+BETWEEN_DATE = SPACE_SYMBOL* ("between"i / "BETWEEN") SPACE_SYMBOL+ min:DATE_STRING SPACE_SYMBOL+ ("and"i / "AND") SPACE_SYMBOL+ max:DATE_STRING {
+    return {
+        type: '${FilterOperator.IN_BETWEEN}',
+        values: [min, max],
+        is: true
+    }
+   }
+
+BETWEEN_NUMERICAL = SPACE_SYMBOL* ("between"i / "BETWEEN") SPACE_SYMBOL+ min:NUMBER SPACE_SYMBOL+ ("and"i / "AND") SPACE_SYMBOL+ max:NUMBER {
+    return {
+        type: '${FilterOperator.IN_BETWEEN}',
+        values: [min, max],
+        is: true
+    }
+   }
 
 NUMERICAL = SPACE_SYMBOL* operator:OPERATOR SPACE_SYMBOL* value:NUMBER {
     return {
@@ -33,6 +58,20 @@ NUMERICAL = SPACE_SYMBOL* operator:OPERATOR SPACE_SYMBOL* value:NUMBER {
    }
 
 OPERATOR = '>=' / '<=' / '>' / '<'
+
+DATE_STRING
+  = quotation_mark date:ISO_DATE quotation_mark { return date }
+  / ISO_DATE
+
+ISO_DATE
+  = year:YEAR "-" month:MONTH "-" day:DAY time:("T" TIME "Z"?)? {
+      return text();
+    }
+
+YEAR = [0-9][0-9][0-9][0-9]
+MONTH = ("0" [1-9]) / ("1" [0-2])
+DAY = ("0" [1-9]) / ([1-2] [0-9]) / ("3" [0-1])
+TIME = [0-9][0-9] ":" [0-9][0-9] ":" [0-9][0-9] ("." [0-9]+)?
 
 DATE_RESTRICTION = SPACE_SYMBOL* operator:DATE_OPERATOR SPACE_SYMBOL* value:NUMBER SPACE_SYMBOL* interval:DATE_INTERVAL {
     return {
@@ -46,7 +85,7 @@ DATE_OPERATOR = 'inThePast' / 'inTheNext'
 DATE_INTERVAL = 'milliseconds' / 'seconds' / 'minutes' / 'hours' / 'days' / 'weeks' / 'months' / 'years'
 
 NUMBER
-  = FLOAT ([Ee] [+-]? INTEGER)?
+  = '-'? FLOAT ([Ee] [+-]? INTEGER)?
     { return Number(text()) }
 
 FLOAT
@@ -206,6 +245,10 @@ export const parseOperator = (
             return FilterOperator.IN_THE_PAST;
         case FilterOperator.IN_THE_NEXT:
             return FilterOperator.IN_THE_NEXT;
+        case FilterOperator.IN_BETWEEN:
+            return isTrue
+                ? FilterOperator.IN_BETWEEN
+                : FilterOperator.NOT_IN_BETWEEN;
         case 'null':
         case 'NULL':
             return isTrue ? FilterOperator.NULL : FilterOperator.NOT_NULL;
@@ -281,6 +324,116 @@ export const parseFilters = (
                 target: { fieldRef: key },
                 operator: FilterOperator.EQUALS,
                 values: [value],
+            },
+        ];
+    }, []);
+};
+
+export const parseModelRequiredFilters = ({
+    requiredFilters,
+    defaultFilters,
+}: {
+    requiredFilters: RequiredFilter[] | undefined;
+    defaultFilters: RequiredFilter[] | undefined;
+}): ModelRequiredFilterRule[] => {
+    const rawFilters = [...(requiredFilters || []), ...(defaultFilters || [])];
+
+    if (!rawFilters || rawFilters.length === 0) {
+        return [];
+    }
+    const parser = peg.generate(filterGrammar);
+
+    return rawFilters.reduce<ModelRequiredFilterRule[]>((acc, filter) => {
+        const parseFilter = (): [boolean, RequiredFilter] => {
+            const requiredDefault = requiredFilters?.includes(filter) ?? false;
+
+            const filterHasMultipleKeys = Object.keys(filter).length > 1;
+            if (filterHasMultipleKeys) {
+                // Require is a special property that is not part of the filter grammar
+                const { required, ...filterRule } = filter; // Remove require from object
+                // we default to true for backwards compatibility
+                return [
+                    required === undefined ? requiredDefault : required,
+                    filterRule,
+                ];
+            }
+            // If there is only one key, we still want to return it as it is.
+            // This is to cover the case where the filter is just { required: true }, when required is used as a field.
+            // We currently don't support a "required" field which is "not" required (as in: required: false), because those keys will clash
+            return [requiredDefault, filter];
+        };
+        const [required, filterRule] = parseFilter();
+        if (Object.entries(filterRule).length !== 1) return acc;
+
+        const [key, value] = Object.entries(filterRule)[0];
+
+        if (acc.map((a) => a.target.fieldRef).includes(key)) {
+            // eslint-disable-next-line no-console
+            console.warn(`Duplicate filter key "${key}" in default filters`);
+            return acc;
+        }
+        const fieldRefParts = key.split('.');
+        const filterTarget: ModelRequiredFilterRule['target'] =
+            fieldRefParts.length !== 2
+                ? { fieldRef: key }
+                : { fieldRef: key, tableName: fieldRefParts[0] };
+
+        if (value === null) {
+            return [
+                ...acc,
+                {
+                    id: uuidv4(),
+                    target: filterTarget,
+                    operator: FilterOperator.NULL,
+                    values: [1],
+                    required,
+                },
+            ];
+        }
+        if (typeof value === 'string') {
+            const parsedFilter: ParsedFilter = parser.parse(value);
+
+            return [
+                ...acc,
+                {
+                    id: uuidv4(),
+                    target: filterTarget,
+                    operator: parseOperator(
+                        parsedFilter.type,
+                        !!parsedFilter.is,
+                    ),
+                    values: parsedFilter.values || [1],
+                    ...(parsedFilter.date_interval
+                        ? {
+                              settings: {
+                                  unitOfTime: parsedFilter.date_interval,
+                              },
+                          }
+                        : null),
+                    required,
+                },
+            ];
+        }
+        if (typeof value === 'object') {
+            return [
+                ...acc,
+                {
+                    id: uuidv4(),
+                    target: filterTarget,
+                    operator: FilterOperator.EQUALS,
+                    values: value,
+                    required,
+                },
+            ];
+        }
+        return [
+            ...acc,
+            {
+                id: uuidv4(),
+                target: filterTarget,
+                operator: FilterOperator.EQUALS,
+                values: [value],
+                required,
             },
         ];
     }, []);

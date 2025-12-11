@@ -1,13 +1,15 @@
 /// <reference path="../@types/rudder-sdk-node.d.ts" />
-import { Type } from '@aws-sdk/client-s3';
 import {
+    Account,
     AnyType,
+    CacheMetadata,
     CartesianSeriesType,
     ChartKind,
     ChartType,
     DbtProjectType,
     LightdashInstallType,
     LightdashMode,
+    LightdashPage,
     LightdashRequestMethodHeader,
     LightdashUser,
     OpenIdIdentityIssuerType,
@@ -15,15 +17,13 @@ import {
     PinnedItem,
     ProjectMemberRole,
     QueryExecutionContext,
+    QueryHistoryStatus,
     RequestMethod,
     SchedulerFormat,
-    SemanticLayerQuery,
     TableSelectionType,
     ValidateProjectPayload,
     WarehouseTypes,
-    getErrorMessage,
     getRequestMethod,
-    type SemanticLayerType,
 } from '@lightdash/common';
 import Analytics, {
     Track as AnalyticsTrack,
@@ -31,7 +31,6 @@ import Analytics, {
 import { Request } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import { LightdashConfig } from '../config/parseConfig';
-import Logger from '../logging/logger';
 import { VERSION } from '../version';
 
 type Identify = {
@@ -202,7 +201,7 @@ export const getContextFromQueryOrHeader = (
     return getContextFromHeader(req);
 };
 
-type MetricQueryExecutionProperties = {
+export type MetricQueryExecutionProperties = {
     chartId?: string;
     metricsCount: number;
     dimensionsCount: number;
@@ -213,7 +212,6 @@ type MetricQueryExecutionProperties = {
     tableCalculationCustomFormatCount: number;
     filtersCount: number;
     sortsCount: number;
-    hasExampleMetric: boolean;
     additionalMetricsCount: number;
     additionalMetricsFilterCount: number;
     additionalMetricsPercentFormatCount: number;
@@ -228,17 +226,19 @@ type MetricQueryExecutionProperties = {
     timezone?: string;
     virtualViewId?: string;
     metricOverridesCount: number;
+    limit: number;
+    parametersCount: number;
 };
+
+type PaginatedMetricQueryExecutionProperties =
+    MetricQueryExecutionProperties & {
+        queryId: string;
+        warehouseType: WarehouseTypes;
+    };
 
 type SqlExecutionProperties = {
     sqlChartId?: string;
     usingStreaming: boolean;
-};
-
-type SemanticViewerExecutionProperties = {
-    semanticViewerChartId?: string;
-    usingStreaming: boolean;
-    semanticLayer: SemanticLayerType;
 };
 
 type QueryExecutionEvent = BaseTrack & {
@@ -247,11 +247,93 @@ type QueryExecutionEvent = BaseTrack & {
         context: QueryExecutionContext;
         organizationId: string;
         projectId: string;
+        cacheMetadata?: CacheMetadata;
     } & (
+        | PaginatedMetricQueryExecutionProperties
         | MetricQueryExecutionProperties
         | SqlExecutionProperties
-        | SemanticViewerExecutionProperties
     );
+};
+
+type QueryReadyEvent = BaseTrack & {
+    event: 'query.ready';
+    properties: {
+        queryId: string;
+        projectId: string;
+        warehouseType: WarehouseTypes;
+        warehouseExecutionTimeMs: number | null;
+        totalRowCount: number | null;
+        columnsCount: number | null;
+    };
+};
+
+type QueryErrorEvent = BaseTrack & {
+    event: 'query.error';
+    properties: {
+        queryId: string;
+        projectId: string;
+        warehouseType: WarehouseTypes | undefined;
+    };
+};
+
+type QueryPageEvent = BaseTrack & {
+    event: 'query_page.fetched';
+    properties: {
+        queryId: string;
+        projectId: string;
+        warehouseType: WarehouseTypes | null;
+        page: number;
+        columnsCount: number;
+        totalRowCount: number;
+        totalPageCount: number;
+        resultsPageSize: number;
+        resultsPageExecutionMs: number;
+        status: QueryHistoryStatus;
+        cacheMetadata: Omit<CacheMetadata, 'cacheHit'> | null;
+    };
+};
+
+type ResultsCacheCreateEvent = BaseTrack & {
+    event: 'results_cache.create';
+    properties: {
+        projectId: string;
+        cacheKey: string;
+        totalRowCount: number | null;
+        createdAt: Date;
+        expiresAt: Date;
+    };
+};
+
+type ResultsCacheWriteEvent = BaseTrack & {
+    event: 'results_cache.write';
+    properties: {
+        queryId: string;
+        projectId: string;
+        cacheKey: string;
+        totalRowCount: number | null;
+    };
+};
+
+type ResultsCacheReadEvent = BaseTrack & {
+    event: 'results_cache.read';
+    properties: {
+        queryId: string;
+        projectId: string;
+        cacheKey: string;
+        page: number;
+        requestedPageSize: number;
+        rowCount: number;
+        resultsPageExecutionMs: number;
+    };
+};
+
+type ResultsCacheDeleteEvent = BaseTrack & {
+    event: 'results_cache.delete';
+    properties: {
+        queryId: string;
+        projectId: string;
+        cacheKey: string;
+    };
 };
 
 type SubtotalQueryEvent = BaseTrack & {
@@ -391,6 +473,7 @@ export type CreateSavedChartVersionEvent = BaseTrack & {
             referenceLinesCount: number;
             margins: string;
             showLegend: boolean;
+            hasCustomTooltip: boolean;
         };
         pie?: {
             isDonut: boolean;
@@ -404,10 +487,15 @@ export type CreateSavedChartVersionEvent = BaseTrack & {
         bigValue?: {
             hasBigValueComparison?: boolean;
         };
+        custom?: {
+            size: number;
+            type: string;
+        };
         numFixedWidthBinCustomDimensions: number;
         numFixedBinsBinCustomDimensions: number;
         numCustomRangeBinCustomDimensions: number;
         numCustomSqlDimensions: number;
+        parametersCount: number;
     };
 };
 
@@ -454,19 +542,21 @@ export type ConditionalFormattingRuleSavedEvent = BaseTrack & {
     };
 };
 
-type ProjectEvent = BaseTrack & {
+export type ProjectEvent = BaseTrack & {
     event: 'project.updated' | 'project.created';
     userId: string;
     properties: {
         projectName: string;
         projectId: string;
         projectType: DbtProjectType;
-        warehouseConnectionType: WarehouseTypes;
+        warehouseConnectionType?: WarehouseTypes;
         organizationId: string;
         dbtConnectionType: DbtProjectType;
         isPreview: boolean;
         method: RequestMethod;
         copiedFromProjectUuid?: string;
+        authenticationType?: string;
+        requireUserCredentials?: boolean;
     };
 };
 
@@ -561,6 +651,8 @@ export type CreateDashboardOrVersionEvent = BaseTrack & {
         markdownTilesCount: number;
         loomTilesCount: number;
         duplicated?: boolean;
+        tabsCount?: number;
+        parametersCount: number;
     };
 };
 
@@ -600,6 +692,7 @@ type SpaceEvent = BaseTrack & {
         projectId: string;
         isPrivate: boolean;
         userAccessCount: number;
+        isNested: boolean;
     };
 };
 
@@ -611,6 +704,7 @@ type SpaceDeleted = BaseTrack & {
         name: string;
         spaceId: string;
         projectId: string;
+        isNested: boolean;
     };
 };
 
@@ -626,6 +720,7 @@ type ProjectSearch = BaseTrack & {
         tablesResultsCount: number;
         fieldsResultsCount: number;
         dashboardTabsResultsCount: number;
+        source: 'omnibar' | 'ai_search_box';
     };
 };
 type DashboardUpdateMultiple = BaseTrack & {
@@ -701,11 +796,12 @@ type ShareSlack = BaseTrack & {
 
 type SavedChartView = BaseTrack & {
     event: 'saved_chart.view';
-    userId: string;
+    userId?: string;
     properties: {
         savedChartId: string;
         projectId: string;
         organizationId: string;
+        parametersCount: number;
     };
 };
 
@@ -716,6 +812,7 @@ type DashboardView = BaseTrack & {
         dashboardId: string;
         projectId: string;
         organizationId: string;
+        parametersCount: number;
     };
 };
 
@@ -784,32 +881,6 @@ export type CreateSqlChartVersionEvent = BaseTrack & {
     };
 };
 
-export type CreateSemanticViewerChartVersionEvent = BaseTrack & {
-    event: 'semantic_viewer_chart_version.created';
-    userId: string;
-    properties: {
-        chartId: string;
-        versionId: string;
-        projectId: string;
-        organizationId: string;
-        chartKind: ChartKind;
-        semanticLayerQuery: SemanticLayerQuery;
-        barChart?: {
-            groupByCount: number;
-            yAxisCount: number;
-            aggregationTypes: string[];
-        };
-        lineChart?: {
-            groupByCount: number;
-            yAxisCount: number;
-            aggregationTypes: string[];
-        };
-        pieChart?: {
-            groupByCount: number;
-        };
-    };
-};
-
 type PromoteContent = BaseTrack & {
     event: 'promote.executed' | 'promote.error';
     userId: string;
@@ -828,7 +899,7 @@ type PromoteContent = BaseTrack & {
 };
 
 type AnalyticsDashboardView = BaseTrack & {
-    event: 'usage_analytics.dashboard_viewed';
+    event: 'usage_analytics.dashboard_viewed' | 'usage_analytics.csv_download';
     userId: string;
     properties: {
         projectId: string;
@@ -873,7 +944,7 @@ export type SchedulerUpsertEvent = BaseTrack & {
         format: SchedulerFormat;
         targets: Array<{
             schedulerTargetId: string;
-            type: 'slack' | 'email';
+            type: 'slack' | 'email' | 'msteams';
         }>;
         timeZone: string | undefined;
         includeLinks: boolean;
@@ -934,7 +1005,7 @@ export type SchedulerNotificationJobEvent = BaseTrack & {
         jobId: string;
         schedulerId?: string;
         resourceType?: 'dashboard' | 'chart';
-        type: 'slack' | 'email' | 'gsheets';
+        type: 'slack' | 'email' | 'gsheets' | 'msteams';
         format?: SchedulerFormat;
         withPdf?: boolean;
         sendNow: boolean;
@@ -975,11 +1046,14 @@ export type DownloadCsv = BaseTrack & {
         | 'download_results.error';
     userId: string;
     properties: {
-        jobId: string;
+        jobId?: string;
         organizationId?: string;
         projectId: string;
         tableId?: string;
-        fileType: SchedulerFormat.CSV | SchedulerFormat.GSHEETS;
+        fileType:
+            | SchedulerFormat.CSV
+            | SchedulerFormat.XLSX
+            | SchedulerFormat.GSHEETS;
         values?: 'raw' | 'formatted';
         limit?: 'results' | 'all' | 'custom';
         context?:
@@ -1009,7 +1083,6 @@ export type Validation = BaseTrack & {
         organizationId?: string;
         projectId: string;
         validationRunId?: number;
-
         context?: ValidateProjectPayload['context'];
         numErrorsDetected?: number;
         numContentAffected?: number;
@@ -1082,19 +1155,6 @@ export type GroupDeleteEvent = BaseTrack & {
         context: string; // context on where/why this group was deleted
         organizationId: string;
         groupId: string;
-    };
-};
-
-export type SemanticLayerView = BaseTrack & {
-    event: 'semantic_layer.get_views'; // started, completed, error suffix when using wrapEvent
-    userId: string;
-    properties: {
-        organizationId: string;
-        projectId: string;
-        // on completed
-        viewsCount?: number;
-        // on error
-        error?: string;
     };
 };
 
@@ -1181,6 +1241,213 @@ export type CustomFieldsReplaced = BaseTrack & {
     };
 };
 
+export type DeprecatedRouteCalled = BaseTrack & {
+    event: 'deprecated_route.called';
+    userId: string;
+    properties: {
+        organizationId: string;
+        projectId: string;
+        route: string;
+        context: string;
+    };
+};
+
+export type AiAgentCreatedEvent = BaseTrack & {
+    event: 'ai_agent.created';
+    userId: string;
+    properties: {
+        organizationId: string;
+        projectId: string;
+        aiAgentId: string;
+        agentName: string;
+        tagsCount: number;
+        integrationsCount: number;
+    };
+};
+
+export type AiAgentDeletedEvent = BaseTrack & {
+    event: 'ai_agent.deleted';
+    userId: string;
+    properties: {
+        organizationId: string;
+        projectId: string;
+        aiAgentId: string;
+        agentName: string;
+    };
+};
+
+export type AiAgentUpdatedEvent = BaseTrack & {
+    event: 'ai_agent.updated';
+    userId: string;
+    properties: {
+        organizationId: string;
+        projectId: string | undefined;
+        aiAgentId: string;
+        agentName: string | undefined;
+        tagsCount: number;
+        integrationsCount: number;
+    };
+};
+
+export type AiAgentPromptCreatedEvent = BaseTrack & {
+    event: 'ai_agent_prompt.created';
+    userId: string;
+    properties: {
+        organizationId: string;
+        projectId: string;
+        aiAgentId: string;
+        threadId: string | undefined;
+        context: 'slack' | 'web_app';
+    };
+};
+
+export type AiAgentPromptFeedbackEvent = BaseTrack & {
+    event: 'ai_agent_prompt.feedback';
+    userId: string | undefined;
+    properties: {
+        organizationId: string | undefined;
+        humanScore: number;
+        messageId: string;
+        context: 'slack' | 'web_app';
+    };
+};
+
+export type AiAgentResponseStreamed = BaseTrack & {
+    event: 'ai_agent.response_streamed';
+    userId: string;
+    properties: {
+        organizationId: string;
+        projectId: string;
+        aiAgentId: string;
+        agentName: string;
+        usageTokensCount: number;
+        stepsCount: number;
+        model: string;
+    };
+};
+
+export type AiAgentEvalCreatedEvent = BaseTrack & {
+    event: 'ai_agent_eval.created';
+    userId: string;
+    properties: {
+        organizationId: string;
+        projectId: string;
+        aiAgentId: string;
+        evalId: string;
+        promptsCount: number;
+    };
+};
+
+export type AiAgentEvalRunEvent = BaseTrack & {
+    event: 'ai_agent_eval.run';
+    userId: string;
+    properties: {
+        organizationId: string;
+        projectId: string;
+        aiAgentId: string;
+        evalId: string;
+        runId: string;
+        promptsCount: number;
+    };
+};
+
+export type AiAgentEvalAppendedEvent = BaseTrack & {
+    event: 'ai_agent_eval.appended';
+    userId: string;
+    properties: {
+        organizationId: string;
+        projectId: string;
+        aiAgentId: string;
+        evalId: string;
+        promptsCount: number;
+    };
+};
+
+export type RenameResourceEvent = BaseTrack & {
+    event:
+        | 'rename_chart.executed'
+        | 'rename_resource.executed'
+        | 'rename_resource.error';
+    userId: string;
+    properties: {
+        organizationId: string;
+        projectId: string | undefined;
+        context: string;
+        renamedCharts?: number;
+        renamedDashboards?: number;
+        renamedAlerts?: number;
+        renamedDashboardSchedulers?: number;
+        from: string;
+        to: string;
+        type: string;
+        error?: string;
+        dryRun?: boolean;
+        chartId?: string; // for rename_chart
+        withValidationWarning?: boolean; // for rename_resource.error
+    };
+};
+
+export type SupportShareEvent = BaseTrack & {
+    event: 'support.share';
+    userId: string;
+    properties: {
+        organizationId: string;
+        projectId: string | undefined;
+        page: LightdashPage | undefined;
+        withScreenshot: boolean;
+        canImpersonate: boolean;
+    };
+};
+
+export type McpToolCallEvent = BaseTrack & {
+    event: 'mcp_tool_call';
+    userId: string;
+    properties: {
+        organizationId: string;
+        projectId?: string;
+        toolName: string;
+    };
+};
+
+export type AiAgentToolCallEvent = BaseTrack & {
+    event: 'ai_agent_tool_call';
+    userId: string;
+    properties: {
+        organizationId: string;
+        projectId: string;
+        aiAgentId: string;
+        agentName: string;
+        toolName: string;
+        threadId: string;
+        promptId: string;
+    };
+};
+
+export type AiAgentArtifactVersionVerifiedEvent = BaseTrack & {
+    event: 'ai_agent.artifact_version_verified';
+    userId: string;
+    properties: {
+        organizationId: string;
+        projectId: string;
+        agentId: string;
+        artifactId: string;
+        versionId: string;
+        verified: boolean;
+    };
+};
+
+export type AiAgentArtifactsRetrievedEvent = BaseTrack & {
+    event: 'ai_agent.artifacts_retrieved';
+    properties: {
+        organizationId: string;
+        projectId: string;
+        agentId: string;
+        promptId: string;
+        artifactCount: number;
+        averageSimilarity: number;
+    };
+};
+
 type TypedEvent =
     | TrackSimpleEvent
     | CreateUserEvent
@@ -1189,6 +1456,13 @@ type TypedEvent =
     | VerifiedUserEvent
     | UserJoinOrganizationEvent
     | QueryExecutionEvent
+    | QueryReadyEvent
+    | QueryErrorEvent
+    | QueryPageEvent
+    | ResultsCacheCreateEvent
+    | ResultsCacheWriteEvent
+    | ResultsCacheReadEvent
+    | ResultsCacheDeleteEvent
     | ModeDashboardChartEvent
     | UpdateSavedChartEvent
     | DeleteSavedChartEvent
@@ -1261,9 +1535,20 @@ type TypedEvent =
     | CreateTagEvent
     | CategoriesAppliedEvent
     | CustomFieldsReplaced
-    | SubtotalQueryEvent;
-
-type WrapTypedEvent = SemanticLayerView;
+    | SubtotalQueryEvent
+    | DeprecatedRouteCalled
+    | AiAgentCreatedEvent
+    | AiAgentDeletedEvent
+    | AiAgentUpdatedEvent
+    | AiAgentPromptCreatedEvent
+    | AiAgentPromptFeedbackEvent
+    | AiAgentEvalCreatedEvent
+    | AiAgentEvalRunEvent
+    | AiAgentEvalAppendedEvent
+    | McpToolCallEvent
+    | AiAgentToolCallEvent
+    | AiAgentArtifactVersionVerifiedEvent
+    | AiAgentArtifactsRetrievedEvent;
 
 type UntypedEvent<T extends BaseTrack> = Omit<BaseTrack, 'event'> &
     T & {
@@ -1376,41 +1661,32 @@ export class LightdashAnalytics extends Analytics {
         });
     }
 
-    async wrapEvent<T>(
-        payload: WrapTypedEvent,
-        func: () => Promise<T>,
-        extraProperties?: (r: T) => AnyType,
+    /**
+     * Track events from an account. This lets us centralize common properties that are found in req.account.
+     */
+    trackAccount<T extends BaseTrack>(
+        account: Account,
+        basePayload: TypedEvent | UntypedEvent<T>,
     ) {
-        try {
-            this.track({
-                ...payload,
-                event: `${payload.event}.started`,
-            });
+        const payload = {
+            ...basePayload,
+        };
 
-            const results = await func();
-
-            const properties = extraProperties ? extraProperties(results) : {};
-            this.track({
-                ...payload,
-                event: `${payload.event}.completed`,
-                properties: {
-                    ...payload.properties,
-                    ...properties,
-                },
-            });
-
-            return results;
-        } catch (e) {
-            await this.track({
-                ...payload,
-                event: `${payload.event}.error`,
-                properties: {
-                    ...payload.properties,
-                    error: getErrorMessage(e),
-                },
-            });
-            Logger.error(`Error in scheduler task: ${e}`);
-            throw e;
+        if (!payload.properties) {
+            payload.properties = {};
         }
+
+        if (account.user.type === 'registered') {
+            payload.userId = account.user.id;
+        } else {
+            payload.anonymousId = 'embed';
+            payload.properties.externalId = account.user.id;
+        }
+
+        // TODO: Could these be top-level fields rather than properties?
+        payload.properties.organizationId =
+            account.organization.organizationUuid;
+
+        this.track(payload);
     }
 }

@@ -6,8 +6,10 @@ import {
     getItemId,
     isDimension,
     isField,
+    isHexCodeColor,
     isNumericItem,
     isSummable,
+    type ColumnProperties,
     type ConditionalFormattingConfig,
     type ConditionalFormattingMinMaxMap,
     type ConditionalFormattingRowFields,
@@ -16,7 +18,13 @@ import {
     type ResultRow,
     type ResultValue,
 } from '@lightdash/common';
-import { Button, Group, Text, type BoxProps } from '@mantine/core';
+import {
+    Button,
+    Group,
+    Text,
+    useMantineColorScheme,
+    type BoxProps,
+} from '@mantine/core';
 import { IconChevronDown, IconChevronRight } from '@tabler/icons-react';
 import {
     flexRender,
@@ -34,9 +42,15 @@ import {
     getGroupingValuesAndSubtotalKey,
     getSubtotalValueFromGroup,
 } from '../../../hooks/tableVisualization/getDataAndColumns';
-import { formatCellContent } from '../../../hooks/useColumns';
-import { getColorFromRange, isHexCodeColor } from '../../../utils/colorUtils';
-import { getConditionalRuleLabel } from '../Filters/FilterInputs/utils';
+import {
+    formatCellContent,
+    getFormattedValueCell,
+} from '../../../hooks/useColumns';
+import {
+    getColorFromRange,
+    transformColorsForDarkMode,
+} from '../../../utils/colorUtils';
+import { getConditionalRuleLabelFromItem } from '../Filters/FilterInputs/utils';
 import Table from '../LightTable';
 import { CELL_HEIGHT } from '../LightTable/constants';
 import MantineIcon from '../MantineIcon';
@@ -89,6 +103,8 @@ type PivotTableProps = BoxProps & // TODO: remove this
         getFieldLabel: (fieldId: string) => string | undefined;
         getField: (fieldId: string) => ItemsMap[string] | undefined;
         showSubtotals?: boolean;
+        columnProperties?: ColumnProperties;
+        isMinimal: boolean;
     };
 
 const PivotTable: FC<PivotTableProps> = ({
@@ -100,8 +116,11 @@ const PivotTable: FC<PivotTableProps> = ({
     getField,
     className,
     showSubtotals = false,
+    columnProperties = {},
+    isMinimal = false,
     ...tableProps
 }) => {
+    const { colorScheme } = useMantineColorScheme();
     const containerRef = useRef<HTMLDivElement>(null);
     const [grouping, setGrouping] = React.useState<GroupingState>([]);
 
@@ -158,7 +177,7 @@ const PivotTable: FC<PivotTableProps> = ({
                     },
                     {
                         id: col.fieldId,
-                        cell: (info) => formatCellContent(info.getValue()),
+                        cell: getFormattedValueCell,
                         meta: {
                             item: item,
                             type: col.columnType,
@@ -187,26 +206,32 @@ const PivotTable: FC<PivotTableProps> = ({
                                 const subtotal = data.groupedSubtotals?.[
                                     subtotalGroupKey
                                 ]?.find((sub) => {
-                                    return (
-                                        // All grouping values in the row must match the subtotal values
-                                        Object.keys(groupingValues).every(
-                                            (key) => {
-                                                return (
-                                                    groupingValues[key]?.value
-                                                        .raw === sub[key]
-                                                );
-                                            },
-                                        ) &&
-                                        // All pivoted header values in the row must match the subtotal values
-                                        Object.keys(pivotedHeaderValues).every(
-                                            (key) => {
+                                    try {
+                                        return (
+                                            // All grouping values in the row must match the subtotal values
+                                            Object.keys(groupingValues).every(
+                                                (key) => {
+                                                    return (
+                                                        groupingValues[key]
+                                                            ?.value.raw ===
+                                                        sub[key]
+                                                    );
+                                                },
+                                            ) &&
+                                            // All pivoted header values in the row must match the subtotal values
+                                            Object.keys(
+                                                pivotedHeaderValues,
+                                            ).every((key) => {
                                                 return (
                                                     pivotedHeaderValues[key]
                                                         ?.raw === sub[key]
                                                 );
-                                            },
-                                        )
-                                    );
+                                            })
+                                        );
+                                    } catch (e) {
+                                        console.error(e);
+                                        return false;
+                                    }
                                 });
 
                                 const subtotalValue = getSubtotalValueFromGroup(
@@ -252,6 +277,10 @@ const PivotTable: FC<PivotTableProps> = ({
         getExpandedRowModel: getExpandedRowModel(),
         getGroupedRowModel: getGroupedRowModelLightdash(),
         getCoreRowModel: getCoreRowModel(),
+        meta: {
+            columnProperties,
+            minMaxMap,
+        },
     });
 
     const { rows } = table.getRowModel();
@@ -402,9 +431,16 @@ const PivotTable: FC<PivotTableProps> = ({
                         {/* shows empty cell if row numbers are visible */}
                         {hideRowNumbers ? null : headerRowIndex <
                           data.headerValues.length - 1 ? (
-                            <Table.Cell withMinimalWidth />
+                            <Table.Cell
+                                isMinimal={isMinimal}
+                                withMinimalWidth
+                            />
                         ) : (
-                            <Table.CellHead withMinimalWidth withBoldFont>
+                            <Table.CellHead
+                                isMinimal={isMinimal}
+                                withMinimalWidth
+                                withBoldFont
+                            >
                                 #
                             </Table.CellHead>
                         )}
@@ -423,12 +459,14 @@ const PivotTable: FC<PivotTableProps> = ({
                                 return isEmpty ? (
                                     <Table.Cell
                                         key={`title-${headerRowIndex}-${titleFieldIndex}`}
+                                        isMinimal={isMinimal}
                                         withMinimalWidth
                                     />
                                 ) : (
                                     <Table.CellHead
                                         key={`title-${headerRowIndex}-${titleFieldIndex}`}
                                         withAlignRight={isHeaderTitle}
+                                        isMinimal={isMinimal}
                                         withMinimalWidth
                                         withBoldFont
                                         withTooltip={
@@ -457,6 +495,7 @@ const PivotTable: FC<PivotTableProps> = ({
                             return isLabel || headerValue.colSpan > 0 ? (
                                 <Table.CellHead
                                     key={`header-${headerRowIndex}-${headerColIndex}`}
+                                    isMinimal={isMinimal}
                                     withBoldFont={isLabel}
                                     withTooltip={description}
                                     colSpan={
@@ -478,6 +517,7 @@ const PivotTable: FC<PivotTableProps> = ({
                                       totalLabel ? (
                                           <Table.CellHead
                                               key={`header-total-${headerRowIndex}-${headerColIndex}`}
+                                              isMinimal={isMinimal}
                                               withBoldFont
                                               withMinimalWidth
                                           >
@@ -490,6 +530,7 @@ const PivotTable: FC<PivotTableProps> = ({
                                       ) : (
                                           <Table.Cell
                                               key={`header-total-${headerRowIndex}-${headerColIndex}`}
+                                              isMinimal={isMinimal}
                                               withMinimalWidth
                                           />
                                       ),
@@ -569,7 +610,23 @@ const PivotTable: FC<PivotTableProps> = ({
                                         value: value?.raw,
                                         config: conditionalFormattingConfig,
                                         minMaxMap,
-                                        getColorFromRange,
+                                        getColorFromRange: (
+                                            val,
+                                            colorRange,
+                                            minMaxRange,
+                                        ) => {
+                                            const effectiveColorRange =
+                                                colorScheme === 'dark'
+                                                    ? transformColorsForDarkMode(
+                                                          colorRange,
+                                                      )
+                                                    : colorRange;
+                                            return getColorFromRange(
+                                                val,
+                                                effectiveColorRange,
+                                                minMaxRange,
+                                            );
+                                        },
                                     });
 
                                 const conditionalFormatting = (() => {
@@ -578,7 +635,7 @@ const PivotTable: FC<PivotTableProps> = ({
                                             item,
                                             conditionalFormattingConfig,
                                             rowFields,
-                                            getConditionalRuleLabel,
+                                            getConditionalRuleLabelFromItem,
                                         );
 
                                     if (
@@ -600,13 +657,11 @@ const PivotTable: FC<PivotTableProps> = ({
                                     };
                                 })();
 
-                                const fontColor =
-                                    conditionalFormattingColor &&
-                                    readableColor(
-                                        conditionalFormattingColor,
-                                    ) === 'white'
-                                        ? 'white'
-                                        : undefined;
+                                // When conditional formatting is applied, always use calculated contrast color
+                                // to ensure text remains readable regardless of light/dark mode
+                                const fontColor = conditionalFormattingColor
+                                    ? readableColor(conditionalFormattingColor)
+                                    : undefined;
 
                                 const suppressContextMenu =
                                     (value === undefined ||
@@ -623,6 +678,7 @@ const PivotTable: FC<PivotTableProps> = ({
                                 return (
                                     <TableCellComponent
                                         key={`value-${rowIndex}-${colIndex}`}
+                                        isMinimal={isMinimal}
                                         withAlignRight={isNumericItem(item)}
                                         withColor={conditionalFormatting?.color}
                                         withBoldFont={meta?.type === 'label'}
@@ -758,6 +814,7 @@ const PivotTable: FC<PivotTableProps> = ({
                                     totalLabel ? (
                                         <Table.CellHead
                                             key={`footer-total-${totalRowIndex}-${totalColIndex}`}
+                                            isMinimal={isMinimal}
                                             withAlignRight
                                             withBoldFont
                                         >
@@ -770,6 +827,7 @@ const PivotTable: FC<PivotTableProps> = ({
                                     ) : (
                                         <Table.Cell
                                             key={`footer-total-${totalRowIndex}-${totalColIndex}`}
+                                            isMinimal={isMinimal}
                                         />
                                     ),
                             )}
@@ -788,6 +846,7 @@ const PivotTable: FC<PivotTableProps> = ({
                                     <Table.CellHead
                                         key={`column-total-${totalRowIndex}-${totalColIndex}`}
                                         withAlignRight
+                                        isMinimal={isMinimal}
                                         withBoldFont
                                         withInteractions
                                         withValue={value.formatted}
@@ -813,6 +872,7 @@ const PivotTable: FC<PivotTableProps> = ({
                                 ) : (
                                     <Table.Cell
                                         key={`footer-total-${totalRowIndex}-${totalColIndex}`}
+                                        isMinimal={isMinimal}
                                     />
                                 );
                             })}
@@ -821,6 +881,7 @@ const PivotTable: FC<PivotTableProps> = ({
                                 ? data.rowTotalFields?.[0].map((_, index) => (
                                       <Table.Cell
                                           key={`footer-empty-${totalRowIndex}-${index}`}
+                                          isMinimal={isMinimal}
                                       />
                                   ))
                                 : null}

@@ -1,14 +1,21 @@
 import {
-    ChartType,
     assertUnreachable,
+    ChartType,
+    FeatureFlags,
     isDimension,
-    type ApiQueryResults,
+    type ApiErrorDetail,
     type ChartConfig,
     type DashboardFilters,
+    type EChartsSeries,
+    type ItemsMap,
+    type MetricQuery,
+    type ParametersValuesMap,
     type PivotValue,
+    type Series,
+    type StackType,
     type TableCalculationMetadata,
 } from '@lightdash/common';
-import type EChartsReact from 'echarts-for-react';
+import type { Map as LeafletMap } from 'leaflet';
 import isEqual from 'lodash/isEqual';
 import {
     useCallback,
@@ -20,34 +27,47 @@ import {
     type RefObject,
 } from 'react';
 import { type CartesianTypeOptions } from '../../hooks/cartesianChartConfig/useCartesianChartConfig';
-import { type EChartSeries } from '../../hooks/echarts/useEchartsCartesianConfig';
 import { type SeriesLike } from '../../hooks/useChartColorConfig/types';
 import { useChartColorConfig } from '../../hooks/useChartColorConfig/useChartColorConfig';
 import {
     calculateSeriesLikeIdentifier,
     isGroupedSeries,
 } from '../../hooks/useChartColorConfig/utils';
+import {
+    useFeatureFlag,
+    useFeatureFlagEnabled,
+} from '../../hooks/useFeatureFlagEnabled';
 import usePivotDimensions from '../../hooks/usePivotDimensions';
-import { type EchartSeriesClickEvent } from '../SimpleChart';
+import { type InfiniteQueryResults } from '../../hooks/useQueryResults';
+import { type EChartsReact } from '../EChartsReactWrapper';
+import { type EchartsSeriesClickEvent } from '../SimpleChart';
 import VisualizationBigNumberConfig from './VisualizationBigNumberConfig';
 import VisualizationCartesianConfig from './VisualizationConfigCartesian';
 import VisualizationConfigFunnel from './VisualizationConfigFunnel';
+import VisualizationGaugeConfig from './VisualizationConfigGauge';
+import VisualizationMapConfig from './VisualizationConfigMap';
 import VisualizationPieConfig from './VisualizationConfigPie';
 import VisualizationTableConfig from './VisualizationConfigTable';
+import VisualizationTreemapConfig from './VisualizationConfigTreemap';
 import VisualizationCustomConfig from './VisualizationCustomConfig';
 import Context from './context';
 import { type useVisualizationContext } from './useVisualizationContext';
 
-type Props = {
+export type VisualizationProviderProps = {
     minimal?: boolean;
     chartConfig: ChartConfig;
     initialPivotDimensions: string[] | undefined;
-    resultsData: ApiQueryResults | undefined;
+    unsavedMetricQuery?: MetricQuery;
+    resultsData: InfiniteQueryResults & {
+        metricQuery?: MetricQuery;
+        fields?: ItemsMap;
+    };
+    parameters?: ParametersValuesMap;
     isLoading: boolean;
     columnOrder: string[];
     onSeriesContextMenu?: (
-        e: EchartSeriesClickEvent,
-        series: EChartSeries[],
+        e: EchartsSeriesClickEvent,
+        series: EChartsSeries[],
     ) => void;
     onChartTypeChange?: (value: ChartType) => void;
     onChartConfigChange?: (value: ChartConfig) => void;
@@ -58,10 +78,17 @@ type Props = {
     invalidateCache?: boolean;
     colorPalette: string[];
     tableCalculationsMetadata?: TableCalculationMetadata[];
-    setEchartsRef?: (ref: RefObject<EChartsReact | null>) => void;
+    setEchartsRef?: (ref: RefObject<EChartsReact | null> | undefined) => void;
+    computedSeries?: Series[];
+    apiErrorDetail?: ApiErrorDetail | null;
+    containerWidth?: number;
+    containerHeight?: number;
+    isDashboard?: boolean;
 };
 
-const VisualizationProvider: FC<React.PropsWithChildren<Props>> = ({
+const VisualizationProvider: FC<
+    React.PropsWithChildren<VisualizationProviderProps>
+> = ({
     minimal = false,
     initialPivotDimensions,
     resultsData,
@@ -80,22 +107,51 @@ const VisualizationProvider: FC<React.PropsWithChildren<Props>> = ({
     colorPalette,
     tableCalculationsMetadata,
     setEchartsRef,
+    computedSeries,
+    apiErrorDetail,
+    parameters,
+    unsavedMetricQuery,
+    containerWidth,
+    containerHeight,
+    isDashboard,
 }) => {
     const itemsMap = useMemo(() => {
         return resultsData?.fields;
     }, [resultsData]);
 
     const chartRef = useRef<EChartsReact | null>(null);
+    const leafletMapRef = useRef<LeafletMap | null>(null);
+
     useEffect(() => {
         if (setEchartsRef)
             setEchartsRef(chartRef as RefObject<EChartsReact | null>);
-    }, [chartRef, setEchartsRef]);
-    const [lastValidResultsData, setLastValidResultsData] =
-        useState<ApiQueryResults>();
+
+        // Cleanup: dispose ECharts instance and clear parent reference on unmount
+        return () => {
+            // Dispose the ECharts instance to free up canvas memory
+            if (chartRef.current) {
+                const echartsInstance = chartRef.current.getEchartsInstance();
+                if (echartsInstance && !echartsInstance.isDisposed()) {
+                    echartsInstance.dispose();
+                }
+                chartRef.current = null;
+            }
+        };
+    }, [setEchartsRef]);
+    const [lastValidResultsData, setLastValidResultsData] = useState<
+        InfiniteQueryResults & { metricQuery?: MetricQuery; fields?: ItemsMap }
+    >();
+
+    const { data: useSqlPivotResults } = useFeatureFlag(
+        FeatureFlags.UseSqlPivotResults,
+    );
 
     const { validPivotDimensions, setPivotDimensions } = usePivotDimensions(
         initialPivotDimensions,
-        lastValidResultsData,
+        useSqlPivotResults?.enabled
+            ? unsavedMetricQuery ?? lastValidResultsData?.metricQuery
+            : lastValidResultsData?.metricQuery,
+        onPivotDimensionsChange,
     );
 
     const setChartType = useCallback(
@@ -107,7 +163,7 @@ const VisualizationProvider: FC<React.PropsWithChildren<Props>> = ({
         useChartColorConfig({ colorPalette });
 
     // cartesian config related
-    const [stacking, setStacking] = useState<boolean>();
+    const [stacking, setStacking] = useState<boolean | StackType>();
     const [cartesianType, setCartesianType] = useState<CartesianTypeOptions>();
     // --
 
@@ -135,6 +191,8 @@ const VisualizationProvider: FC<React.PropsWithChildren<Props>> = ({
     /**
      * Build a local set of fallback colors, used when dealing with ungrouped series.
      *
+     * On dashboards, these must be passed in computedSeries prop
+     * On charts, these are computed from the chartConfig
      * Colors are pre-calculated per-series, and re-calculated when series change.
      */
     const fallbackColors = useMemo<Record<string, string>>(() => {
@@ -142,15 +200,21 @@ const VisualizationProvider: FC<React.PropsWithChildren<Props>> = ({
             return {};
         }
 
+        const allSeries =
+            computedSeries && computedSeries.length > 0
+                ? computedSeries
+                : chartConfig.config.eChartsConfig.series;
+
+        const sortedSeriesIdentifiers = (allSeries ?? [])
+            .map((series) => calculateSeriesLikeIdentifier(series).join('|'))
+            .sort((a, b) => b.localeCompare(a));
+
         return Object.fromEntries(
-            (chartConfig.config.eChartsConfig.series ?? []).map((series, i) => {
-                return [
-                    calculateSeriesLikeIdentifier(series).join('|'),
-                    colorPalette[i % colorPalette.length],
-                ];
+            sortedSeriesIdentifiers.map((identifier, i) => {
+                return [identifier, colorPalette[i % colorPalette.length]];
             }),
         );
-    }, [chartConfig, colorPalette]);
+    }, [chartConfig, colorPalette, computedSeries]);
 
     const handleChartConfigChange = useCallback(
         (newChartConfig: ChartConfig) => {
@@ -166,10 +230,6 @@ const VisualizationProvider: FC<React.PropsWithChildren<Props>> = ({
         if (!resultsData) return;
         setLastValidResultsData(resultsData);
     }, [resultsData]);
-
-    useEffect(() => {
-        onPivotDimensionsChange?.(validPivotDimensions);
-    }, [validPivotDimensions, onPivotDimensionsChange]);
 
     /**
      * Gets a shared color for a given group name.
@@ -192,6 +252,10 @@ const VisualizationProvider: FC<React.PropsWithChildren<Props>> = ({
         [calculateKeyColorAssignment, itemsMap],
     );
 
+    const isCalculateSeriesColorEnabled = useFeatureFlagEnabled(
+        FeatureFlags.CalculateSeriesColor,
+    );
+
     /**
      * Gets a shared color for a given series.
      */
@@ -205,8 +269,9 @@ const VisualizationProvider: FC<React.PropsWithChildren<Props>> = ({
                 chartConfig.type === ChartType.CARTESIAN
                     ? chartConfig.config?.metadata
                     : undefined;
-            if (metadata && metadata?.[serieId]?.color)
+            if (metadata && metadata?.[serieId]?.color) {
                 return metadata?.[serieId].color;
+            }
 
             /** Check if color is set in the dimension metadata */
 
@@ -214,7 +279,7 @@ const VisualizationProvider: FC<React.PropsWithChildren<Props>> = ({
             if ('pivotReference' in seriesLike && seriesLike.pivotReference) {
                 pivot = seriesLike.pivotReference.pivotValues?.[0];
             } else if (seriesLike.encode && 'yRef' in seriesLike.encode) {
-                pivot = seriesLike.encode.yRef.pivotValues?.[0];
+                pivot = seriesLike.encode.yRef?.pivotValues?.[0];
             }
             if (itemsMap && pivot) {
                 const { field, value } = pivot;
@@ -235,14 +300,21 @@ const VisualizationProvider: FC<React.PropsWithChildren<Props>> = ({
              * If this series is grouped, figure out a shared color assignment from the series;
              * otherwise, pick a series color from the palette based on its order.
              */
-            return isGroupedSeries(seriesLike)
+            return isGroupedSeries(seriesLike) && isCalculateSeriesColorEnabled
                 ? calculateSeriesColorAssignment(seriesLike)
                 : fallbackColors[
                       // Note: we don't use getSeriesId since we may not be dealing with a Series type here
                       calculateSeriesLikeIdentifier(seriesLike).join('|')
                   ];
         },
-        [calculateSeriesColorAssignment, fallbackColors, chartConfig, itemsMap],
+
+        [
+            calculateSeriesColorAssignment,
+            fallbackColors,
+            chartConfig,
+            itemsMap,
+            isCalculateSeriesColorEnabled,
+        ],
     );
 
     const value: Omit<
@@ -252,9 +324,11 @@ const VisualizationProvider: FC<React.PropsWithChildren<Props>> = ({
         minimal,
         pivotDimensions: validPivotDimensions,
         chartRef,
+        leafletMapRef,
         resultsData: lastValidResultsData,
         isLoading,
-        columnOrder,
+        apiErrorDetail,
+        columnOrder: defaultColumnOrder,
         itemsMap,
         setStacking,
         setCartesianType,
@@ -264,6 +338,11 @@ const VisualizationProvider: FC<React.PropsWithChildren<Props>> = ({
         colorPalette,
         getGroupColor,
         getSeriesColor,
+        chartConfig,
+        parameters,
+        containerWidth,
+        containerHeight,
+        isDashboard,
     };
 
     switch (chartConfig.type) {
@@ -281,6 +360,7 @@ const VisualizationProvider: FC<React.PropsWithChildren<Props>> = ({
                     onChartConfigChange={handleChartConfigChange}
                     colorPalette={colorPalette}
                     tableCalculationsMetadata={tableCalculationsMetadata}
+                    parameters={parameters}
                 >
                     {({ visualizationConfig }) => (
                         <Context.Provider
@@ -300,6 +380,7 @@ const VisualizationProvider: FC<React.PropsWithChildren<Props>> = ({
                     onChartConfigChange={handleChartConfigChange}
                     colorPalette={colorPalette}
                     tableCalculationsMetadata={tableCalculationsMetadata}
+                    parameters={parameters}
                 >
                     {({ visualizationConfig }) => (
                         <Context.Provider
@@ -319,6 +400,7 @@ const VisualizationProvider: FC<React.PropsWithChildren<Props>> = ({
                     onChartConfigChange={handleChartConfigChange}
                     colorPalette={colorPalette}
                     tableCalculationsMetadata={tableCalculationsMetadata}
+                    parameters={parameters}
                 >
                     {({ visualizationConfig }) => (
                         <Context.Provider
@@ -337,6 +419,7 @@ const VisualizationProvider: FC<React.PropsWithChildren<Props>> = ({
                     initialChartConfig={chartConfig.config}
                     onChartConfigChange={handleChartConfigChange}
                     tableCalculationsMetadata={tableCalculationsMetadata}
+                    parameters={parameters}
                 >
                     {({ visualizationConfig }) => (
                         <Context.Provider
@@ -346,6 +429,60 @@ const VisualizationProvider: FC<React.PropsWithChildren<Props>> = ({
                         </Context.Provider>
                     )}
                 </VisualizationBigNumberConfig>
+            );
+        case ChartType.TREEMAP:
+            return (
+                <VisualizationTreemapConfig
+                    itemsMap={itemsMap}
+                    resultsData={lastValidResultsData}
+                    initialChartConfig={chartConfig.config}
+                    onChartConfigChange={handleChartConfigChange}
+                    parameters={parameters}
+                >
+                    {({ visualizationConfig }) => (
+                        <Context.Provider
+                            value={{ ...value, visualizationConfig }}
+                        >
+                            {children}
+                        </Context.Provider>
+                    )}
+                </VisualizationTreemapConfig>
+            );
+        case ChartType.GAUGE:
+            return (
+                <VisualizationGaugeConfig
+                    itemsMap={itemsMap}
+                    resultsData={lastValidResultsData}
+                    initialChartConfig={chartConfig.config}
+                    onChartConfigChange={handleChartConfigChange}
+                    parameters={parameters}
+                >
+                    {({ visualizationConfig }) => (
+                        <Context.Provider
+                            value={{ ...value, visualizationConfig }}
+                        >
+                            {children}
+                        </Context.Provider>
+                    )}
+                </VisualizationGaugeConfig>
+            );
+        case ChartType.MAP:
+            return (
+                <VisualizationMapConfig
+                    itemsMap={itemsMap}
+                    resultsData={lastValidResultsData}
+                    initialChartConfig={chartConfig.config}
+                    onChartConfigChange={handleChartConfigChange}
+                    parameters={parameters}
+                >
+                    {({ visualizationConfig }) => (
+                        <Context.Provider
+                            value={{ ...value, visualizationConfig }}
+                        >
+                            {children}
+                        </Context.Provider>
+                    )}
+                </VisualizationMapConfig>
             );
         case ChartType.TABLE:
             return (
@@ -360,6 +497,7 @@ const VisualizationProvider: FC<React.PropsWithChildren<Props>> = ({
                     savedChartUuid={savedChartUuid}
                     dashboardFilters={dashboardFilters}
                     invalidateCache={invalidateCache}
+                    parameters={parameters}
                 >
                     {({ visualizationConfig }) => (
                         <Context.Provider

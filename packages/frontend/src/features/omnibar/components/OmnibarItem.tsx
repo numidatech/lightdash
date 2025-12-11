@@ -22,10 +22,16 @@ const useStyles = createStyles<string, null>((theme) => ({
         paddingRight: theme.spacing.xs,
         borderRadius: theme.radius.sm,
         '&:hover, &[data-hovered]': {
-            backgroundColor: theme.colors.blue[0],
+            backgroundColor:
+                theme.colorScheme === 'dark'
+                    ? theme.colors.blue[8]
+                    : theme.colors.blue[0],
         },
         '&:active': {
-            backgroundColor: theme.colors.blue[1],
+            backgroundColor:
+                theme.colorScheme === 'dark'
+                    ? theme.colors.blue[9]
+                    : theme.colors.blue[1],
         },
     },
     item: {},
@@ -39,7 +45,7 @@ type Props = {
     classNames?: Record<string, string>;
     hovered?: boolean;
     scrollRef?: MutableRefObject<HTMLDivElement>;
-    onClick: () => void;
+    onClick?: (e: React.MouseEvent) => void;
 };
 
 const itemHasValidationError = (searchItem: SearchItem) =>

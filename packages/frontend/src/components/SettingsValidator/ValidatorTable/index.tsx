@@ -10,6 +10,7 @@ import {
     ActionIcon,
     Anchor,
     Box,
+    Button,
     Flex,
     Stack,
     Table,
@@ -32,24 +33,9 @@ import { useTableStyles } from '../../../hooks/styles/useTableStyles';
 import { useDeleteValidation } from '../../../hooks/validation/useValidation';
 import MantineIcon from '../../common/MantineIcon';
 import { ChartIcon, IconBox } from '../../common/ResourceIcon';
+import { getLinkToResource } from '../utils/utils';
 import { ErrorMessage } from './ErrorMessage';
 import { useScrollAndHighlight } from './hooks/useScrollAndHighlight';
-
-const getLinkToResource = (
-    validationError: ValidationResponse,
-    projectUuid: string,
-) => {
-    if (isChartValidationError(validationError) && validationError.chartUuid)
-        return `/projects/${projectUuid}/saved/${validationError.chartUuid}`;
-
-    if (
-        isDashboardValidationError(validationError) &&
-        validationError.dashboardUuid
-    )
-        return `/projects/${projectUuid}/dashboards/${validationError.dashboardUuid}/view`;
-
-    return;
-};
 
 const isDeleted = (validationError: ValidationResponse) =>
     (isChartValidationError(validationError) && !validationError.chartUuid) ||
@@ -114,12 +100,12 @@ const TableValidationItem = forwardRef<
     {
         projectUuid: string;
         validationError: ValidationResponse;
+        onSelectValidationError: (validationError: ValidationResponse) => void;
     }
->(({ projectUuid, validationError }, ref) => {
+>(({ projectUuid, validationError, onSelectValidationError }, ref) => {
     const { mutate: deleteValidation } = useDeleteValidation(projectUuid);
 
     const { hovered, ref: isHoveredRef } = useHover<HTMLTableRowElement>();
-
     return (
         <tr ref={mergeRefs(ref, isHoveredRef)}>
             <td>
@@ -131,28 +117,14 @@ const TableValidationItem = forwardRef<
                         <Icon validationError={validationError} />
 
                         <Stack spacing={4}>
-                            {isDeleted(validationError) ? (
-                                <Tooltip
-                                    label={`This ${
-                                        isChartValidationError(validationError)
-                                            ? 'chart'
-                                            : 'dashboard'
-                                    } has been deleted`}
-                                >
-                                    <Text fw={600} color={'gray.6'}>
-                                        {getErrorName(validationError)}
-                                    </Text>
-                                </Tooltip>
-                            ) : (
-                                <Text fw={600}>
-                                    {getErrorName(validationError)}
-                                </Text>
-                            )}
+                            <Text fw={600}>
+                                {getErrorName(validationError)}
+                            </Text>
 
                             {(isChartValidationError(validationError) ||
                                 isDashboardValidationError(validationError)) &&
                                 !isDeleted(validationError) && (
-                                    <Text fz={11} color="gray.6">
+                                    <Text fz={11} color="ldGray.6">
                                         {getViews(validationError)} view
                                         {getViews(validationError) === 1
                                             ? ''
@@ -183,6 +155,23 @@ const TableValidationItem = forwardRef<
                 </AnchorToResource>
             </td>
             <td>
+                <Box w={24}>
+                    {hovered && isChartValidationError(validationError) && (
+                        <Button
+                            variant="outline"
+                            onClick={(
+                                e: React.MouseEvent<HTMLButtonElement>,
+                            ) => {
+                                onSelectValidationError(validationError);
+                                e.stopPropagation();
+                            }}
+                        >
+                            Fix
+                        </Button>
+                    )}
+                </Box>
+            </td>
+            <td>
                 <Tooltip label="Dismiss error" position="top">
                     <Box w={24}>
                         {hovered && (
@@ -199,7 +188,7 @@ const TableValidationItem = forwardRef<
                                 <MantineIcon
                                     icon={IconX}
                                     size="lg"
-                                    color="gray.6"
+                                    color="ldGray.6"
                                 />
                             </ActionIcon>
                         )}
@@ -213,7 +202,8 @@ const TableValidationItem = forwardRef<
 export const ValidatorTable: FC<{
     data: ValidationResponse[];
     projectUuid: string;
-}> = ({ data, projectUuid }) => {
+    onSelectValidationError: (validationError: ValidationResponse) => void;
+}> = ({ data, projectUuid, onSelectValidationError }) => {
     const { cx, classes } = useTableStyles();
     const { colors } = useMantineTheme();
 
@@ -248,6 +238,7 @@ export const ValidatorTable: FC<{
                     <th>Name</th>
                     <th>Error</th>
                     <th></th>
+                    <th></th>
                 </tr>
             </thead>
             <tbody>
@@ -258,6 +249,7 @@ export const ValidatorTable: FC<{
                               projectUuid={projectUuid}
                               validationError={validationError}
                               ref={refs[validationError.validationId]}
+                              onSelectValidationError={onSelectValidationError}
                           />
                       ))
                     : null}

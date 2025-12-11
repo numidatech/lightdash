@@ -4,6 +4,7 @@ import { type ConditionalFormattingConfig } from './conditionalFormatting';
 import { type ChartSourceType } from './content';
 import { type CompactOrAlias, type FieldId } from './field';
 import { type MetricQuery, type MetricQueryRequest } from './metricQuery';
+import { type ParametersValuesMap } from './parameters';
 // eslint-disable-next-line import/no-cycle
 import { type SpaceShare } from './space';
 import { type LightdashUser, type UpdatedByUser } from './user';
@@ -21,6 +22,9 @@ export enum ChartKind {
     BIG_NUMBER = 'big_number',
     FUNNEL = 'funnel',
     CUSTOM = 'custom',
+    TREEMAP = 'treemap',
+    GAUGE = 'gauge',
+    MAP = 'map',
 }
 
 export enum ChartType {
@@ -29,7 +33,10 @@ export enum ChartType {
     BIG_NUMBER = 'big_number',
     PIE = 'pie',
     FUNNEL = 'funnel',
+    TREEMAP = 'treemap',
+    GAUGE = 'gauge',
     CUSTOM = 'custom',
+    MAP = 'map',
 }
 
 export enum ComparisonFormatTypes {
@@ -50,6 +57,7 @@ export type BigNumber = {
     style?: CompactOrAlias;
     selectedField?: string;
     showBigNumberLabel?: boolean;
+    showTableNamesInLabel?: boolean;
     showComparison?: boolean;
     comparisonFormat?: ComparisonFormatTypes;
     flipColors?: boolean;
@@ -102,6 +110,85 @@ export type PieChart = {
     metadata?: Record<string, SeriesMetadata>;
 };
 
+export type TreemapChart = {
+    visibleMin?: number;
+    leafDepth?: number;
+    groupFieldIds?: string[];
+    sizeMetricId?: string;
+    colorMetricId?: string;
+    startColor?: string;
+    endColor?: string;
+    useDynamicColors?: boolean;
+    startColorThreshold?: number;
+    endColorThreshold?: number;
+};
+
+export type GaugeSection = {
+    min: number;
+    max: number;
+    minFieldId?: string;
+    maxFieldId?: string;
+    color: string;
+};
+
+export type GaugeChart = {
+    selectedField?: string;
+    min?: number;
+    max?: number;
+    maxFieldId?: string;
+    showAxisLabels?: boolean;
+    sections?: GaugeSection[];
+    customLabel?: string;
+};
+
+export enum MapChartLocation {
+    USA = 'USA',
+    WORLD = 'world',
+    EUROPE = 'europe',
+    CUSTOM = 'custom',
+}
+
+export enum MapChartType {
+    SCATTER = 'scatter',
+    AREA = 'area',
+    HEATMAP = 'heatmap',
+}
+
+export enum MapTileBackground {
+    NONE = 'none',
+    OPENSTREETMAP = 'openstreetmap',
+    LIGHT = 'light',
+    DARK = 'dark',
+    SATELLITE = 'satellite',
+}
+
+export type MapChart = {
+    mapType?: MapChartLocation;
+    customGeoJsonUrl?: string;
+    locationType?: MapChartType;
+    // Lat/Long fields
+    latitudeFieldId?: string;
+    longitudeFieldId?: string;
+    // Country/Region field
+    locationFieldId?: string;
+    // Common fields
+    valueFieldId?: string;
+    showLegend?: boolean;
+    // Color range (array of 2-5 colors for gradient)
+    colorRange?: string[];
+    // Map extent settings (zoom and center are saved when user enables "save map extent")
+    defaultZoom?: number;
+    defaultCenterLat?: number;
+    defaultCenterLon?: number;
+    // Scatter bubble size settings (for lat/long maps)
+    minBubbleSize?: number;
+    maxBubbleSize?: number;
+    sizeFieldId?: string;
+    // Tile background
+    tileBackground?: MapTileBackground;
+    backgroundColor?: string;
+};
+
 export enum FunnelChartDataInput {
     ROW = 'row',
     COLUMN = 'column',
@@ -138,6 +225,8 @@ export type ColumnProperties = {
     visible?: boolean;
     name?: string;
     frozen?: boolean;
+    displayStyle?: 'text' | 'bar';
+    color?: string;
 };
 
 export type TableChart = {
@@ -267,6 +356,8 @@ export type CompleteEChartsConfig = {
     series: Series[];
     xAxis: XAxis[];
     yAxis: Axis[];
+    tooltip?: string;
+    showAxisTicks?: boolean;
 };
 
 export type EChartsConfig = Partial<CompleteEChartsConfig>;
@@ -283,14 +374,18 @@ type Axis = {
 
 export type XAxis = Axis & {
     sortType?: XAxisSortType;
+    enableDataZoom?: boolean;
 };
 
 export enum XAxisSortType {
     DEFAULT = 'default',
+    CATEGORY = 'category',
     BAR_TOTALS = 'bar_totals',
 }
 
 export enum XAxisSort {
+    DEFAULT = 'default',
+    DEFAULT_REVERSED = 'default_reversed',
     ASCENDING = 'ascending',
     DESCENDING = 'descending',
     BAR_TOTALS_ASCENDING = 'bar_totals_ascending',
@@ -300,15 +395,20 @@ export enum XAxisSort {
 export function getXAxisSort(
     xAxis: Pick<XAxis, 'sortType' | 'inverse'> | undefined,
 ): XAxisSort {
-    if (!xAxis) return XAxisSort.ASCENDING;
+    if (!xAxis) return XAxisSort.DEFAULT;
 
     switch (xAxis.sortType) {
+        case XAxisSortType.CATEGORY:
+            return xAxis.inverse ? XAxisSort.DESCENDING : XAxisSort.ASCENDING;
         case XAxisSortType.BAR_TOTALS:
             return xAxis.inverse
                 ? XAxisSort.BAR_TOTALS_DESCENDING
                 : XAxisSort.BAR_TOTALS_ASCENDING;
+        case XAxisSortType.DEFAULT:
         default:
-            return xAxis.inverse ? XAxisSort.DESCENDING : XAxisSort.ASCENDING;
+            return xAxis.inverse
+                ? XAxisSort.DEFAULT_REVERSED
+                : XAxisSort.DEFAULT;
     }
 }
 
@@ -318,6 +418,9 @@ export type CompleteCartesianChartLayout = {
     flipAxes?: boolean | undefined;
     showGridX?: boolean | undefined;
     showGridY?: boolean | undefined;
+    showXAxis?: boolean | undefined;
+    showYAxis?: boolean | undefined;
+    stack?: boolean | string | undefined; // Support both old boolean and new StackType string for backward compatibility
 };
 
 export type CartesianChartLayout = Partial<CompleteCartesianChartLayout>;
@@ -362,13 +465,31 @@ export type TableChartConfig = {
     config?: TableChart;
 };
 
+export type TreemapChartConfig = {
+    type: ChartType.TREEMAP;
+    config?: TreemapChart;
+};
+
+export type GaugeChartConfig = {
+    type: ChartType.GAUGE;
+    config?: GaugeChart;
+};
+
+export type MapChartConfig = {
+    type: ChartType.MAP;
+    config?: MapChart;
+};
+
 export type ChartConfig =
     | BigNumberConfig
     | CartesianChartConfig
     | CustomVisConfig
     | PieChartConfig
     | FunnelChartConfig
-    | TableChartConfig;
+    | TableChartConfig
+    | TreemapChartConfig
+    | GaugeChartConfig
+    | MapChartConfig;
 
 export type SavedChartType = ChartType;
 
@@ -388,6 +509,7 @@ export type SavedChart = {
     tableConfig: {
         columnOrder: string[];
     };
+    parameters?: ParametersValuesMap;
     updatedAt: Date;
     updatedByUser?: UpdatedByUser;
     organizationUuid: string;
@@ -412,6 +534,7 @@ type CreateChartBase = Pick<
     | 'pivotConfig'
     | 'chartConfig'
     | 'tableConfig'
+    | 'parameters'
 >;
 
 export type CreateChartInSpace = CreateChartBase & {
@@ -558,6 +681,10 @@ export const getChartType = (chartKind: ChartKind | undefined): ChartType => {
             return ChartType.BIG_NUMBER;
         case ChartKind.TABLE:
             return ChartType.TABLE;
+        case ChartKind.TREEMAP:
+            return ChartType.TREEMAP;
+        case ChartKind.GAUGE:
+            return ChartType.GAUGE;
         default:
             return ChartType.CARTESIAN;
     }
@@ -610,6 +737,12 @@ export const getChartKind = (
             }
 
             return undefined;
+        case ChartType.TREEMAP:
+            return ChartKind.TREEMAP;
+        case ChartType.GAUGE:
+            return ChartKind.GAUGE;
+        case ChartType.MAP:
+            return ChartKind.MAP;
         default:
             return assertUnreachable(
                 chartType,
@@ -718,6 +851,7 @@ export const getHiddenTableFields = (config: ChartConfig) => {
 export type CalculateTotalFromQuery = {
     metricQuery: MetricQueryRequest;
     explore: string;
+    parameters?: ParametersValuesMap;
 };
 
 export type ApiCalculateTotalResponse = {
@@ -728,6 +862,7 @@ export type ApiCalculateTotalResponse = {
 export type CalculateSubtotalsFromQuery = CalculateTotalFromQuery & {
     columnOrder: string[];
     pivotDimensions?: string[];
+    parameters?: ParametersValuesMap;
 };
 
 export type ApiCalculateSubtotalsResponse = {

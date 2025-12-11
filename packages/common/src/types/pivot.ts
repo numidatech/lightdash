@@ -1,19 +1,23 @@
+import type { PivotIndexColum } from '../visualizations/types';
 import { type FieldType } from './field';
 import { type ResultRow, type ResultValue } from './results';
-import {
-    ChartType,
-    getHiddenTableFields,
-    type CreateSavedChartVersion,
-} from './savedCharts';
+import type { GroupByColumn, SortBy, ValuesColumn } from './sqlRunner';
 
 export type PivotConfig = {
     pivotDimensions: string[];
     metricsAsRows: boolean;
     columnOrder?: string[];
     hiddenMetricFieldIds?: string[];
-    summableMetricFieldIds?: string[];
     columnTotals?: boolean;
     rowTotals?: boolean;
+};
+
+// Used in AsyncQueryService to execute pivoted queries
+export type PivotConfiguration = {
+    indexColumn: PivotIndexColum | PivotIndexColum[] | undefined;
+    valuesColumns: ValuesColumn[];
+    groupByColumns: GroupByColumn[] | undefined;
+    sortBy: SortBy | undefined;
 };
 
 type Field =
@@ -71,18 +75,3 @@ export type PivotData = {
     };
     groupedSubtotals?: Record<string, Record<string, number>[]>;
 };
-
-export const getPivotConfig = (
-    savedChart: CreateSavedChartVersion,
-): PivotConfig | undefined =>
-    savedChart.chartConfig.type === ChartType.TABLE &&
-    savedChart.pivotConfig !== undefined
-        ? {
-              pivotDimensions: savedChart.pivotConfig.columns,
-              metricsAsRows: false,
-              hiddenMetricFieldIds: getHiddenTableFields(
-                  savedChart.chartConfig,
-              ),
-              columnOrder: savedChart.tableConfig.columnOrder,
-          }
-        : undefined;
