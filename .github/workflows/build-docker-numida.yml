@@ -26,6 +26,7 @@ jobs:
         with:
           oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
           oauth-secret: ${{ secrets.TS_OAUTH_CLIENT_SECRET }}
+          hostname: lightdash-${{ github.run_id }}
           version: latest
           tags: tag:dataplex
 
