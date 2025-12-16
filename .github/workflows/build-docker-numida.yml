@@ -26,15 +26,29 @@ jobs:
         with:
           oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
           oauth-secret: ${{ secrets.TS_OAUTH_CLIENT_SECRET }}
-          hostname: lightdash-builder
-          version: latest
+          hostname: lightdash-${{ github.run_id }}
+          version: 1.78.1
           tags: tag:dataplex
+      - name: Configure SSH
+        run: |
+          mkdir -p ~/.ssh/
+          echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
+          chmod 400 ~/.ssh/id_ed25519
+          echo "$SSH_PUBLIC_KEY" > ~/.ssh/id_ed25519-cert.pub
+          chmod 644 ~/.ssh/id_ed25519-cert.pub
+          cat >>~/.ssh/config <<END
+          Host lightdash_ssh
+            HostName lightdash.prod.numidatech.com
+            User ubuntu
+            IdentityFile ~/.ssh/id_ed25519
+            StrictHostKeyChecking no
+          END
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.LIGHTDASH_SSH_PRIVATE_KEY }}
+          SSH_PUBLIC_KEY: ${{ secrets.LIGHTDASH_SSH_PUBLIC_KEY }}
 
-      - name: executing remote ssh commands using password
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          key: ${{ secrets.KEY }}
-          host: ${{ secrets.LIGHTDASH_HOST }}
-          username: ${{ secrets.USERNAME }}
-          # Ensure the script exists on the lightdash host
-          script: ./bin/deploy_docker_numida
+      - name: Deploy Lightdash
+        run: |
+          ssh lightdash_ssh "
+            ./bin/deploy_docker_numida
+          "
