@@ -21,6 +21,14 @@ jobs:
     runs-on: ubuntu-latest
     environment: production
     steps:
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v3
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_CLIENT_SECRET }}
+          version: latest
+          tags: tag:dataplex
+
       - name: executing remote ssh commands using password
         uses: appleboy/ssh-action@v1.0.3
         with:
