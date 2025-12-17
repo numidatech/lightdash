@@ -5,11 +5,6 @@ on:
     branches:
       - 'numida'
   push:
-    tags:
-      - '*'
-      - '!*-alpha*'
-      - '!*-beta*'
-
     branches:
       - 'numida'
 
@@ -50,5 +45,5 @@ jobs:
       - name: Deploy Lightdash
         run: |
           ssh lightdash_ssh "
-            ./bin/deploy_docker_numida
+            ./home/ubuntu/deploy 
           "
